@@ -11,7 +11,9 @@ import {
   Settings,
   LogOut,
   User,
-  Store
+  Store,
+  Users,
+  RotateCcw
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { memo, useEffect, useState } from 'react';
@@ -20,6 +22,8 @@ const ownerNavItems = [
   { title: 'Overview', icon: Home, href: '/' },
   { title: 'Products', icon: Package, href: '/products' },
   { title: 'Sales', icon: ShoppingCart, href: '/sales' },
+  { title: 'Sales Return', icon: RotateCcw, href: '/sales-return' },
+  { title: 'Customer Relation', icon: Users, href: '/customer-relation' },
   { title: 'Reports', icon: BarChart3, href: '/reports' },
   { title: 'Settings', icon: Settings, href: '/settings' },
 ];

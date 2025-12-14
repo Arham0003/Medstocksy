@@ -51,20 +51,20 @@ export default function Inventory() {
   }, []);
 
   // Memoize filtered products
-  const filteredProducts = useMemo(() => 
+  const filteredProducts = useMemo(() =>
     products.filter(product =>
       product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       product.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       product.category?.toLowerCase().includes(searchTerm.toLowerCase())
     ), [products, searchTerm]);
 
-  const lowStockProducts = useMemo(() => 
-    products.filter(product => 
+  const lowStockProducts = useMemo(() =>
+    products.filter(product =>
       product.quantity <= product.low_stock_threshold
     ), [products]);
 
-  const outOfStockProducts = useMemo(() => 
-    products.filter(product => 
+  const outOfStockProducts = useMemo(() =>
+    products.filter(product =>
       product.quantity === 0
     ), [products]);
 
@@ -91,7 +91,7 @@ export default function Inventory() {
             <div className="text-3xl font-bold text-blue-600">{products.length}</div>
           </CardContent>
         </Card>
-        
+
         <Card className="shadow-lg border-0 bg-gradient-to-br from-orange-50 to-orange-100">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-lg font-bold">Low Stock</CardTitle>
@@ -103,7 +103,7 @@ export default function Inventory() {
             <div className="text-3xl font-bold text-orange-600">{lowStockProducts.length}</div>
           </CardContent>
         </Card>
-        
+
         <Card className="shadow-lg border-0 bg-gradient-to-br from-red-50 to-red-100">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-lg font-bold">Out of Stock</CardTitle>
@@ -131,16 +131,16 @@ export default function Inventory() {
           <CardContent>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {lowStockProducts.map((product) => (
-                <div 
-                  key={product.id} 
+                <div
+                  key={product.id}
                   className="flex justify-between items-center p-4 bg-white rounded-xl border border-orange-200 shadow-sm"
                 >
                   <div>
                     <h3 className="font-bold text-lg">{product.name}</h3>
                     <p className="text-sm text-muted-foreground">{product.sku}</p>
                   </div>
-                  <Badge 
-                    variant={product.quantity === 0 ? "destructive" : "secondary"}
+                  <Badge
+                    variant={product.quantity === 0 ? "destructive" : "warning"}
                     className="text-lg py-2 px-3"
                   >
                     {product.quantity === 0 ? "Out of Stock" : `${product.quantity} left`}
@@ -204,8 +204,8 @@ export default function Inventory() {
                 </TableHeader>
                 <TableBody>
                   {filteredProducts.map((product) => (
-                    <TableRow 
-                      key={product.id} 
+                    <TableRow
+                      key={product.id}
                       className="hover:bg-purple-50 transition-colors"
                     >
                       <TableCell className="font-medium text-lg py-4">{product.name}</TableCell>
@@ -214,21 +214,21 @@ export default function Inventory() {
                       <TableCell className="text-lg py-4">{product.quantity}</TableCell>
                       <TableCell className="text-lg py-4">₹{product.selling_price}</TableCell>
                       <TableCell className="py-4">
-                        <Badge 
+                        <Badge
                           variant={
-                            product.quantity === 0 
-                              ? "destructive" 
-                              : product.quantity <= product.low_stock_threshold 
-                              ? "secondary" 
-                              : "default"
+                            product.quantity === 0
+                              ? "destructive"
+                              : product.quantity <= product.low_stock_threshold
+                                ? "warning"
+                                : "success"
                           }
                           className="text-lg py-2 px-3"
                         >
-                          {product.quantity === 0 
-                            ? "Out of Stock" 
-                            : product.quantity <= product.low_stock_threshold 
-                            ? "Low Stock" 
-                            : "In Stock"
+                          {product.quantity === 0
+                            ? "Out of Stock"
+                            : product.quantity <= product.low_stock_threshold
+                              ? "Low Stock"
+                              : "In Stock"
                           }
                         </Badge>
                       </TableCell>

@@ -1,7 +1,11 @@
-name,sku,category,quantity,purchase_price,selling_price,gst,supplier,low_stock_threshold
-Laptop Pro,LP1001,Electronics,25,80000,95000,18,Tech Distributors,5
-Wireless Mouse,WM2002,Electronics,50,500,750,18,Peripherals Inc.,10
-Office Chair,OC3003,Furniture,15,4500,6000,18,Comfort Seating,3
-Desk Lamp,DL4004,Lighting,30,1200,1800,12,Lumina Lights,8
-Notebook,NB5005,Stationery,100,50,80,12,Paper World,20
-Coffee Mug,CM6006,Kitchen,40,150,250,12,Ceramic Co.,15
+name,hsn_code,category,batch_number,manufacturer,expiry_date,quantity,purchase_price,selling_price,gst,supplier,low_stock_threshold
+Paracetamol 500mg,30049099,Tablets,BATCH001,ABC Pharma,2025-12-31,100,5.50,10.00,12,Medical Suppliers Ltd,20
+Amoxicillin 250mg,30042090,Capsules,BATCH002,XYZ Pharma,2026-06-30,150,8.00,15.00,12,Health Distributors,25
+Cough Syrup 100ml,30049011,Syrups,BATCH003,DEF Pharma,2025-09-15,75,45.00,75.00,18,Pharma Wholesale,15
+Antiseptic Cream 50g,30039000,Ointments,BATCH004,GHI Pharma,2026-03-20,200,25.00,40.00,18,Medical Suppliers Ltd,30
+Vitamin D3 Tablets,21069000,Supplements,BATCH005,JKL Nutrition,2026-12-31,120,15.00,25.00,12,Health Distributors,20
+Digital Thermometer,90251180,Medical Devices,DEV001,MNO Medical,2027-01-01,50,150.00,250.00,18,Medical Equipment Co,10
+Insulin Injection 10ml,30043100,Injections,BATCH006,PQR Pharma,2025-08-30,80,200.00,350.00,12,Pharma Wholesale,15
+Eye Drops 10ml,30049031,Drops,BATCH007,STU Pharma,2025-11-15,90,35.00,60.00,12,Medical Suppliers Ltd,20
+Baby Diaper Pack,96190010,Baby Care,PACK001,VWX Baby Care,2026-05-01,60,180.00,250.00,18,Baby Products Inc,15
+Hand Sanitizer 500ml,38089400,Personal Care,BATCH008,YZA Healthcare,2025-10-20,100,45.00,75.00,18,Health Distributors,25

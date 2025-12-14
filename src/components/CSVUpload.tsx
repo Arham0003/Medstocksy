@@ -27,14 +27,61 @@ export default function CSVUpload({ onFileUpload }: CSVUploadProps) {
     
     const reader = new FileReader();
     reader.onload = (e) => {
-      const csvData = e.target?.result as string;
-      const rows = csvData.split('\n').map(row => 
-        row.split(',').map(cell => cell.trim())
-      );
-      onFileUpload(rows);
+      try {
+        const csvData = e.target?.result as string;
+        
+        // Proper CSV parsing that handles quoted fields
+        const parseCSVLine = (line: string): string[] => {
+          const result: string[] = [];
+          let current = '';
+          let inQuotes = false;
+          
+          for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const nextChar = line[i + 1];
+            
+            if (char === '"') {
+              if (inQuotes && nextChar === '"') {
+                // Escaped quote
+                current += '"';
+                i++; // Skip next quote
+              } else {
+                // Toggle quote state
+                inQuotes = !inQuotes;
+              }
+            } else if (char === ',' && !inQuotes) {
+              // Field separator
+              result.push(current.trim());
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          
+          // Add last field
+          result.push(current.trim());
+          return result;
+        };
+        
+        // Split by newlines and parse each line
+        const lines = csvData.split(/\r?\n/).filter(line => line.trim());
+        const rows = lines.map(line => parseCSVLine(line));
+        
+        if (rows.length === 0) {
+          setError('CSV file is empty');
+          setFileName(null);
+          return;
+        }
+        
+        onFileUpload(rows);
+      } catch (err) {
+        setError('Error parsing CSV file. Please check the format.');
+        setFileName(null);
+      }
     };
     reader.onerror = () => {
       setError('Error reading file');
+      setFileName(null);
     };
     reader.readAsText(file);
   };

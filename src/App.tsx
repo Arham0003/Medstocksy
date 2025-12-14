@@ -22,9 +22,13 @@ const LoadingComponent = () => (
 // Lazy load pages that are not immediately needed
 const Products = lazy(() => import("./pages/Products"));
 const Sales = lazy(() => import("./pages/Sales"));
+const SalesReturn = lazy(() => import("./pages/SalesReturn"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Inventory = lazy(() => import("./pages/Inventory"));
+
+const CustomerRelation = lazy(() => import("./pages/CustomerRelation"));
+const PrintBill = lazy(() => import("./pages/PrintBill"));
 
 const queryClient = new QueryClient();
 
@@ -41,47 +45,71 @@ const App = () => (
             <Route path="/" element={<Layout />}>
               <Route index element={<Index />} />
               {/* Wrap lazy loaded components in Suspense */}
-              <Route 
-                path="products" 
+              <Route
+                path="products"
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Products />
                   </Suspense>
-                } 
+                }
               />
-              <Route 
-                path="sales" 
+              <Route
+                path="sales"
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Sales />
                   </Suspense>
-                } 
+                }
               />
-              <Route 
-                path="reports" 
+              <Route
+                path="sales-return"
+                element={
+                  <Suspense fallback={<LoadingComponent />}>
+                    <SalesReturn />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="customer-relation"
+                element={
+                  <Suspense fallback={<LoadingComponent />}>
+                    <CustomerRelation />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="reports"
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Reports />
                   </Suspense>
-                } 
+                }
               />
-              <Route 
-                path="settings" 
+              <Route
+                path="settings"
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Settings />
                   </Suspense>
-                } 
+                }
               />
-              <Route 
-                path="inventory" 
+              <Route
+                path="inventory"
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Inventory />
                   </Suspense>
-                } 
+                }
               />
             </Route>
+            <Route
+              path="/print-bill/:billId"
+              element={
+                <Suspense fallback={<LoadingComponent />}>
+                  <PrintBill />
+                </Suspense>
+              }
+            />
             {/* Fallback route for any unmatched paths */}
             <Route path="*" element={<NotFound />} />
           </Routes>

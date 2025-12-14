@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
@@ -15,11 +16,16 @@ interface Settings {
   currency: string;
   gst_enabled: boolean;
   default_gst_rate: number;
+  gst_type?: string;
+  whatsapp_custom_note?: string | null;
 }
 
 interface Account {
   id: string;
   name: string;
+  address?: string | null;
+  phone?: string | null;
+  gstin?: string | null;
 }
 
 export default function Settings() {
@@ -73,25 +79,50 @@ export default function Settings() {
 
     const formData = new FormData(e.currentTarget);
     const name = formData.get('storeName') as string;
+    const address = (formData.get('storeAddress') as string) || null;
+    const phone = (formData.get('storePhone') as string) || null;
+    const gstin = (formData.get('storeGSTIN') as string) || null;
 
     try {
+      // Try to update all fields
       const { error } = await supabase
         .from('accounts')
-        .update({ name })
+        .update({ name, address, phone, gstin } as any)
         .eq('id', profile?.account_id);
 
-      if (error) throw error;
+      if (error) {
+        // Check if error is likely due to missing columns
+        if (error.message?.includes('column') || error.message?.includes('address') || error.message?.includes('phone') || error.message?.includes('gstin')) {
+          console.warn("Extended fields not found in database, falling back to basic update");
 
-      toast({
-        title: "Store name updated",
-        description: "Your store name has been updated successfully.",
-      });
+          // Fallback: Update only 'name' which we know exists
+          const { error: retryError } = await supabase
+            .from('accounts')
+            .update({ name })
+            .eq('id', profile?.account_id);
+
+          if (retryError) throw retryError;
+
+          toast({
+            title: "Store Name Updated",
+            description: "Store name saved. Address and details could not be saved as the database needs an update.",
+            variant: "default",
+          });
+        } else {
+          throw error;
+        }
+      } else {
+        toast({
+          title: "Store information updated",
+          description: "Your store information has been updated successfully.",
+        });
+      }
 
       fetchData();
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error updating store name",
+        title: "Error updating store information",
         description: error.message,
       });
     } finally {
@@ -107,23 +138,48 @@ export default function Settings() {
     const currency = formData.get('currency') as string;
     const defaultGstRate = parseFloat(formData.get('defaultGstRate') as string);
     const gstEnabled = formData.get('gstEnabled') === 'on';
+    const gstType = formData.get('gstType') as string;
+    const whatsappCustomNote = (formData.get('whatsappCustomNote') as string) || null;
 
     try {
+      // Try to update with gst_type first
+      let updateData: any = {
+        currency,
+        default_gst_rate: defaultGstRate,
+        gst_enabled: gstEnabled,
+        whatsapp_custom_note: whatsappCustomNote,
+      };
+
+      // Try to include gst_type
       const { error } = await supabase
         .from('settings')
         .update({
-          currency,
-          default_gst_rate: defaultGstRate,
-          gst_enabled: gstEnabled,
+          ...updateData,
+          gst_type: gstType,
         })
         .eq('account_id', profile?.account_id);
 
-      if (error) throw error;
+      // If error is about gst_type column, try without it
+      if (error && error.message.includes('gst_type')) {
+        const { error: retryError } = await supabase
+          .from('settings')
+          .update(updateData)
+          .eq('account_id', profile?.account_id);
 
-      toast({
-        title: "Settings updated",
-        description: "Your settings have been updated successfully.",
-      });
+        if (retryError) throw retryError;
+
+        toast({
+          title: "Settings updated",
+          description: "Settings saved. Note: GST Type field requires database migration.",
+        });
+      } else if (error) {
+        throw error;
+      } else {
+        toast({
+          title: "Settings updated",
+          description: "Your settings have been updated successfully.",
+        });
+      }
 
       fetchData();
     } catch (error: any) {
@@ -186,6 +242,39 @@ export default function Settings() {
                   required
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="storeAddress">Address</Label>
+                <Textarea
+                  id="storeAddress"
+                  name="storeAddress"
+                  defaultValue={account?.address || ''}
+                  placeholder="Enter your store address"
+                  rows={3}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="storePhone">Phone Number</Label>
+                <Input
+                  id="storePhone"
+                  name="storePhone"
+                  type="tel"
+                  defaultValue={account?.phone || ''}
+                  placeholder="Enter store phone number"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="storeGSTIN">GSTIN Number</Label>
+                <Input
+                  id="storeGSTIN"
+                  name="storeGSTIN"
+                  defaultValue={account?.gstin || ''}
+                  placeholder="Enter GST Identification Number"
+                />
+              </div>
+
               <Button type="submit" disabled={saving}>
                 {saving ? "Saving..." : "Save Store Information"}
               </Button>
@@ -225,7 +314,7 @@ export default function Settings() {
                     Calculate and display GST on sales
                   </p>
                 </div>
-                <Switch 
+                <Switch
                   id="gstEnabled"
                   name="gstEnabled"
                   defaultChecked={settings?.gst_enabled}
@@ -246,8 +335,55 @@ export default function Settings() {
                 />
               </div>
 
+              <div className="space-y-3">
+                <Label>GST Calculation Type</Label>
+                <div className="flex gap-4">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="gstType"
+                      value="exclusive"
+                      defaultChecked={settings?.gst_type === 'exclusive' || !settings?.gst_type}
+                      className="w-4 h-4 text-blue-600"
+                    />
+                    <div>
+                      <span className="font-medium">Exclusive</span>
+                      <p className="text-sm text-muted-foreground">GST added to price</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="gstType"
+                      value="inclusive"
+                      defaultChecked={settings?.gst_type === 'inclusive'}
+                      className="w-4 h-4 text-blue-600"
+                    />
+                    <div>
+                      <span className="font-medium">Inclusive</span>
+                      <p className="text-sm text-muted-foreground">Price includes GST</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <Label htmlFor="whatsappCustomNote">WhatsApp Custom Note</Label>
+                <Textarea
+                  id="whatsappCustomNote"
+                  name="whatsappCustomNote"
+                  defaultValue={settings?.whatsapp_custom_note || ''}
+                  placeholder="e.g. Dear customer, please find your prescription details below."
+                />
+                <p className="text-sm text-muted-foreground">
+                  This note will appear at the start of every WhatsApp message. You can change it anytime.
+                </p>
+              </div>
+
               <Button type="submit" disabled={saving}>
-                {saving ? "Saving..." : "Save Financial Settings"}
+                {saving ? "Saving..." : "Save Settings"}
               </Button>
             </form>
           </CardContent>

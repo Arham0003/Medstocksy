@@ -22,8 +22,11 @@ import {
 interface Product {
   id: string;
   name: string;
-  sku: string;
+  hsn_code: string;
   category: string;
+  batch_number: string;
+  manufacturer: string;
+  expiry_date: string | null;
   quantity: number;
   purchase_price: number;
   selling_price: number;
@@ -33,27 +36,21 @@ interface Product {
   created_at: string;
 }
 
-// Preset product categories
+// Preset product categories for pharmacy/medical store
 const PRESET_CATEGORIES = [
-  "Electronics",
-  "Clothing",
-  "Home & Kitchen",
-  "Books",
-  "Beauty & Personal Care",
-  "Toys & Games",
-  "Sports & Outdoors",
-  "Automotive",
-  "Health & Wellness",
-  "Food & Grocery",
-  "Office Supplies",
-  "Jewelry",
-  "Furniture",
-  "Pet Supplies",
-  "Garden & Outdoor",
-  "Baby Products",
-  "Tools & Hardware",
-  "Music & Movies",
-  "Other"
+  "Tablets",
+  "Capsules",
+  "Syrups",
+  "Ointments",
+  "Injections",
+  "Drops",
+  "Medical Devices",
+  "Supplements",
+  "Ayurveda/Homeopathy",
+  "Personal Care",
+  "Baby Care",
+  "Surgical",
+  "Others"
 ];
 
 export default function Products() {
@@ -95,14 +92,85 @@ export default function Products() {
     fetchProducts();
   }, []);
 
+  // Function to download sample CSV
+  const downloadSampleCSV = () => {
+    const headers = [
+      'name',
+      'hsn_code',
+      'category',
+      'batch_number',
+      'manufacturer',
+      'expiry_date',
+      'quantity',
+      'purchase_price',
+      'selling_price',
+      'gst',
+      'supplier',
+      'low_stock_threshold'
+    ];
+
+    const sampleData = [
+      ['Paracetamol 500mg', '30049099', 'Tablets', 'BATCH001', 'ABC Pharma', '2025-12-31', '100', '5.50', '10.00', '12', 'Medical Suppliers Ltd', '20'],
+      ['Amoxicillin 250mg', '30042090', 'Capsules', 'BATCH002', 'XYZ Pharma', '2026-06-30', '150', '8.00', '15.00', '12', 'Health Distributors', '25'],
+      ['Cough Syrup 100ml', '30049011', 'Syrups', 'BATCH003', 'DEF Pharma', '2025-09-15', '75', '45.00', '75.00', '18', 'Pharma Wholesale', '15'],
+      ['Antiseptic Cream 50g', '30039000', 'Ointments', 'BATCH004', 'GHI Pharma', '2026-03-20', '200', '25.00', '40.00', '18', 'Medical Suppliers Ltd', '30'],
+      ['Vitamin D3 Tablets', '21069000', 'Supplements', 'BATCH005', 'JKL Nutrition', '2026-12-31', '120', '15.00', '25.00', '12', 'Health Distributors', '20'],
+      ['Digital Thermometer', '90251180', 'Medical Devices', 'DEV001', 'MNO Medical', '2027-01-01', '50', '150.00', '250.00', '18', 'Medical Equipment Co', '10'],
+      ['Insulin Injection 10ml', '30043100', 'Injections', 'BATCH006', 'PQR Pharma', '2025-08-30', '80', '200.00', '350.00', '12', 'Pharma Wholesale', '15'],
+      ['Eye Drops 10ml', '30049031', 'Drops', 'BATCH007', 'STU Pharma', '2025-11-15', '90', '35.00', '60.00', '12', 'Medical Suppliers Ltd', '20'],
+      ['Baby Diaper Pack', '96190010', 'Baby Care', 'PACK001', 'VWX Baby Care', '2026-05-01', '60', '180.00', '250.00', '18', 'Baby Products Inc', '15'],
+      ['Hand Sanitizer 500ml', '38089400', 'Personal Care', 'BATCH008', 'YZA Healthcare', '2025-10-20', '100', '45.00', '75.00', '18', 'Health Distributors', '25']
+    ];
+
+    // Create CSV content
+    const csvContent = [
+      headers.join(','),
+      ...sampleData.map(row => row.map(cell => {
+        // Escape cells that contain commas or quotes
+        if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
+          return `"${cell.replace(/"/g, '""')}"`;
+        }
+        return cell;
+      }).join(','))
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'sample-products.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast({
+      title: "Sample CSV downloaded",
+      description: "Use this template to prepare your product data",
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    
+
+    if (!profile?.account_id) {
+      toast({
+        variant: "destructive",
+        title: "Cannot save product",
+        description: "Account context not loaded. Please re-login or try again in a moment.",
+      });
+      return;
+    }
+
     const productData = {
       name: formData.get('name') as string,
-      sku: formData.get('sku') as string,
+      hsn_code: formData.get('hsn_code') as string,
       category: formData.get('category') as string,
+      batch_number: formData.get('batch_number') as string,
+      manufacturer: formData.get('manufacturer') as string,
+      expiry_date: (formData.get('expiry_date') as string) || null,
       quantity: parseInt(formData.get('quantity') as string),
       purchase_price: parseFloat(formData.get('purchase_price') as string),
       selling_price: parseFloat(formData.get('selling_price') as string),
@@ -114,7 +182,7 @@ export default function Products() {
 
     try {
       let error;
-      
+
       if (editingProduct) {
         ({ error } = await supabase
           .from('products')
@@ -179,76 +247,113 @@ export default function Products() {
   };
 
   // Memoize filtered products to prevent unnecessary recalculations
-  const filteredProducts = useMemo(() => 
+  const filteredProducts = useMemo(() =>
     products.filter(product =>
       product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.category?.toLowerCase().includes(searchTerm.toLowerCase())
+      product.hsn_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.manufacturer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.batch_number?.toLowerCase().includes(searchTerm.toLowerCase())
     ), [products, searchTerm]);
-
-  if (!isOwner) {
-    return (
-      <div className="text-center py-12">
-        <div className="bg-red-100 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-          <AlertTriangle className="h-8 w-8 text-red-600" />
-        </div>
-        <h2 className="text-2xl font-bold text-red-600 mb-2">Access Denied</h2>
-        <p className="text-muted-foreground text-lg">You don't have permission to access this page.</p>
-      </div>
-    );
-  }
 
   // Parse CSV data when uploaded
   useEffect(() => {
     if (uploadedData.length > 0) {
-      const headers = uploadedData[0];
-      const body = uploadedData.slice(1);
-      
-      const products: Product[] = body.map(row => ({
-        id: crypto.randomUUID(),
-        name: row[headers.indexOf('name')] || '',
-        sku: row[headers.indexOf('sku')] || '',
-        category: row[headers.indexOf('category')] || '',
-        quantity: parseInt(row[headers.indexOf('quantity')]) || 0,
-        purchase_price: parseFloat(row[headers.indexOf('purchase_price')]) || 0,
-        selling_price: parseFloat(row[headers.indexOf('selling_price')]) || 0,
-        gst: parseFloat(row[headers.indexOf('gst')]) || 0,
-        supplier: row[headers.indexOf('supplier')] || '',
-        low_stock_threshold: parseInt(row[headers.indexOf('low_stock_threshold')]) || 10,
-        created_at: new Date().toISOString()
-      })).filter(product => product.name);
-      
-      setParsedProducts(products);
-      
-      if (products.length > 0) {
+      try {
+        const headers = uploadedData[0].map(h => h.toLowerCase().trim());
+        const body = uploadedData.slice(1).filter(row => row.some(cell => cell.trim()));
+
+        // Check for required columns
+        const requiredColumns = ['name', 'selling_price'];
+        const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+
+        if (missingColumns.length > 0) {
+          toast({
+            variant: "destructive",
+            title: "Invalid CSV format",
+            description: `Missing required columns: ${missingColumns.join(', ')}. Please check your CSV file.`,
+          });
+          setParsedProducts([]);
+          return;
+        }
+
+        const products: Product[] = body.map((row, index) => {
+          const getColumnValue = (columnName: string) => {
+            const colIndex = headers.indexOf(columnName);
+            return colIndex >= 0 ? row[colIndex]?.trim() : '';
+          };
+
+          return {
+            id: crypto.randomUUID(),
+            name: getColumnValue('name') || '',
+            hsn_code: getColumnValue('hsn_code') || getColumnValue('hsn code') || '',
+            category: getColumnValue('category') || '',
+            batch_number: getColumnValue('batch_number') || getColumnValue('batch number') || '',
+            manufacturer: getColumnValue('manufacturer') || '',
+            expiry_date: getColumnValue('expiry_date') || getColumnValue('expiry date') || null,
+            quantity: parseInt(getColumnValue('quantity')) || 0,
+            purchase_price: parseFloat(getColumnValue('purchase_price') || getColumnValue('purchase price')) || 0,
+            selling_price: parseFloat(getColumnValue('selling_price') || getColumnValue('selling price')) || 0,
+            gst: parseFloat(getColumnValue('gst')) || 0,
+            supplier: getColumnValue('supplier') || '',
+            low_stock_threshold: parseInt(getColumnValue('low_stock_threshold') || getColumnValue('low stock threshold')) || 10,
+            created_at: new Date().toISOString()
+          };
+        }).filter(product => product.name && product.selling_price > 0);
+
+        setParsedProducts(products);
+
+        if (products.length > 0) {
+          toast({
+            title: `Successfully parsed ${products.length} products`,
+            description: "Click 'Save All Products' to add them to your inventory",
+          });
+        } else {
+          toast({
+            variant: "destructive",
+            title: "No valid products found",
+            description: "Please ensure your CSV has valid product data with name and selling price.",
+          });
+        }
+      } catch (error) {
         toast({
-          title: `Successfully parsed ${products.length} products`,
-          description: "Click 'Save All Products' to add them to your inventory",
+          variant: "destructive",
+          title: "Error parsing CSV",
+          description: "There was an error processing your CSV file. Please check the format.",
         });
+        setParsedProducts([]);
       }
     }
-  }, [uploadedData]);
+  }, [uploadedData, toast]);
 
   const saveAllProducts = async () => {
     if (parsedProducts.length === 0) return;
-    
+    if (!profile?.account_id) {
+      toast({
+        variant: "destructive",
+        title: "Cannot add products",
+        description: "Account context not loaded. Please re-login or try again in a moment.",
+      });
+      return;
+    }
+
     try {
       const productsToInsert = parsedProducts.map(product => ({
         ...product,
         account_id: profile?.account_id
       }));
-      
+
       const { error } = await supabase
         .from('products')
         .insert(productsToInsert);
-      
+
       if (error) throw error;
-      
+
       toast({
         title: `Successfully added ${parsedProducts.length} products`,
         description: "All products have been added to your inventory",
       });
-      
+
       setUploadedData([]);
       setParsedProducts([]);
       fetchProducts();
@@ -270,6 +375,18 @@ export default function Products() {
     }
   }, [isDialogOpen, editingProduct]);
 
+  if (!isOwner) {
+    return (
+      <div className="text-center py-12">
+        <div className="bg-red-100 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle className="h-8 w-8 text-red-600" />
+        </div>
+        <h2 className="text-2xl font-bold text-red-600 mb-2">Access Denied</h2>
+        <p className="text-muted-foreground text-lg">You don't have permission to access this page.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <div className="space-y-8">
@@ -279,9 +396,12 @@ export default function Products() {
               <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 Product Management
               </h1>
-              <a href="/sample-products.csv" download className="text-sm text-blue-600 hover:text-blue-800 underline">
+              <button
+                onClick={downloadSampleCSV}
+                className="text-sm text-blue-600 hover:text-blue-800 underline cursor-pointer bg-transparent border-none"
+              >
                 Download Sample CSV
-              </a>
+              </button>
             </div>
             <p className="text-muted-foreground text-lg mt-2">
               Manage your inventory products and stock levels
@@ -289,7 +409,7 @@ export default function Products() {
           </div>
         </div>
         <CSVUpload onFileUpload={setUploadedData} />
-        
+
         {parsedProducts.length > 0 && (
           <Card className="shadow-lg border-0 bg-gradient-to-r from-green-50 to-emerald-50">
             <CardHeader>
@@ -298,13 +418,13 @@ export default function Products() {
             </CardHeader>
             <CardContent>
               <div className="flex gap-4">
-                <Button 
+                <Button
                   onClick={saveAllProducts}
                   className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
                 >
                   Save All Products
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => {
                     setUploadedData([]);
@@ -325,11 +445,11 @@ export default function Products() {
           }
         }}>
           <DialogTrigger asChild>
-            <Button 
+            <Button
               onClick={() => {
                 setEditingProduct(null);
                 setSelectedCategory("");
-              }} 
+              }}
               className="text-lg py-3 px-6 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
             >
               <Plus className="h-5 w-5 mr-2" />
@@ -349,33 +469,33 @@ export default function Products() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="name" className="text-lg font-medium">Product Name</Label>
-                  <Input 
-                    id="name" 
-                    name="name" 
-                    required 
-                    defaultValue={editingProduct?.name} 
-                    className="text-lg py-3 px-4" 
+                  <Input
+                    id="name"
+                    name="name"
+                    required
+                    defaultValue={editingProduct?.name}
+                    className="text-lg py-3 px-4"
                     placeholder="Enter product name"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="sku" className="text-lg font-medium">SKU</Label>
-                  <Input 
-                    id="sku" 
-                    name="sku" 
-                    defaultValue={editingProduct?.sku} 
-                    className="text-lg py-3 px-4" 
-                    placeholder="Enter SKU"
+                  <Label htmlFor="hsn_code" className="text-lg font-medium">HSN Code</Label>
+                  <Input
+                    id="hsn_code"
+                    name="hsn_code"
+                    defaultValue={editingProduct?.hsn_code}
+                    className="text-lg py-3 px-4"
+                    placeholder="Enter HSN Code"
                   />
                 </div>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="category" className="text-lg font-medium">Category</Label>
-                  <Select 
-                    name="category" 
-                    value={selectedCategory || editingProduct?.category || ""} 
+                  <Select
+                    name="category"
+                    value={selectedCategory || editingProduct?.category || ""}
                     onValueChange={(value) => setSelectedCategory(value)}
                   >
                     <SelectTrigger className="text-lg py-3 px-4">
@@ -390,104 +510,137 @@ export default function Products() {
                     </SelectContent>
                   </Select>
                   {/* Hidden input to capture the selected value for form submission */}
-                  <input 
-                    type="hidden" 
-                    name="category" 
-                    value={selectedCategory || editingProduct?.category || ""} 
+                  <input
+                    type="hidden"
+                    name="category"
+                    value={selectedCategory || editingProduct?.category || ""}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="supplier" className="text-lg font-medium">Supplier</Label>
-                  <Input 
-                    id="supplier" 
-                    name="supplier" 
-                    defaultValue={editingProduct?.supplier} 
-                    className="text-lg py-3 px-4" 
+                  <Input
+                    id="supplier"
+                    name="supplier"
+                    defaultValue={editingProduct?.supplier}
+                    className="text-lg py-3 px-4"
                     placeholder="Enter supplier"
                   />
                 </div>
               </div>
-              
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="batch_number" className="text-lg font-medium">Batch Number</Label>
+                  <Input
+                    id="batch_number"
+                    name="batch_number"
+                    defaultValue={editingProduct?.batch_number}
+                    className="text-lg py-3 px-4"
+                    placeholder="Enter batch number"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="manufacturer" className="text-lg font-medium">Manufacturer</Label>
+                  <Input
+                    id="manufacturer"
+                    name="manufacturer"
+                    defaultValue={editingProduct?.manufacturer}
+                    className="text-lg py-3 px-4"
+                    placeholder="Enter manufacturer"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="expiry_date" className="text-lg font-medium">Expiry Date</Label>
+                  <Input
+                    id="expiry_date"
+                    name="expiry_date"
+                    type="date"
+                    defaultValue={editingProduct?.expiry_date ? editingProduct.expiry_date.substring(0, 10) : ''}
+                    className="text-lg py-3 px-4"
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="quantity" className="text-lg font-medium">Quantity</Label>
-                  <Input 
-                    id="quantity" 
-                    name="quantity" 
-                    type="number" 
-                    required 
-                    defaultValue={editingProduct?.quantity} 
-                    className="text-lg py-3 px-4" 
+                  <Input
+                    id="quantity"
+                    name="quantity"
+                    type="number"
+                    required
+                    defaultValue={editingProduct?.quantity}
+                    className="text-lg py-3 px-4"
                     placeholder="0"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="low_stock_threshold" className="text-lg font-medium">Low Stock Alert</Label>
-                  <Input 
-                    id="low_stock_threshold" 
-                    name="low_stock_threshold" 
-                    type="number" 
-                    defaultValue={editingProduct?.low_stock_threshold || 10} 
-                    className="text-lg py-3 px-4" 
+                  <Input
+                    id="low_stock_threshold"
+                    name="low_stock_threshold"
+                    type="number"
+                    defaultValue={editingProduct?.low_stock_threshold || 10}
+                    className="text-lg py-3 px-4"
                     placeholder="10"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="gst" className="text-lg font-medium">GST %</Label>
-                  <Input 
-                    id="gst" 
-                    name="gst" 
-                    type="number" 
-                    step="0.01" 
-                    defaultValue={editingProduct?.gst || 18} 
-                    className="text-lg py-3 px-4" 
+                  <Input
+                    id="gst"
+                    name="gst"
+                    type="number"
+                    step="0.01"
+                    defaultValue={editingProduct?.gst || 18}
+                    className="text-lg py-3 px-4"
                     placeholder="18"
                   />
                 </div>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="purchase_price" className="text-lg font-medium">Purchase Price (₹)</Label>
-                  <Input 
-                    id="purchase_price" 
-                    name="purchase_price" 
-                    type="number" 
-                    step="0.01" 
-                    defaultValue={editingProduct?.purchase_price} 
-                    className="text-lg py-3 px-4" 
+                  <Input
+                    id="purchase_price"
+                    name="purchase_price"
+                    type="number"
+                    step="0.01"
+                    defaultValue={editingProduct?.purchase_price}
+                    className="text-lg py-3 px-4"
                     placeholder="0.00"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="selling_price" className="text-lg font-medium">Selling Price (₹)</Label>
-                  <Input 
-                    id="selling_price" 
-                    name="selling_price" 
-                    type="number" 
-                    step="0.01" 
-                    required 
-                    defaultValue={editingProduct?.selling_price} 
-                    className="text-lg py-3 px-4" 
+                  <Input
+                    id="selling_price"
+                    name="selling_price"
+                    type="number"
+                    step="0.01"
+                    required
+                    defaultValue={editingProduct?.selling_price}
+                    className="text-lg py-3 px-4"
                     placeholder="0.00"
                   />
                 </div>
               </div>
-              
+
               <div className="flex gap-4 pt-4">
-                <Button 
-                  type="submit" 
+                <Button
+                  type="submit"
                   className="flex-1 text-lg py-3 px-6 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
                 >
                   {editingProduct ? 'Update Product' : 'Add Product'}
                 </Button>
-                <Button 
-                  type="button" 
-                  variant="outline" 
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={() => {
                     setIsDialogOpen(false);
                     setSelectedCategory("");
-                  }} 
+                  }}
                   className="flex-1 text-lg py-3 px-6"
                 >
                   Cancel
@@ -514,7 +667,7 @@ export default function Products() {
                   </div>
                   <div>
                     <h3 className="font-bold text-lg">{productToDelete.name}</h3>
-                    <p className="text-muted-foreground">SKU: {productToDelete.sku || 'N/A'}</p>
+                    <p className="text-muted-foreground">HSN: {productToDelete.hsn_code || 'N/A'}</p>
                   </div>
                 </div>
                 <p className="mt-4 text-red-600 font-medium">
@@ -584,13 +737,13 @@ export default function Products() {
               <p className="text-muted-foreground text-lg mb-6">
                 {searchTerm ? 'No products match your search.' : 'Your inventory is empty.'}
               </p>
-              <Button 
+              <Button
                 onClick={() => {
                   setSearchTerm('');
                   setIsDialogOpen(true);
                   setEditingProduct(null);
                   setSelectedCategory("");
-                }} 
+                }}
                 className="text-lg py-3 px-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
               >
                 <Plus className="h-5 w-5 mr-2" />
@@ -603,8 +756,11 @@ export default function Products() {
                 <TableHeader className="bg-gradient-to-r from-blue-50 to-indigo-50">
                   <TableRow>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Name</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">SKU</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">HSN Code</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Category</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Batch</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Manufacturer</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Expiry</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Quantity</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Price</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Status</TableHead>
@@ -613,16 +769,19 @@ export default function Products() {
                 </TableHeader>
                 <TableBody>
                   {filteredProducts.map((product) => (
-                    <TableRow 
-                      key={product.id} 
+                    <TableRow
+                      key={product.id}
                       className="hover:bg-blue-50 transition-colors"
                     >
                       <TableCell className="font-medium text-lg py-4">{product.name}</TableCell>
-                      <TableCell className="text-lg py-4">{product.sku}</TableCell>
+                      <TableCell className="text-lg py-4">{product.hsn_code}</TableCell>
                       <TableCell className="text-lg py-4">{product.category}</TableCell>
+                      <TableCell className="text-lg py-4">{product.batch_number}</TableCell>
+                      <TableCell className="text-lg py-4">{product.manufacturer}</TableCell>
+                      <TableCell className="text-lg py-4">{product.expiry_date ? new Date(product.expiry_date).toLocaleDateString() : '-'}</TableCell>
                       <TableCell className="text-lg py-4">
-                        <Badge 
-                          variant={product.quantity <= product.low_stock_threshold ? "destructive" : "default"}
+                        <Badge
+                          variant={product.quantity === 0 ? "destructive" : product.quantity <= product.low_stock_threshold ? "warning" : "success"}
                           className="text-lg py-2 px-3"
                         >
                           {product.quantity}
@@ -630,12 +789,27 @@ export default function Products() {
                       </TableCell>
                       <TableCell className="text-lg py-4">₹{product.selling_price}</TableCell>
                       <TableCell className="py-4">
-                        <Badge 
-                          variant={product.quantity <= product.low_stock_threshold ? "destructive" : "default"}
-                          className="text-lg py-2 px-3"
-                        >
-                          {product.quantity <= product.low_stock_threshold ? "Low Stock" : "In Stock"}
-                        </Badge>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge
+                            variant={product.quantity === 0 ? "destructive" : product.quantity <= product.low_stock_threshold ? "warning" : "success"}
+                            className="text-lg py-2 px-3"
+                          >
+                            {product.quantity === 0 ? "Out of Stock" : product.quantity <= product.low_stock_threshold ? "Low Stock" : "In Stock"}
+                          </Badge>
+                          {(() => {
+                            if (!product.expiry_date) return null;
+                            const today = new Date();
+                            const exp = new Date(product.expiry_date);
+                            const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                            if (diffDays < 0) {
+                              return <Badge variant="default" className="text-lg py-2 px-3">Expired</Badge>;
+                            }
+                            if (diffDays <= 30) {
+                              return <Badge variant="destructive" className="text-lg py-2 px-3">Expiring Soon</Badge>;
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </TableCell>
                       <TableCell className="py-4">
                         <div className="flex gap-2">

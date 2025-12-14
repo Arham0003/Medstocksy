@@ -7,11 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Plus, ShoppingCart, Package, Eye, Search } from 'lucide-react';
+import { Plus, ShoppingCart, Package, Eye, Search, Printer, Download } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useNavigate } from 'react-router-dom';
 
 interface Product {
   id: string;
@@ -23,6 +24,7 @@ interface Product {
 
 interface Sale {
   id: string;
+  bill_id?: string; // Added bill_id
   product_id: string;
   quantity: number;
   unit_price: number;
@@ -31,6 +33,10 @@ interface Sale {
   created_at: string;
   customer_name?: string | null;
   customer_phone?: string | null;
+  customer_address?: string | null;
+  prescription_months?: number | null;
+  months_taken?: number | null;
+  prescription_notes?: string | null;
   products: {
     name: string;
   };
@@ -39,9 +45,11 @@ interface Sale {
 interface Settings {
   gst_enabled: boolean;
   default_gst_rate: number;
+  gst_type?: string;
 }
 
 export default function Sales() {
+  const navigate = useNavigate();
   const { profile } = useAuth();
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
@@ -49,13 +57,16 @@ export default function Sales() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [selectedProducts, setSelectedProducts] = useState<Array<{id: string, quantity: number}>>([]);
+  const [selectedProducts, setSelectedProducts] = useState<Array<{ id: string, quantity: number }>>([]);
   const [currentProduct, setCurrentProduct] = useState('');
   const [currentQuantity, setCurrentQuantity] = useState(1);
   // Customer details state
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>('');
+  const [monthsTaken, setMonthsTaken] = useState<number | ''>('');
+  const [prescriptionNotes, setPrescriptionNotes] = useState('');
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [totalSales, setTotalSales] = useState(0);
@@ -67,15 +78,19 @@ export default function Sales() {
   const [productPrices, setProductPrices] = useState<Record<string, number>>({});
   // Custom GST rates for items in cart
   const [customGstRates, setCustomGstRates] = useState<Record<string, number>>({});
-  
+  // Discount state
+  const [discountPercentage, setDiscountPercentage] = useState<number>(0);
+  // Payment mode state
+  const [paymentMode, setPaymentMode] = useState<string>('cash');
+
   // Mobile detection
   const isMobile = useIsMobile();
-  
+
   // Filter products based on search term
   const filteredProducts = useMemo(() => {
     if (!productSearchTerm) return products;
-    
-    return products.filter(product => 
+
+    return products.filter(product =>
       product.name.toLowerCase().includes(productSearchTerm.toLowerCase())
     );
   }, [products, productSearchTerm]);
@@ -84,24 +99,24 @@ export default function Sales() {
     try {
       // Fetch products (all products with stock)
       const productsRes = await supabase.from('products').select('id, name, quantity, selling_price, gst').gt('quantity', 0);
-      
+
       if (productsRes.error) throw productsRes.error;
       setProducts(productsRes.data || []);
 
       // Fetch sales with pagination
       const from = (currentPage - 1) * itemsPerPage;
       const to = from + itemsPerPage - 1;
-      
+
       let salesData: Sale[] = [];
       let totalCount = 0;
-      
+
       try {
         // First, try to select with customer fields
         const result = await supabase
           .from('sales')
           .select(`
-            id, product_id, quantity, unit_price, total_price, gst_amount, created_at,
-            customer_name, customer_phone,
+            id, bill_id, product_id, quantity, unit_price, total_price, gst_amount, created_at,
+            customer_name, customer_phone, customer_address, prescription_months, months_taken, prescription_notes,
             products(name)
           `, { count: 'exact' })
           .order('created_at', { ascending: false })
@@ -118,22 +133,26 @@ export default function Sales() {
         // If there's an error (likely due to missing columns), fall back to basic select
         if (error.message && (error.message.includes('customer_name') || error.message.includes('column'))) {
           console.log('Customer fields not found, falling back to basic select');
-          
+
           const fallbackRes = await supabase
             .from('sales')
             .select(`
-              id, product_id, quantity, unit_price, total_price, gst_amount, created_at,
+              id, bill_id, product_id, quantity, unit_price, total_price, gst_amount, created_at,
               products(name)
             `, { count: 'exact' })
             .order('created_at', { ascending: false })
             .range(from, to);
-            
+
           if (fallbackRes.data) {
             // Transform data to include optional customer fields
             salesData = fallbackRes.data.map(sale => ({
               ...sale,
               customer_name: null,
-              customer_phone: null
+              customer_phone: null,
+              customer_address: null,
+              prescription_months: null,
+              months_taken: null,
+              prescription_notes: null
             })) as unknown as Sale[];
             totalCount = fallbackRes.count || 0;
           }
@@ -142,7 +161,7 @@ export default function Sales() {
           throw error;
         }
       }
-      
+
       setSales(salesData);
       setTotalSales(totalCount);
 
@@ -151,8 +170,8 @@ export default function Sales() {
       toast({
         variant: "destructive",
         title: "Error fetching data",
-        description: error.message.includes('customer_name') || error.message.includes('column') 
-          ? "The database needs to be updated to support customer information. Please ask your administrator to apply the required database migration from the Supabase dashboard." 
+        description: error.message.includes('customer_name') || error.message.includes('column')
+          ? "The database needs to be updated to support customer information. Please ask your administrator to apply the required database migration from the Supabase dashboard."
           : error.message,
       });
     } finally {
@@ -168,24 +187,24 @@ export default function Sales() {
   useEffect(() => {
     const fetchSettings = async () => {
       if (!profile?.account_id) return;
-      
+
       try {
         const settingsRes = await supabase
           .from('settings')
-          .select('gst_enabled, default_gst_rate')
+          .select('gst_enabled, default_gst_rate, gst_type')
           .eq('account_id', profile.account_id)
           .single();
-        
+
         if (!settingsRes.error) {
-          setSettings(settingsRes.data);
+          setSettings(settingsRes.data as any);
         }
       } catch (error) {
         console.error('Error fetching settings:', error);
       }
     };
-    
+
     fetchSettings();
-    
+
     // Subscribe to settings changes
     const settingsSubscription = supabase
       .channel('settings-changes')
@@ -202,7 +221,7 @@ export default function Sales() {
         }
       )
       .subscribe();
-    
+
     // Cleanup subscription on unmount
     return () => {
       supabase.removeChannel(settingsSubscription);
@@ -274,10 +293,10 @@ export default function Sales() {
 
   const handleUpdateQuantity = (productId: string, newQuantity: number) => {
     if (newQuantity <= 0) return;
-    
+
     const product = products.find(p => p.id === productId);
     if (!product) return;
-    
+
     if (newQuantity > product.quantity) {
       toast({
         variant: "destructive",
@@ -286,15 +305,15 @@ export default function Sales() {
       });
       return;
     }
-    
-    setSelectedProducts(selectedProducts.map(p => 
+
+    setSelectedProducts(selectedProducts.map(p =>
       p.id === productId ? { ...p, quantity: newQuantity } : p
     ));
   };
 
   const handleSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (selectedProducts.length === 0) {
       toast({
         variant: "destructive",
@@ -304,70 +323,118 @@ export default function Sales() {
     }
 
     try {
+      // Generate a unique bill ID for this transaction
+      const billId = crypto.randomUUID();
+
       // Fetch the latest settings to ensure we're using current GST settings
       const settingsRes = await supabase
         .from('settings')
-        .select('gst_enabled, default_gst_rate')
+        .select('gst_enabled, default_gst_rate, gst_type')
         .eq('account_id', profile?.account_id)
         .single();
-      
+
       if (settingsRes.error) throw settingsRes.error;
-      const currentSettings = settingsRes.data;
+      const currentSettings = settingsRes.data as any;
 
       // Create sales records for each item in the cart
+      const isGstInclusive = currentSettings?.gst_type === 'inclusive';
+
       let salesToInsert = selectedProducts.map(item => {
         const product = products.find(p => p.id === item.id);
         if (!product) {
           throw new Error(`Product with id ${item.id} not found`);
         }
-        
+
         // Use custom price if set, otherwise use product's selling price
         const unitPrice = productPrices[item.id] || product.selling_price;
-        const subtotal = unitPrice * item.quantity;
-        
+        const itemTotal = unitPrice * item.quantity;
+
+        let basePrice, gstAmount, totalPrice;
+
         // Use custom GST rate if set, otherwise use default from settings
         const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : currentSettings?.default_gst_rate || 0;
-        const gstAmount = currentSettings?.gst_enabled 
-          ? (subtotal * itemGstRate) / 100 
-          : 0;
-          
-        const totalPrice = subtotal + gstAmount;
-        
+
+        if (currentSettings?.gst_enabled) {
+          if (isGstInclusive) {
+            // Inclusive: Price includes GST
+            totalPrice = itemTotal;
+            basePrice = itemTotal / (1 + itemGstRate / 100);
+            gstAmount = itemTotal - basePrice;
+          } else {
+            // Exclusive: GST added to price
+            basePrice = itemTotal;
+            gstAmount = (basePrice * itemGstRate) / 100;
+            totalPrice = basePrice + gstAmount;
+          }
+        } else {
+          basePrice = itemTotal;
+          gstAmount = 0;
+          totalPrice = itemTotal;
+        }
+
+        // Apply discount to the base price
+        const discountAmount = (basePrice * discountPercentage) / 100;
+        const discountedBasePrice = basePrice - discountAmount;
+
+        // Recalculate GST on discounted price
+        let finalGstAmount = 0;
+        let finalTotalPrice = 0;
+
+        if (currentSettings?.gst_enabled) {
+          if (isGstInclusive) {
+            finalGstAmount = (discountedBasePrice * itemGstRate) / 100;
+            finalTotalPrice = discountedBasePrice + finalGstAmount;
+          } else {
+            finalGstAmount = (discountedBasePrice * itemGstRate) / 100;
+            finalTotalPrice = discountedBasePrice + finalGstAmount;
+          }
+        } else {
+          finalTotalPrice = discountedBasePrice;
+        }
+
         return {
           account_id: profile?.account_id,
+          // @ts-ignore - bill_id might not exist in types yet
+          bill_id: billId,
           product_id: item.id,
           user_id: profile?.id,
           quantity: item.quantity,
-          unit_price: unitPrice, // Use the custom price
-          total_price: totalPrice,
-          gst_amount: gstAmount,
+          unit_price: Math.round(unitPrice * 100) / 100,
+          total_price: Math.round(finalTotalPrice), // Round to nearest whole number
+          gst_amount: Math.round(finalGstAmount * 100) / 100,
+          payment_mode: paymentMode,
           // Add customer details - use "Walk-in Customer" if name is empty
           customer_name: customerName || "Walk-in Customer",
           customer_phone: customerPhone || null,
+          customer_address: customerAddress || null,
+          prescription_months: prescriptionMonths === '' ? null : Number(prescriptionMonths),
+          months_taken: monthsTaken === '' ? null : Number(monthsTaken),
+          prescription_notes: prescriptionNotes || null,
+          discount_percentage: discountPercentage,
         };
       });
-      
+
       let { error } = await supabase.from('sales').insert(salesToInsert);
 
-      // If there's an error due to missing columns, try again without customer fields
-      if (error && error.message && (error.message.includes('customer_name') || error.message.includes('column'))) {
-        console.log('Customer fields not found, trying without customer fields');
+      // If there's an error due to missing columns, try again without those fields
+      if (error && error.message && error.message.includes('column')) {
+        console.log('Missing column detected, trying without optional fields');
         const fallbackSalesToInsert = salesToInsert.map(sale => {
-          const { customer_name, customer_phone, ...rest } = sale;
+          const { customer_name, customer_phone, customer_address, prescription_months, months_taken, prescription_notes, payment_mode, ...rest } = sale;
           return rest;
         });
-        
+
         const fallbackResult = await supabase.from('sales').insert(fallbackSalesToInsert);
         error = fallbackResult.error;
-        
+
         // If the fallback also fails, show a more specific error message
         if (error) {
-          throw new Error("The database needs to be updated to support customer information. Please contact your administrator to apply the required database migration.");
+          throw new Error("The database needs to be updated. Please run the required migrations in Supabase.");
         } else {
-          // If fallback succeeds, show a warning that customer info wasn't saved
+          // If fallback succeeds, show a warning
           toast({
             title: "Sale recorded",
-            description: `Sale of ${selectedProducts.length} item(s) recorded successfully${customerName ? ' for ' + customerName : ''}. Note: Customer information could not be saved due to missing database columns.`,
+            description: `Sale of ${selectedProducts.length} item(s) recorded successfully${customerName ? ' for ' + customerName : ''}. Note: Some fields could not be saved due to missing database columns.`,
           });
         }
       } else if (error) {
@@ -378,6 +445,15 @@ export default function Sales() {
         toast({
           title: "Sale recorded",
           description: `Sale of ${selectedProducts.length} item(s) recorded successfully${customerName ? ' for ' + customerName : ''}`,
+          action: (
+            <Button
+              size="sm"
+              onClick={() => navigate(`/print-bill/${billId}`)}
+              className="mt-2 bg-blue-600 hover:bg-blue-700 text-white border-none shadow-sm"
+            >
+              Print Bill
+            </Button>
+          ),
         });
       }
 
@@ -388,14 +464,23 @@ export default function Sales() {
       // Reset customer details
       setCustomerName('');
       setCustomerPhone('');
+      setCustomerAddress('');
+      setPrescriptionMonths('');
+      setMonthsTaken('');
+      setPrescriptionNotes('');
+      // Reset discount and custom rates
+      setDiscountPercentage(0);
+      setProductPrices({});
+      setCustomGstRates({});
+      setPaymentMode('cash');
       // Refresh data after recording sale
       fetchData();
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Error recording sale",
-        description: error.message.includes('customer_name') || error.message.includes('column') 
-          ? "The database needs to be updated to support customer information. Please ask your administrator to apply the required database migration from the Supabase dashboard." 
+        description: error.message.includes('customer_name') || error.message.includes('column')
+          ? "The database needs to be updated to support customer information. Please ask your administrator to apply the required database migration from the Supabase dashboard."
           : error.message,
       });
     }
@@ -403,35 +488,79 @@ export default function Sales() {
 
   // Calculate pagination values
   const totalPages = Math.ceil(totalSales / itemsPerPage);
-  
+
   // Memoize calculated values
   // Calculate totals for all selected products (updated to use custom prices and custom GST rates)
   const orderTotals = useMemo(() => {
+    const isGstInclusive = settings?.gst_type === 'inclusive';
     let subtotal = 0;
     let gstAmount = 0;
-    let grandTotal = 0;
 
     selectedProducts.forEach(item => {
       const product = products.find(p => p.id === item.id);
       if (product) {
         // Use custom price if set, otherwise use product's selling price
         const unitPrice = productPrices[item.id] || product.selling_price;
-        const itemSubtotal = unitPrice * item.quantity;
-        
+        const itemTotal = unitPrice * item.quantity;
+
         // Use custom GST rate if set, otherwise use default from settings
         const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : settings?.default_gst_rate || 0;
-        const itemGstAmount = settings?.gst_enabled 
-          ? (itemSubtotal * itemGstRate) / 100 
-          : 0;
-          
+
+        let itemSubtotal, itemGstAmount;
+
+        if (settings?.gst_enabled) {
+          if (isGstInclusive) {
+            // Inclusive: Price includes GST, calculate backwards
+            // itemTotal = basePrice + GST
+            // itemTotal = basePrice * (1 + rate/100)
+            // basePrice = itemTotal / (1 + rate/100)
+            itemSubtotal = itemTotal / (1 + itemGstRate / 100);
+            itemGstAmount = itemTotal - itemSubtotal;
+          } else {
+            // Exclusive: GST added to price
+            itemSubtotal = itemTotal;
+            itemGstAmount = (itemSubtotal * itemGstRate) / 100;
+          }
+        } else {
+          itemSubtotal = itemTotal;
+          itemGstAmount = 0;
+        }
+
         subtotal += itemSubtotal;
         gstAmount += itemGstAmount;
-        grandTotal += itemSubtotal + itemGstAmount;
       }
     });
 
-    return { subtotal, gstAmount, grandTotal };
-  }, [selectedProducts, products, productPrices, customGstRates, settings]);
+    // Calculate discount on subtotal
+    const discountAmount = (subtotal * discountPercentage) / 100;
+    const discountedSubtotal = subtotal - discountAmount;
+
+    // Recalculate GST on discounted amount
+    let finalGstAmount = 0;
+    let grandTotal = 0;
+
+    if (settings?.gst_enabled) {
+      if (isGstInclusive) {
+        // For inclusive, the discounted subtotal already has GST calculated
+        finalGstAmount = (discountedSubtotal * (settings?.default_gst_rate || 0)) / (100 + (settings?.default_gst_rate || 0));
+        grandTotal = discountedSubtotal + finalGstAmount;
+      } else {
+        // For exclusive, add GST to discounted subtotal
+        finalGstAmount = (discountedSubtotal * (settings?.default_gst_rate || 0)) / 100;
+        grandTotal = discountedSubtotal + finalGstAmount;
+      }
+    } else {
+      grandTotal = discountedSubtotal;
+    }
+
+    return {
+      subtotal: Math.round(subtotal * 100) / 100,
+      discountAmount: Math.round(discountAmount * 100) / 100,
+      discountedSubtotal: Math.round(discountedSubtotal * 100) / 100,
+      gstAmount: Math.round(finalGstAmount * 100) / 100,
+      grandTotal: Math.round(grandTotal) // Round to nearest whole number
+    };
+  }, [selectedProducts, products, productPrices, customGstRates, settings, discountPercentage]);
 
   // Handle page change
   const handlePageChange = (page: number) => {
@@ -448,22 +577,23 @@ export default function Sales() {
   };
 
   // Function to download sale details as text
-  const downloadSaleDetails = () => {
-    if (!selectedSale) return;
-    
-    const saleDate = new Date(selectedSale.created_at).toLocaleString();
-    const customerName = selectedSale.customer_name || "Walk-in Customer";
-    const customerPhone = selectedSale.customer_phone || "Not provided";
-    
+  const downloadSaleDetails = (sale?: Sale) => {
+    const targetSale = sale || selectedSale;
+    if (!targetSale) return;
+
+    const saleDate = new Date(targetSale.created_at).toLocaleString();
+    const customerName = targetSale.customer_name || "Walk-in Customer";
+    const customerPhone = targetSale.customer_phone || "Not provided";
+
     const content = `
 SALE RECEIPT
 ====================
 Date: ${saleDate}
-Product: ${selectedSale.products?.name}
-Quantity: ${selectedSale.quantity}
-Unit Price: ₹${selectedSale.unit_price.toFixed(2)}
-GST Amount: ₹${(selectedSale.gst_amount || 0).toFixed(2)}
-Total Price: ₹${selectedSale.total_price.toFixed(2)}
+Product: ${targetSale.products?.name}
+Quantity: ${targetSale.quantity}
+Unit Price: ₹${targetSale.unit_price.toFixed(2)}
+GST Amount: ₹${(targetSale.gst_amount || 0).toFixed(2)}
+Total Price: ₹${targetSale.total_price.toFixed(2)}
 
 CUSTOMER DETAILS
 ====================
@@ -472,12 +602,12 @@ Phone: ${customerPhone}
 
 Thank you for your purchase!
     `.trim();
-    
+
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `sale-receipt-${selectedSale.id}.txt`;
+    a.download = `sale-receipt-${targetSale.id}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -497,7 +627,7 @@ Thank you for your purchase!
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button 
+            <Button
               className="text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
               onClick={async () => {
                 // Refresh settings when opening the dialog
@@ -505,12 +635,12 @@ Thank you for your purchase!
                   try {
                     const settingsRes = await supabase
                       .from('settings')
-                      .select('gst_enabled, default_gst_rate')
+                      .select('gst_enabled, default_gst_rate, gst_type')
                       .eq('account_id', profile.account_id)
                       .single();
-                    
+
                     if (!settingsRes.error) {
-                      setSettings(settingsRes.data);
+                      setSettings(settingsRes.data as any);
                     }
                   } catch (error) {
                     console.error('Error refreshing settings:', error);
@@ -539,16 +669,19 @@ Thank you for your purchase!
                     variant="outline"
                     size="sm"
                     onClick={() => {
+                      setSelectedProducts([]);
                       setCurrentProduct('');
                       setCurrentQuantity(1);
                       setProductPrices({});
+                      setCustomGstRates({});
+                      setDiscountPercentage(0);
                     }}
                     className="text-sm"
                   >
                     Clear All
                   </Button>
                 </div>
-                
+
                 {selectedProducts.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <ShoppingCart className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -560,19 +693,19 @@ Thank you for your purchase!
                     {selectedProducts.map((item) => {
                       const product = products.find(p => p.id === item.id);
                       if (!product) return null;
-                      
+
                       // Use custom price if set, otherwise use product's selling price
                       const unitPrice = productPrices[item.id] || product.selling_price;
                       const itemSubtotal = unitPrice * item.quantity;
-                      
+
                       // Use custom GST rate if set, otherwise use default from settings
                       const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : settings?.default_gst_rate || 0;
-                      const itemGstAmount = settings?.gst_enabled 
-                        ? (itemSubtotal * itemGstRate) / 100 
+                      const itemGstAmount = settings?.gst_enabled
+                        ? (itemSubtotal * itemGstRate) / 100
                         : 0;
-                        
+
                       const itemTotal = itemSubtotal + itemGstAmount;
-                      
+
                       return (
                         <div key={item.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
                           <div className="flex-1">
@@ -673,17 +806,16 @@ Thank you for your purchase!
                           className="pl-10 py-2 text-sm"
                         />
                       </div>
-                      
+
                       {/* Product selection list - always visible when searching or no product selected */}
                       {(productSearchTerm || !currentProduct) && (
                         <div className="border rounded-md bg-white max-h-40 overflow-y-auto">
                           {filteredProducts.length > 0 ? (
                             filteredProducts.map((product) => (
-                              <div 
+                              <div
                                 key={product.id}
-                                className={`py-2 px-3 cursor-pointer flex justify-between items-center border-b last:border-b-0 ${
-                                  currentProduct === product.id ? 'bg-blue-50' : 'hover:bg-gray-50'
-                                }`}
+                                className={`py-2 px-3 cursor-pointer flex justify-between items-center border-b last:border-b-0 ${currentProduct === product.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+                                  }`}
                                 onClick={() => {
                                   setCurrentProduct(product.id);
                                   // Don't clear search term so user can see what they selected
@@ -700,10 +832,10 @@ Thank you for your purchase!
                           )}
                         </div>
                       )}
-                      
+
                       {/* Show selected product when one is selected and no search is active */}
                       {currentProduct && !productSearchTerm && (
-                        <div 
+                        <div
                           className="py-2 px-3 border rounded-md bg-white cursor-pointer flex justify-between items-center"
                           onClick={() => {
                             // Clear selection to show all products again
@@ -738,7 +870,7 @@ Thank you for your purchase!
                     />
                   </div>
                 </div>
-                
+
                 {currentProduct && (
                   <div className="space-y-2 mt-3">
                     <Label htmlFor="customPrice" className="text-sm font-medium">
@@ -766,7 +898,7 @@ Thank you for your purchase!
                     </div>
                   </div>
                 )}
-                
+
                 <Button
                   type="button"
                   onClick={handleAddToCart}
@@ -775,6 +907,25 @@ Thank you for your purchase!
                   <Plus className="h-4 w-4 mr-2" />
                   {selectedProducts.some(p => p.id === currentProduct) ? 'Update Item' : 'Add to Cart'}
                 </Button>
+              </div>
+
+              {/* Payment Mode Section */}
+              <div className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg">
+                <Label htmlFor="paymentMode" className="text-sm font-medium whitespace-nowrap">Payment:</Label>
+                <Select value={paymentMode} onValueChange={setPaymentMode}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select payment mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">💵 Cash</SelectItem>
+                    <SelectItem value="upi">📱 UPI</SelectItem>
+                    <SelectItem value="card">💳 Card</SelectItem>
+                    <SelectItem value="net_banking">🏦 Net Banking</SelectItem>
+                    <SelectItem value="wallet">👛 Wallet</SelectItem>
+                    <SelectItem value="cheque">📝 Cheque</SelectItem>
+                    <SelectItem value="other">💰 Other</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Customer Details Form */}
@@ -796,15 +947,75 @@ Thank you for your purchase!
                     <Input
                       id="customerPhone"
                       value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      placeholder="Enter phone number"
+                      onChange={(e) => {
+                        let value = e.target.value;
+                        // Auto-format with +91 for Indian numbers
+                        if (value && !value.startsWith('+')) {
+                          const cleaned = value.replace(/\D/g, '');
+                          if (cleaned.length === 10) {
+                            value = '+91' + cleaned;
+                          } else if (cleaned.length === 12 && cleaned.startsWith('91')) {
+                            value = '+' + cleaned;
+                          } else if (cleaned.length > 0) {
+                            value = '+91' + cleaned;
+                          }
+                        }
+                        setCustomerPhone(value);
+                      }}
+                      placeholder="Enter phone number (auto-adds +91)"
                       type="tel"
+                      className="py-2 px-3 w-full"
+                    />
+                  </div>
+                  <div className="space-y-2 sm:col-span-3">
+                    <Label htmlFor="customerAddress" className="text-sm font-medium">Address</Label>
+                    <Input
+                      id="customerAddress"
+                      value={customerAddress}
+                      onChange={(e) => setCustomerAddress(e.target.value)}
+                      placeholder="Enter address"
+                      className="py-2 px-3 w-full"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="prescriptionMonths" className="text-sm font-medium">Prescription: Months</Label>
+                    <Input
+                      id="prescriptionMonths"
+                      type="number"
+                      min="0"
+                      value={prescriptionMonths}
+                      onChange={(e) => setPrescriptionMonths(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                      placeholder="e.g. 6"
+                      className="py-2 px-3 w-full"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="monthsTaken" className="text-sm font-medium">Months Taken</Label>
+                    <Input
+                      id="monthsTaken"
+                      type="number"
+                      min="0"
+                      value={monthsTaken}
+                      onChange={(e) => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                      placeholder="e.g. 1"
+                      className="py-2 px-3 w-full"
+                    />
+                  </div>
+                  <div className="space-y-2 sm:col-span-3">
+                    <Label htmlFor="prescriptionNotes" className="text-sm font-medium">Prescription Notes</Label>
+                    <Input
+                      id="prescriptionNotes"
+                      value={prescriptionNotes}
+                      onChange={(e) => setPrescriptionNotes(e.target.value)}
+                      placeholder="Optional notes"
                       className="py-2 px-3 w-full"
                     />
                   </div>
                 </div>
               </div>
-              
+
               {/* Order Summary */}
               {selectedProducts.length > 0 && (
                 <Card className="space-y-4 p-6 bg-gradient-to-br from-gray-50 to-white border-0 shadow-md">
@@ -818,6 +1029,30 @@ Thank you for your purchase!
                       <span>Subtotal:</span>
                       <span>₹{orderTotals.subtotal.toFixed(2)}</span>
                     </div>
+
+                    {/* Discount Section */}
+                    <div className="space-y-2 border-t pt-2">
+                      <div className="flex items-center gap-2">
+                        <Label className="text-sm font-medium">Discount (%):</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.1"
+                          value={discountPercentage}
+                          onChange={(e) => setDiscountPercentage(parseFloat(e.target.value) || 0)}
+                          className="w-20 h-8 text-sm"
+                          placeholder="0"
+                        />
+                      </div>
+                      {discountPercentage > 0 && (
+                        <div className="flex justify-between text-lg text-red-600">
+                          <span>Discount ({discountPercentage}%):</span>
+                          <span>-₹{orderTotals.discountAmount.toFixed(2)}</span>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="flex justify-between text-lg">
                       <span>GST:</span>
                       <span>₹{orderTotals.gstAmount.toFixed(2)}</span>
@@ -829,19 +1064,19 @@ Thank you for your purchase!
                   </div>
                 </Card>
               )}
-              
+
               <div className="flex gap-4 pt-2">
-                <Button 
-                  type="submit" 
+                <Button
+                  type="submit"
                   disabled={selectedProducts.length === 0}
                   className="flex-1 text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
                 >
                   <ShoppingCart className="h-5 w-5 mr-2" />
                   Record Sale
                 </Button>
-                <Button 
-                  type="button" 
-                  variant="outline" 
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={() => {
                     setIsDialogOpen(false);
                     // Reset all form fields
@@ -850,7 +1085,15 @@ Thank you for your purchase!
                     setCurrentQuantity(1);
                     setCustomerName('');
                     setCustomerPhone('');
-                  }} 
+                    setCustomerAddress('');
+                    setPrescriptionMonths('');
+                    setMonthsTaken('');
+                    setPrescriptionNotes('');
+                    setDiscountPercentage(0);
+                    setProductPrices({});
+                    setCustomGstRates({});
+                    setPaymentMode('cash');
+                  }}
                   className="flex-1 text-lg py-3 px-6"
                 >
                   Cancel
@@ -887,8 +1130,8 @@ Thank you for your purchase!
               <p className="text-muted-foreground text-lg mb-6">
                 Start recording sales transactions
               </p>
-              <Button 
-                onClick={() => setIsDialogOpen(true)} 
+              <Button
+                onClick={() => setIsDialogOpen(true)}
                 className="text-lg py-3 px-8 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
               >
                 <Plus className="h-5 w-5 mr-2" />
@@ -912,8 +1155,8 @@ Thank you for your purchase!
                   </TableHeader>
                   <TableBody>
                     {sales.map((sale) => (
-                      <TableRow 
-                        key={sale.id} 
+                      <TableRow
+                        key={sale.id}
                         className="hover:bg-green-50 transition-colors"
                       >
                         <TableCell className="font-medium text-lg py-4">{sale.products?.name}</TableCell>
@@ -923,36 +1166,60 @@ Thank you for your purchase!
                         <TableCell className="text-lg py-4 font-bold text-green-600">₹{sale.total_price.toFixed(2)}</TableCell>
                         <TableCell className="text-lg py-4">{new Date(sale.created_at).toLocaleDateString()}</TableCell>
                         <TableCell className="text-lg py-4">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => showSaleDetails(sale)}
-                            className="text-lg py-2 px-3"
-                          >
-                            <Eye className="h-5 w-5" />
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => showSaleDetails(sale)}
+                              className="h-8 w-8 p-0 border-blue-200 hover:bg-blue-50 text-blue-600"
+                              title="View Details"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={!sale.bill_id}
+                              onClick={() => sale.bill_id && navigate(`/print-bill/${sale.bill_id}`)}
+                              className="h-8 w-8 p-0 border-purple-200 hover:bg-purple-50 text-purple-600"
+                              title="Print Bill"
+                            >
+                              <Printer className="h-4 w-4" />
+                            </Button>
+
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => downloadSaleDetails(sale)}
+                              className="h-8 w-8 p-0 border-green-200 hover:bg-green-50 text-green-600"
+                              title="Download Receipt"
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
-              
+
               {/* Pagination controls */}
               {totalPages > 1 && (
                 <div className="mt-8">
                   <Pagination>
                     <PaginationContent>
                       <PaginationItem>
-                        <PaginationPrevious 
+                        <PaginationPrevious
                           onClick={() => handlePageChange(currentPage - 1)}
                           className={`${currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"} text-lg py-2 px-4`}
                         />
                       </PaginationItem>
-                      
+
                       {/* First page */}
                       <PaginationItem>
-                        <PaginationLink 
+                        <PaginationLink
                           onClick={() => handlePageChange(1)}
                           isActive={currentPage === 1}
                           className="text-lg py-2 px-4"
@@ -960,21 +1227,21 @@ Thank you for your purchase!
                           1
                         </PaginationLink>
                       </PaginationItem>
-                      
+
                       {/* Ellipsis for skipped pages at the start */}
                       {currentPage > 3 && (
                         <PaginationItem>
                           <PaginationEllipsis className="text-lg" />
                         </PaginationItem>
                       )}
-                      
+
                       {/* Pages around current page */}
                       {Array.from({ length: Math.min(3, totalPages - 2) }, (_, i) => {
                         const page = currentPage - 1 + i;
                         if (page > 1 && page < totalPages) {
                           return (
                             <PaginationItem key={page}>
-                              <PaginationLink 
+                              <PaginationLink
                                 onClick={() => handlePageChange(page)}
                                 isActive={currentPage === page}
                                 className="text-lg py-2 px-4"
@@ -986,18 +1253,18 @@ Thank you for your purchase!
                         }
                         return null;
                       })}
-                      
+
                       {/* Ellipsis for skipped pages at the end */}
                       {currentPage < totalPages - 2 && (
                         <PaginationItem>
                           <PaginationEllipsis className="text-lg" />
                         </PaginationItem>
                       )}
-                      
+
                       {/* Last page */}
                       {totalPages > 1 && (
                         <PaginationItem>
-                          <PaginationLink 
+                          <PaginationLink
                             onClick={() => handlePageChange(totalPages)}
                             isActive={currentPage === totalPages}
                             className="text-lg py-2 px-4"
@@ -1006,9 +1273,9 @@ Thank you for your purchase!
                           </PaginationLink>
                         </PaginationItem>
                       )}
-                      
+
                       <PaginationItem>
-                        <PaginationNext 
+                        <PaginationNext
                           onClick={() => handlePageChange(currentPage + 1)}
                           className={`${currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"} text-lg py-2 px-4`}
                         />
@@ -1082,14 +1349,22 @@ Thank you for your purchase!
               </Card>
 
               <div className="flex gap-4">
-                <Button 
-                  onClick={downloadSaleDetails}
+                <Button
+                  onClick={() => downloadSaleDetails(selectedSale)}
                   className="flex-1 text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
                 >
                   Download Receipt
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
+                  disabled={!selectedSale.bill_id}
+                  onClick={() => selectedSale.bill_id && navigate(`/print-bill/${selectedSale.bill_id}`)}
+                  className="flex-1 text-lg py-3 px-6"
+                >
+                  Print Bill
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={() => setIsDetailModalOpen(false)}
                   className="flex-1 text-lg py-3 px-6"
                 >

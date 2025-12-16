@@ -1,4 +1,4 @@
-# EsyStock Inventory Management System
+# Medstocksy Inventory Management System
 
 This is a comprehensive inventory management application built with React, TypeScript, and Supabase.
 

@@ -18,7 +18,7 @@ This is a comprehensive inventory management application built with React, TypeS
 
 ## Deployment
 
-This application is deployed on Vercel at https://esystock.vercel.app/
+This application is deployed on Vercel at https://medstocksy.vercel.app/
 
 ## Technologies Used
 

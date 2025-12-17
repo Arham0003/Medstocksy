@@ -347,49 +347,36 @@ export default function Sales() {
 
         // Use custom price if set, otherwise use product's selling price
         const unitPrice = productPrices[item.id] || product.selling_price;
-        const itemTotal = unitPrice * item.quantity;
+        // 1st: Amount * Quantity
+        const grossAmount = unitPrice * item.quantity;
 
-        let basePrice, gstAmount, totalPrice;
+        // 2nd: Deduct discount
+        const discountAmount = (grossAmount * discountPercentage) / 100;
+        const netAmount = grossAmount - discountAmount;
 
+        // 3rd: Calculation of GST
         // Use custom GST rate if set, otherwise use default from settings
         const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : currentSettings?.default_gst_rate || 0;
 
-        if (currentSettings?.gst_enabled) {
-          if (isGstInclusive) {
-            // Inclusive: Price includes GST
-            totalPrice = itemTotal;
-            basePrice = itemTotal / (1 + itemGstRate / 100);
-            gstAmount = itemTotal - basePrice;
-          } else {
-            // Exclusive: GST added to price
-            basePrice = itemTotal;
-            gstAmount = (basePrice * itemGstRate) / 100;
-            totalPrice = basePrice + gstAmount;
-          }
-        } else {
-          basePrice = itemTotal;
-          gstAmount = 0;
-          totalPrice = itemTotal;
-        }
-
-        // Apply discount to the base price
-        const discountAmount = (basePrice * discountPercentage) / 100;
-        const discountedBasePrice = basePrice - discountAmount;
-
-        // Recalculate GST on discounted price
         let finalGstAmount = 0;
         let finalTotalPrice = 0;
 
+        // Note: For database storage, we typically store the Final Total Price and the GST component of it.
+
         if (currentSettings?.gst_enabled) {
           if (isGstInclusive) {
-            finalGstAmount = (discountedBasePrice * itemGstRate) / 100;
-            finalTotalPrice = discountedBasePrice + finalGstAmount;
+            // Inclusive: User requested calculation is Net Amount * Rate / 100
+            // Although standard accounting is Net - (Net / (1+Rate)), the user specifically requested this flow.
+            finalGstAmount = (netAmount * itemGstRate) / 100;
+            finalTotalPrice = netAmount;
           } else {
-            finalGstAmount = (discountedBasePrice * itemGstRate) / 100;
-            finalTotalPrice = discountedBasePrice + finalGstAmount;
+            // Exclusive: GST is added ON TOP of the Net Amount (which is treated as Base)
+            finalGstAmount = (netAmount * itemGstRate) / 100;
+            finalTotalPrice = netAmount + finalGstAmount;
           }
         } else {
-          finalTotalPrice = discountedBasePrice;
+          finalTotalPrice = netAmount;
+          finalGstAmount = 0;
         }
 
         return {
@@ -493,71 +480,57 @@ export default function Sales() {
   // Calculate totals for all selected products (updated to use custom prices and custom GST rates)
   const orderTotals = useMemo(() => {
     const isGstInclusive = settings?.gst_type === 'inclusive';
-    let subtotal = 0;
-    let gstAmount = 0;
+    let subtotal = 0; // The sum of (Price * Qty)
+    let totalGstAmount = 0;
+    let grandTotal = 0;
 
     selectedProducts.forEach(item => {
       const product = products.find(p => p.id === item.id);
       if (product) {
         // Use custom price if set, otherwise use product's selling price
         const unitPrice = productPrices[item.id] || product.selling_price;
-        const itemTotal = unitPrice * item.quantity;
+        const grossAmount = unitPrice * item.quantity;
 
-        // Use custom GST rate if set, otherwise use default from settings
+        // Accumulate subtotal (Gross)
+        subtotal += grossAmount;
+
+        // Calculate Discount for this line
+        const discountAmount = (grossAmount * discountPercentage) / 100;
+        const netAmount = grossAmount - discountAmount;
+
+        // Calculate GST for this line
         const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : settings?.default_gst_rate || 0;
-
-        let itemSubtotal, itemGstAmount;
+        let itemGstVal = 0;
+        let itemTotalVal = 0;
 
         if (settings?.gst_enabled) {
           if (isGstInclusive) {
-            // Inclusive: Price includes GST, calculate backwards
-            // itemTotal = basePrice + GST
-            // itemTotal = basePrice * (1 + rate/100)
-            // basePrice = itemTotal / (1 + rate/100)
-            itemSubtotal = itemTotal / (1 + itemGstRate / 100);
-            itemGstAmount = itemTotal - itemSubtotal;
+            // Inclusive: User requested calculation is Net Amount * Rate / 100
+            itemGstVal = (netAmount * itemGstRate) / 100;
+            itemTotalVal = netAmount;
           } else {
-            // Exclusive: GST added to price
-            itemSubtotal = itemTotal;
-            itemGstAmount = (itemSubtotal * itemGstRate) / 100;
+            // Net Amount is Base, add GST
+            itemGstVal = (netAmount * itemGstRate) / 100;
+            itemTotalVal = netAmount + itemGstVal;
           }
         } else {
-          itemSubtotal = itemTotal;
-          itemGstAmount = 0;
+          itemTotalVal = netAmount;
         }
 
-        subtotal += itemSubtotal;
-        gstAmount += itemGstAmount;
+        totalGstAmount += itemGstVal;
+        grandTotal += itemTotalVal;
       }
     });
 
-    // Calculate discount on subtotal
-    const discountAmount = (subtotal * discountPercentage) / 100;
-    const discountedSubtotal = subtotal - discountAmount;
-
-    // Recalculate GST on discounted amount
-    let finalGstAmount = 0;
-    let grandTotal = 0;
-
-    if (settings?.gst_enabled) {
-      if (isGstInclusive) {
-        // For inclusive, the discounted subtotal already has GST calculated
-        finalGstAmount = (discountedSubtotal * (settings?.default_gst_rate || 0)) / (100 + (settings?.default_gst_rate || 0));
-        grandTotal = discountedSubtotal + finalGstAmount;
-      } else {
-        // For exclusive, add GST to discounted subtotal
-        finalGstAmount = (discountedSubtotal * (settings?.default_gst_rate || 0)) / 100;
-        grandTotal = discountedSubtotal + finalGstAmount;
-      }
-    } else {
-      grandTotal = discountedSubtotal;
-    }
+    const totalDiscountAmount = (subtotal * discountPercentage) / 100;
+    // Note: grandTotal already has discount deducted in the loop
 
     return {
       subtotal: Math.round(subtotal * 100) / 100,
-      discountAmount: Math.round(discountAmount * 100) / 100,
-      discountedSubtotal: Math.round(discountedSubtotal * 100) / 100,
-      gstAmount: Math.round(finalGstAmount * 100) / 100,
+      discountAmount: Math.round(totalDiscountAmount * 100) / 100,
+      // discountedSubtotal is just informational now, usually Subtotal - Discount
+      discountedSubtotal: Math.round((subtotal - totalDiscountAmount) * 100) / 100,
+      gstAmount: Math.round(totalGstAmount * 100) / 100,
       grandTotal: Math.round(grandTotal) // Round to nearest whole number
     };
   }, [selectedProducts, products, productPrices, customGstRates, settings, discountPercentage]);
@@ -696,15 +669,33 @@ Thank you for your purchase!
 
                       // Use custom price if set, otherwise use product's selling price
                       const unitPrice = productPrices[item.id] || product.selling_price;
+                      // "Subtotal" here refers to the line total before global discount (but includes tax if inclusive)
                       const itemSubtotal = unitPrice * item.quantity;
 
                       // Use custom GST rate if set, otherwise use default from settings
                       const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : settings?.default_gst_rate || 0;
-                      const itemGstAmount = settings?.gst_enabled
-                        ? (itemSubtotal * itemGstRate) / 100
-                        : 0;
 
-                      const itemTotal = itemSubtotal + itemGstAmount;
+                      let itemGstAmount = 0;
+                      let itemTotal = 0;
+                      const isGstInclusive = settings?.gst_type === 'inclusive';
+
+                      if (settings?.gst_enabled) {
+                        if (isGstInclusive) {
+                          // For inclusive, the price already includes GST.
+                          // User requested logic: GST = Amount * Rate / 100
+                          itemGstAmount = (itemSubtotal * itemGstRate) / 100;
+                          itemTotal = itemSubtotal;
+                        } else {
+                          // For exclusive, add GST
+                          itemGstAmount = (itemSubtotal * itemGstRate) / 100;
+                          itemTotal = itemSubtotal + itemGstAmount;
+                        }
+                      } else {
+                        itemTotal = itemSubtotal;
+                      }
+
+                      // Note: This display item loop doesn't show the global discount per-item currently, 
+                      // but it should show the correct pre-discount totals.
 
                       return (
                         <div key={item.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-md">

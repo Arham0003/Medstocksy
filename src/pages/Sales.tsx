@@ -146,7 +146,7 @@ export default function Sales() {
           if (fallbackRes.data) {
             // Transform data to include optional customer fields
             salesData = fallbackRes.data.map(sale => ({
-              ...sale,
+              ...(sale as any),
               customer_name: null,
               customer_phone: null,
               customer_address: null,

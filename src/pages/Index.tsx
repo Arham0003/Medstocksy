@@ -103,7 +103,7 @@ const Index = () => {
     <div className="space-y-8">
       <div className="text-center py-6">
         <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-          Store Dashboard
+          Medstocksy
         </h1>
         <p className="text-muted-foreground text-lg mt-2">
           Manage your inventory and business performance

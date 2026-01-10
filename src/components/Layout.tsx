@@ -3,11 +3,11 @@ import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGrou
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { 
-  Home, 
-  Package, 
-  ShoppingCart, 
-  BarChart3, 
+import {
+  Home,
+  Package,
+  ShoppingCart,
+  BarChart3,
   Settings,
   LogOut,
   User,
@@ -34,7 +34,7 @@ const AppSidebar = memo(() => {
   const location = useLocation();
   const [accountName, setAccountName] = useState('My Store');
   const [userName, setUserName] = useState('Store Owner');
-  
+
   const navItems = ownerNavItems;
 
   // Fetch account name and user name
@@ -47,18 +47,18 @@ const AppSidebar = memo(() => {
           .select('name')
           .eq('id', profile.account_id)
           .single();
-        
+
         if (!accountError && accountData) {
           setAccountName(accountData.name);
         }
-        
+
         // Fetch user name from profile
         if (profile?.email) {
           setUserName(profile.email.split('@')[0]);
         }
       }
     };
-    
+
     fetchData();
   }, [profile?.account_id, profile?.email]);
 
@@ -68,8 +68,8 @@ const AppSidebar = memo(() => {
         {/* Brand Header */}
         <div className="p-4 border-b border-sidebar-border">
           <div className="flex items-center gap-3">
-            <div className="bg-primary p-2 rounded-lg">
-              <Store className="h-6 w-6 text-primary-foreground" />
+            <div className="h-10 w-10 overflow-hidden rounded-lg">
+              <img src="/sidebar-logo.jpg" alt="Logo" className="h-full w-full object-cover" />
             </div>
             <div className="flex flex-col">
               <div className="font-bold text-lg text-sidebar-foreground">{accountName}</div>
@@ -77,15 +77,15 @@ const AppSidebar = memo(() => {
             </div>
           </div>
         </div>
-        
+
         {/* Navigation */}
         <SidebarGroup className="flex-1 overflow-y-auto">
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => (
                 <SidebarMenuItem key={item.href} className="m-1">
-                  <SidebarMenuButton 
-                    asChild 
+                  <SidebarMenuButton
+                    asChild
                     isActive={location.pathname === item.href}
                     className="text-base py-3 rounded-lg hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
                   >
@@ -99,7 +99,7 @@ const AppSidebar = memo(() => {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        
+
         {/* User Profile Section */}
         <div className="p-4 border-t border-sidebar-border mt-auto">
           <div className="flex items-center gap-3 mb-3">
@@ -111,9 +111,9 @@ const AppSidebar = memo(() => {
               <div className="text-xs text-muted-foreground">Store Owner</div>
             </div>
           </div>
-          <Button 
-            variant="outline" 
-            size="sm" 
+          <Button
+            variant="outline"
+            size="sm"
             onClick={signOut}
             className="w-full justify-start text-base py-2 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
           >

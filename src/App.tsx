@@ -7,7 +7,6 @@ import { AuthProvider } from "@/hooks/useAuth";
 import Layout from "@/components/Layout";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
-import OAuthCallback from "./pages/OAuthCallback";
 import NotFound from "./pages/NotFound";
 // Lazy load heavy components
 import { lazy, Suspense } from "react";
@@ -43,7 +42,6 @@ const App = () => (
         <BrowserRouter basename="/">
           <Routes>
             <Route path="/auth" element={<Auth />} />
-            <Route path="/auth/callback" element={<OAuthCallback />} />
             <Route path="/" element={<Layout />}>
               <Route index element={<Index />} />
               {/* Wrap lazy loaded components in Suspense */}

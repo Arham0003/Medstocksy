@@ -29,6 +29,8 @@ const Inventory = lazy(() => import("./pages/Inventory"));
 
 const CustomerRelation = lazy(() => import("./pages/CustomerRelation"));
 const PrintBill = lazy(() => import("./pages/PrintBill"));
+const Pricing = lazy(() => import("./pages/Pricing"));
+const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 
 const queryClient = new QueryClient();
 
@@ -98,6 +100,22 @@ const App = () => (
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Inventory />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="pricing"
+                element={
+                  <Suspense fallback={<LoadingComponent />}>
+                    <Pricing />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="admin-control"
+                element={
+                  <Suspense fallback={<LoadingComponent />}>
+                    <AdminPanel />
                   </Suspense>
                 }
               />

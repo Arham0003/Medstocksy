@@ -3,6 +3,7 @@ import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGrou
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import SubscriptionGuard from './SubscriptionGuard';
 import {
   Home,
   Package,
@@ -13,7 +14,8 @@ import {
   User,
   Store,
   Users,
-  RotateCcw
+  RotateCcw,
+  CreditCard
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { memo, useEffect, useState } from 'react';
@@ -26,6 +28,7 @@ const ownerNavItems = [
   { title: 'Customer Relation', icon: Users, href: '/customer-relation' },
   { title: 'Reports', icon: BarChart3, href: '/reports' },
   { title: 'Settings', icon: Settings, href: '/settings' },
+  { title: 'Billing & Plans', icon: CreditCard, href: '/pricing' },
 ];
 
 // Memoized Sidebar component to prevent unnecessary re-renders
@@ -152,7 +155,9 @@ export default function Layout() {
             <SidebarTrigger className="h-10 w-10" />
           </header>
           <div className="flex-1 p-4 sm:p-6 overflow-y-auto">
-            <Outlet />
+            <SubscriptionGuard>
+              <Outlet />
+            </SubscriptionGuard>
           </div>
         </main>
       </div>

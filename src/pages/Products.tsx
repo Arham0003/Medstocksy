@@ -22,18 +22,21 @@ import {
 interface Product {
   id: string;
   name: string;
-  hsn_code: string;
-  category: string;
-  batch_number: string;
-  manufacturer: string;
-  expiry_date: string | null;
+  sku?: string | null;
+  hsn_code?: string | null;
+  category: string | null;
+  batch_number?: string | null;
+  manufacturer?: string | null;
+  expiry_date?: string | null;
   quantity: number;
-  purchase_price: number;
+  purchase_price: number | null;
   selling_price: number;
-  gst: number;
-  supplier: string;
-  low_stock_threshold: number;
+  gst: number | null;
+  supplier: string | null;
+  low_stock_threshold: number | null;
+  account_id?: string;
   created_at: string;
+  updated_at?: string | null;
 }
 
 // Preset product categories for pharmacy/medical store
@@ -286,6 +289,7 @@ export default function Products() {
           return {
             id: crypto.randomUUID(),
             name: getColumnValue('name') || '',
+            sku: getColumnValue('sku') || '',
             hsn_code: getColumnValue('hsn_code') || getColumnValue('hsn code') || '',
             category: getColumnValue('category') || '',
             batch_number: getColumnValue('batch_number') || getColumnValue('batch number') || '',

@@ -53,8 +53,8 @@ const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
         checkSubscription();
     }, [user, location.pathname]);
 
-    // If we are already on the pricing page, don't block!
-    if (location.pathname === "/pricing") {
+    // If we are already on the pricing page or admin control, don't block!
+    if (location.pathname === "/pricing" || location.pathname.startsWith("/admin-control")) {
         return <>{children}</>;
     }
 
@@ -67,7 +67,11 @@ const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
         <>
             {children}
             <Dialog open={isOpen} onOpenChange={setIsOpen}>
-                <DialogContent className="sm:max-w-md" onInteractOutside={(e) => e.preventDefault()}>
+                <DialogContent
+                    className="sm:max-w-md [&>button]:hidden"
+                    onInteractOutside={(e) => e.preventDefault()}
+                    onEscapeKeyDown={(e) => e.preventDefault()}
+                >
                     <DialogHeader>
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100">
                             <AlertTriangle className="h-6 w-6 text-red-600" />

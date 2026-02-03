@@ -82,6 +82,8 @@ export default function Sales() {
   const [discountPercentage, setDiscountPercentage] = useState<number>(0);
   // Payment mode state
   const [paymentMode, setPaymentMode] = useState<string>('cash');
+  // Loading state for recording sale
+  const [isRecordingSales, setIsRecordingSales] = useState(false);
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -314,13 +316,17 @@ export default function Sales() {
   const handleSale = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (selectedProducts.length === 0) {
-      toast({
-        variant: "destructive",
-        title: "Please add at least one product to cart",
-      });
+    if (isRecordingSales || selectedProducts.length === 0) {
+      if (selectedProducts.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "Please add at least one product to cart",
+        });
+      }
       return;
     }
+
+    setIsRecordingSales(true);
 
     try {
       // Generate a unique bill ID for this transaction
@@ -470,6 +476,8 @@ export default function Sales() {
           ? "The database needs to be updated to support customer information. Please ask your administrator to apply the required database migration from the Supabase dashboard."
           : error.message,
       });
+    } finally {
+      setIsRecordingSales(false);
     }
   };
 
@@ -1059,11 +1067,11 @@ Thank you for your purchase!
               <div className="flex gap-4 pt-2">
                 <Button
                   type="submit"
-                  disabled={selectedProducts.length === 0}
+                  disabled={selectedProducts.length === 0 || isRecordingSales}
                   className="flex-1 text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
                 >
                   <ShoppingCart className="h-5 w-5 mr-2" />
-                  Record Sale
+                  {isRecordingSales ? "Recording..." : "Record Sale"}
                 </Button>
                 <Button
                   type="button"

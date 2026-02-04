@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Edit, Trash2, Package, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Package, AlertTriangle, Filter, X, SlidersHorizontal } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface Product {
   id: string;
@@ -70,6 +71,9 @@ export default function Products() {
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   // State for category selection
   const [selectedCategory, setSelectedCategory] = useState<string>("");
+  // Filters
+  const [expiryFilter, setExpiryFilter] = useState<string>('all');
+  const [stockFilter, setStockFilter] = useState<string>('all');
 
   const fetchProducts = async () => {
     try {
@@ -251,13 +255,47 @@ export default function Products() {
 
   // Memoize filtered products to prevent unnecessary recalculations
   const filteredProducts = useMemo(() =>
-    products.filter(product =>
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.hsn_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.manufacturer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.batch_number?.toLowerCase().includes(searchTerm.toLowerCase())
-    ), [products, searchTerm]);
+    products.filter(product => {
+      // Search filter
+      const searchMatch = !searchTerm ||
+        product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.hsn_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.manufacturer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.batch_number?.toLowerCase().includes(searchTerm.toLowerCase());
+
+      if (!searchMatch) return false;
+
+      // Stock filter
+      if (stockFilter !== 'all') {
+        const threshold = product.low_stock_threshold || 10;
+        const isLowStock = product.quantity <= threshold && product.quantity > 0;
+        const isOutOfStock = product.quantity === 0;
+        const isInStock = product.quantity > threshold;
+
+        if (stockFilter === 'in_stock' && !isInStock) return false;
+        if (stockFilter === 'low_stock' && !isLowStock) return false;
+        if (stockFilter === 'out_of_stock' && !isOutOfStock) return false;
+      }
+
+      // Expiry filter
+      if (expiryFilter !== 'all') {
+        if (!product.expiry_date) return false;
+
+        const expiryDate = new Date(product.expiry_date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const thirtyDaysFromNow = new Date();
+        thirtyDaysFromNow.setDate(today.getDate() + 30);
+        thirtyDaysFromNow.setHours(23, 59, 59, 999);
+
+        if (expiryFilter === 'expired' && expiryDate >= today) return false;
+        if (expiryFilter === 'soon' && (expiryDate < today || expiryDate > thirtyDaysFromNow)) return false;
+      }
+
+      return true;
+    }), [products, searchTerm, stockFilter, expiryFilter]);
 
   // Parse CSV data when uploaded
   useEffect(() => {
@@ -723,6 +761,70 @@ export default function Products() {
                   className="pl-10 text-lg py-3 px-4 w-full"
                 />
               </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="flex gap-2 items-center text-lg py-3 px-4 h-auto">
+                    <Filter className="h-5 w-5" />
+                    Filters
+                    {(stockFilter !== 'all' || expiryFilter !== 'all') && (
+                      <Badge variant="secondary" className="ml-1 px-2 py-0.5">
+                        {(stockFilter !== 'all' ? 1 : 0) + (expiryFilter !== 'all' ? 1 : 0)}
+                      </Badge>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 p-6" align="end">
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-bold text-xl leading-none">Filters</h4>
+                      {(stockFilter !== 'all' || expiryFilter !== 'all') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setStockFilter('all');
+                            setExpiryFilter('all');
+                          }}
+                          className="h-auto p-1 text-blue-600 hover:text-blue-800"
+                        >
+                          Clear all
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Stock Status</Label>
+                        <Select value={stockFilter} onValueChange={setStockFilter}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="All Stock" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Stock</SelectItem>
+                            <SelectItem value="in_stock">In Stock</SelectItem>
+                            <SelectItem value="low_stock">Low Stock</SelectItem>
+                            <SelectItem value="out_of_stock">Out of Stock</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Expiry Status</Label>
+                        <Select value={expiryFilter} onValueChange={setExpiryFilter}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="All Expiries" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Expiries</SelectItem>
+                            <SelectItem value="expired">Expired</SelectItem>
+                            <SelectItem value="soon">Expiring Soon (30 days)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
         </CardHeader>

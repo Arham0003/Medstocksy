@@ -36,7 +36,8 @@ BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path = public;
 
 DROP TRIGGER IF EXISTS on_subscriptions_updated ON public.subscriptions;
 CREATE TRIGGER on_subscriptions_updated

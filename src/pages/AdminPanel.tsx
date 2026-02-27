@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { toast } from "sonner";
 import { ShieldCheck, UserPlus, RefreshCcw } from "lucide-react";
@@ -13,6 +14,7 @@ const AdminPanel = () => {
     const { user } = useAuth();
     const [targetEmail, setTargetEmail] = useState("");
     const [isLoading, setIsLoading] = useState(false);
+    const [trialDays, setTrialDays] = useState(7);
 
     const handleGrantTrial = async () => {
         if (!targetEmail) {
@@ -34,14 +36,14 @@ const AdminPanel = () => {
             // 2. Insert/Update Subscription via Secure RPC (Bypasses RLS)
             const { error: subError } = await (supabase.rpc as any)('grant_admin_trial', {
                 target_user_id: userId,
-                trial_days: 7
+                trial_days: trialDays
             });
 
             if (subError) {
                 console.error("Subscription update failed", subError);
                 toast.error("Failed to grant trial: " + subError.message);
             } else {
-                toast.success(`Success! ${targetEmail} now has 7 days of access.`);
+                toast.success(`Success! ${targetEmail} now has ${trialDays} days of access.`);
                 setTargetEmail("");
             }
 
@@ -68,31 +70,57 @@ const AdminPanel = () => {
                 </CardHeader>
                 <CardContent className="space-y-6">
                     <div className="bg-white p-6 rounded-lg border shadow-sm space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                                User Email Address
-                            </label>
-                            <div className="flex gap-2">
-                                <Input
-                                    placeholder="user@example.com"
-                                    value={targetEmail}
-                                    onChange={(e) => setTargetEmail(e.target.value)}
-                                    type="email"
-                                    className="flex-1"
-                                />
-                                <Button
-                                    onClick={handleGrantTrial}
-                                    disabled={isLoading}
-                                    className="bg-orange-600 hover:bg-orange-700"
-                                >
-                                    {isLoading ? <RefreshCcw className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
-                                    Grant 7 Days
-                                </Button>
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <Label>
+                                    Trial Duration
+                                </Label>
+                                <div className="flex gap-4">
+                                    <Button
+                                        type="button"
+                                        variant={trialDays === 7 ? "default" : "outline"}
+                                        onClick={() => setTrialDays(7)}
+                                        className={trialDays === 7 ? "bg-orange-600 hover:bg-orange-700" : "border-orange-200 text-orange-700 hover:bg-orange-50"}
+                                    >
+                                        7 Days
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant={trialDays === 28 ? "default" : "outline"}
+                                        onClick={() => setTrialDays(28)}
+                                        className={trialDays === 28 ? "bg-orange-600 hover:bg-orange-700" : "border-orange-200 text-orange-700 hover:bg-orange-50"}
+                                    >
+                                        28 Days
+                                    </Button>
+                                </div>
                             </div>
-                            <p className="text-xs text-muted-foreground">
-                                This will set the user's plan to 'trial_7_days' and set expiry to 7 days from now.
-                                It overwrites any existing plan.
-                            </p>
+
+                            <div className="space-y-2">
+                                <Label>
+                                    User Email Address
+                                </Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        placeholder="user@example.com"
+                                        value={targetEmail}
+                                        onChange={(e) => setTargetEmail(e.target.value)}
+                                        type="email"
+                                        className="flex-1"
+                                    />
+                                    <Button
+                                        onClick={handleGrantTrial}
+                                        disabled={isLoading}
+                                        className="bg-orange-600 hover:bg-orange-700"
+                                    >
+                                        {isLoading ? <RefreshCcw className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
+                                        Grant {trialDays} Days
+                                    </Button>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    This will set the user's plan to 'trial_{trialDays}_days' and set expiry to {trialDays} days from now.
+                                    It overwrites any existing plan.
+                                </p>
+                            </div>
                         </div>
                     </div>
                 </CardContent>

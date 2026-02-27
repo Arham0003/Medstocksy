@@ -10,6 +10,6 @@ BEGIN
   SELECT id INTO target_user_id FROM auth.users WHERE email = email_input;
   RETURN target_user_id;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 -- SECURITY DEFINER means it runs with permissions of creator (postgres), allowing it to read auth.users table 
 -- which is normally blocked for regular users.

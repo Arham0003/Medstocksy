@@ -1,14 +1,12 @@
-import { useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 
 const Pricing = () => {
-    const [isAnnual, setIsAnnual] = useState(false);
+    const isAnnual = false; // Forced to false for now as per user request
 
     const plans = [
         {
@@ -30,7 +28,7 @@ const Pricing = () => {
         {
             name: "Professional",
             description: "Everything for a busy, growing medical shop.",
-            price: isAnnual ? "₹3,490" : "₹349",
+            price: isAnnual ? "₹4,199" : "₹399",
             period: isAnnual ? "/year" : "/month",
             features: [
                 { name: "Unlimited Products", included: true },
@@ -38,7 +36,7 @@ const Pricing = () => {
                 { name: "Inventory Forecasting", included: true },
                 { name: "Sales Analytics", included: true },
             ],
-            saving: isAnnual ? "Save ₹698/year" : null,
+            saving: isAnnual ? "Save ₹589/year" : null,
             cta: "Get Started",
             popular: true,
             variant: "default" as const,
@@ -97,7 +95,7 @@ const Pricing = () => {
                                 plan_type: 'professional_monthly',
                                 status: 'active',
                                 current_period_start: new Date().toISOString(),
-                                current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // +30 days
+                                current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
                                 razorpay_order_id: response.razorpay_order_id,
                                 razorpay_payment_id: response.razorpay_payment_id,
                             });
@@ -136,18 +134,7 @@ const Pricing = () => {
         <div className="min-h-screen bg-gray-50/50 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-7xl mx-auto space-y-8">
                 <div className="text-center space-y-4">
-                    {/* Toggle (Monthly / Annual) */}
-                    <div className="flex items-center justify-center space-x-4">
-                        <span className={`text-sm ${!isAnnual ? 'font-semibold text-gray-900' : 'text-gray-500'}`}>Monthly</span>
-                        <Switch
-                            checked={isAnnual}
-                            onCheckedChange={setIsAnnual}
-                            className="data-[state=checked]:bg-primary"
-                        />
-                        <span className={`text-sm ${isAnnual ? 'font-semibold text-gray-900' : 'text-gray-500'}`}>
-                            Annual <span className="text-emerald-500 font-medium">(Save 20%)</span>
-                        </span>
-                    </div>
+                    <p className="text-muted-foreground italic">Fixed monthly billing for maximum flexibility</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-8">

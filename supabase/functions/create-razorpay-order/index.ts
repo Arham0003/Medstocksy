@@ -15,7 +15,7 @@ serve(async (req) => {
         // Define Plan Details (Could also be fetched from DB)
         let amount = 0;
         if (planName === 'Professional') {
-            amount = 34900; // ₹349.00 in paise
+            amount = 39900; // Fixed ₹399.00 in paise for Professional plan
         } else {
             throw new Error("Invalid Plan Selected");
         }

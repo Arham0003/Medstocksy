@@ -8,7 +8,7 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Settings as SettingsIcon, Store, DollarSign } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 
 interface Settings {

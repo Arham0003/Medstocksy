@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Crown } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/db conn/supabaseClient";
 import { useAuth } from "@/hooks/useAuth";
 
 const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
@@ -102,3 +102,4 @@ const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
 };
 
 export default SubscriptionGuard;
+

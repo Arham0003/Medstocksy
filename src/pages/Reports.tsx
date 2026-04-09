@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Download, TrendingUp, Package, ShoppingCart, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
@@ -33,6 +33,7 @@ interface SalesReport {
     unit_price: number;
     total_price: number;
     created_at: string;
+    sale_date?: string | null;
   }>;
 }
 
@@ -76,6 +77,7 @@ export default function Reports() {
           total_price,
           gst_amount,
           created_at,
+          sale_date,
           products(name, purchase_price)
         `)
         .order('created_at', { ascending: false });
@@ -85,6 +87,7 @@ export default function Reports() {
         .select(`
           quantity,
           total_price,
+          sale_date,
           products(name)
         `)
         .order('created_at', { ascending: false });
@@ -94,18 +97,19 @@ export default function Reports() {
         const endDateTime = new Date(endDate);
         endDateTime.setHours(23, 59, 59, 999); // Set to end of day
         salesQuery = salesQuery
-          .gte('created_at', new Date(startDate).toISOString())
-          .lte('created_at', endDateTime.toISOString());
+          .gte('sale_date', startDate)
+          .lte('sale_date', endDate);
         productSalesQuery = productSalesQuery
-          .gte('created_at', new Date(startDate).toISOString())
-          .lte('created_at', endDateTime.toISOString());
+          .gte('sale_date', startDate)
+          .lte('sale_date', endDate);
       } else {
         // For predefined ranges, calculate the from date
         const days = parseInt(dateRange) || 7; // Default to 7 days
         const fromDate = new Date();
         fromDate.setDate(fromDate.getDate() - days);
-        salesQuery = salesQuery.gte('created_at', fromDate.toISOString());
-        productSalesQuery = productSalesQuery.gte('created_at', fromDate.toISOString());
+        const fromDateStr = fromDate.toISOString().split('T')[0];
+        salesQuery = salesQuery.gte('sale_date', fromDateStr);
+        productSalesQuery = productSalesQuery.gte('sale_date', fromDateStr);
       }
 
       // Fetch sales data with date filter
@@ -115,7 +119,7 @@ export default function Reports() {
       
       // Group by date
       const grouped = fallbackSales?.reduce((acc: any, sale) => {
-        const date = sale.created_at.split('T')[0];
+        const date = sale.sale_date || sale.created_at.split('T')[0];
         if (!acc[date]) {
           acc[date] = {
             date,
@@ -143,7 +147,8 @@ export default function Reports() {
           quantity: sale.quantity,
           unit_price: sale.unit_price,
           total_price: sale.total_price,
-          created_at: sale.created_at
+          created_at: sale.created_at,
+          sale_date: sale.sale_date
         });
         
         return acc;

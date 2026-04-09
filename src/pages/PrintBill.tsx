@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { Button } from '@/components/ui/button';
 import { Loader2, ArrowLeft, Printer } from 'lucide-react';
 
@@ -64,7 +64,7 @@ export default function PrintBill() {
                     .from('sales')
                     .select(`
             id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at,
-            customer_name, customer_phone, customer_address, prescription_notes, payment_mode, account_id, discount_percentage,
+            customer_name, customer_phone, customer_address, prescription_notes, payment_mode, account_id, discount_percentage, sale_date,
             products(name, gst, hsn_code, batch_number, expiry_date)
           `)
                     .eq('bill_id', billId);
@@ -150,7 +150,7 @@ export default function PrintBill() {
 
                 setBillData({
                     id: billId,
-                    date: firstItem.created_at,
+                    date: firstItem.sale_date || firstItem.created_at,
                     customer_name: firstItem.customer_name,
                     customer_phone: firstItem.customer_phone,
                     customer_address: firstItem.customer_address,
@@ -276,7 +276,9 @@ export default function PrintBill() {
                             {billData.items.map((item, index) => {
                                 // Reverse-calculate GST rate from stored sale data
                                 // gst_amount = (netAmount * rate) / 100, so rate = (gst_amount * 100) / netAmount
-                                const grossAmount = item.unit_price * item.quantity;
+                                const grossAmount = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
+                                    ? (item.unit_price * item.quantity) + ((item.unit_price / item.pcs_per_unit) * item.sub_qty)
+                                    : item.unit_price * item.quantity;
                                 const discountAmt = (grossAmount * (item.discount_percentage || 0)) / 100;
                                 const netAmount = grossAmount - discountAmt;
                                 const rawGstRate = (item.gst_amount && netAmount > 0)
@@ -294,8 +296,14 @@ export default function PrintBill() {
                                         <td className="py-2 uppercase font-medium">{item.hsn}</td>
                                         <td className="py-2 leading-tight">{item.expiry}</td>
                                         <td className="py-2 text-center">
-                                            {item.quantity}
-                                            {item.sub_qty && <div className="text-[7px] text-blue-600">Sub: {item.sub_qty}</div>}
+                                            {item.sub_qty ? (
+                                                <div>
+                                                    <span>{item.quantity}</span>
+                                                    <div className="text-[7px] text-blue-600 font-medium">+{item.sub_qty} tabs</div>
+                                                </div>
+                                            ) : (
+                                                item.quantity
+                                            )}
                                         </td>
                                         <td className="py-2 text-right">{item.unit_price.toFixed(2)}</td>
                                         <td className="py-2 text-right">{item.discount_percentage ? item.discount_percentage + '%' : '0'}</td>
@@ -366,3 +374,4 @@ export default function PrintBill() {
         </div>
     );
 }
+

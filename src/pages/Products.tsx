@@ -1,4 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { cn } from "@/lib/utils";
 import CSVUpload from '@/components/CSVUpload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,9 +9,9 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Edit, Trash2, Package, AlertTriangle, Filter, X, SlidersHorizontal } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Package, AlertTriangle, Filter, X, SlidersHorizontal, MoreVertical } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import {
   Select,
@@ -19,6 +21,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface Product {
   id: string;
@@ -34,10 +44,20 @@ interface Product {
   selling_price: number;
   gst: number | null;
   supplier: string | null;
+  supplier_id?: string | null;
   low_stock_threshold: number | null;
+  pcs_per_unit?: number | null;
   account_id?: string;
   created_at: string;
   updated_at?: string | null;
+}
+
+interface SupplierOption {
+  id: string;
+  name: string;
+  supplier_code: string;
+  phone: string | null;
+  contact_person: string | null;
 }
 
 // Preset product categories for pharmacy/medical store
@@ -58,6 +78,7 @@ const PRESET_CATEGORIES = [
 ];
 
 export default function Products() {
+  const navigate = useNavigate();
   const { isOwner, profile } = useAuth();
   const { toast } = useToast();
   const [products, setProducts] = useState<Product[]>([]);
@@ -76,6 +97,43 @@ export default function Products() {
   const [stockFilter, setStockFilter] = useState<string>('all');
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
+
+  // Supplier search state
+  const [allSuppliers, setAllSuppliers] = useState<SupplierOption[]>([]);
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
+  const [supplierDropdownOpen, setSupplierDropdownOpen] = useState(false);
+  const supplierRef = useRef<HTMLDivElement>(null);
+
+  // CSV Supplier mapping state
+  const [unmatchedSupplierDialogOpen, setUnmatchedSupplierDialogOpen] = useState(false);
+  const [csvGlobalSupplierId, setCsvGlobalSupplierId] = useState<string | null>(null);
+  const [csvGlobalSupplierSearch, setCsvGlobalSupplierSearch] = useState('');
+  const [csvSupplierDropdownOpen, setCsvSupplierDropdownOpen] = useState(false);
+  const csvSupplierRef = useRef<HTMLDivElement>(null);
+  const [unmatchedSupplierNames, setUnmatchedSupplierNames] = useState<string[]>([]);
+
+  const filteredCsvSupplierOptions = useMemo(() => {
+    if (!csvGlobalSupplierSearch.trim()) return allSuppliers.slice(0, 8);
+    const q = csvGlobalSupplierSearch.toLowerCase();
+    return allSuppliers.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      (s.phone || '').includes(q) ||
+      (s.contact_person || '').toLowerCase().includes(q) ||
+      s.supplier_code.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [allSuppliers, csvGlobalSupplierSearch]);
+
+  const filteredSupplierOptions = useMemo(() => {
+    if (!supplierSearch.trim()) return allSuppliers.slice(0, 8);
+    const q = supplierSearch.toLowerCase();
+    return allSuppliers.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      (s.phone || '').includes(q) ||
+      (s.contact_person || '').toLowerCase().includes(q) ||
+      s.supplier_code.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [allSuppliers, supplierSearch]);
 
   const fetchProducts = async () => {
     try {
@@ -97,8 +155,38 @@ export default function Products() {
     }
   };
 
+  const fetchSuppliers = useCallback(async () => {
+    if (!profile?.account_id) return;
+    try {
+      const { data } = await supabase
+        .from('suppliers')
+        .select('id, name, supplier_code, phone, contact_person')
+        .eq('account_id', profile.account_id)
+        .order('name');
+      setAllSuppliers((data || []) as unknown as SupplierOption[]);
+    } catch (_) { }
+  }, [profile?.account_id]);
+
   useEffect(() => {
     fetchProducts();
+  }, []);
+
+  useEffect(() => {
+    fetchSuppliers();
+  }, [fetchSuppliers]);
+
+  // Close supplier dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (supplierRef.current && !supplierRef.current.contains(e.target as Node)) {
+        setSupplierDropdownOpen(false);
+      }
+      if (csvSupplierRef.current && !csvSupplierRef.current.contains(e.target as Node)) {
+        setCsvSupplierDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
   // Function to download sample CSV
@@ -119,16 +207,16 @@ export default function Products() {
     ];
 
     const sampleData = [
-      ['Paracetamol 500mg', '30049099', 'Tablets', 'BATCH001', 'ABC Pharma', '2025-12-31', '100', '5.50', '10.00', '12', 'Medical Suppliers Ltd', '20'],
-      ['Amoxicillin 250mg', '30042090', 'Capsules', 'BATCH002', 'XYZ Pharma', '2026-06-30', '150', '8.00', '15.00', '12', 'Health Distributors', '25'],
-      ['Cough Syrup 100ml', '30049011', 'Syrups', 'BATCH003', 'DEF Pharma', '2025-09-15', '75', '45.00', '75.00', '18', 'Pharma Wholesale', '15'],
-      ['Antiseptic Cream 50g', '30039000', 'Ointments', 'BATCH004', 'GHI Pharma', '2026-03-20', '200', '25.00', '40.00', '18', 'Medical Suppliers Ltd', '30'],
-      ['Vitamin D3 Tablets', '21069000', 'Supplements', 'BATCH005', 'JKL Nutrition', '2026-12-31', '120', '15.00', '25.00', '12', 'Health Distributors', '20'],
-      ['Digital Thermometer', '90251180', 'Medical Devices', 'DEV001', 'MNO Medical', '2027-01-01', '50', '150.00', '250.00', '18', 'Medical Equipment Co', '10'],
-      ['Insulin Injection 10ml', '30043100', 'Injections', 'BATCH006', 'PQR Pharma', '2025-08-30', '80', '200.00', '350.00', '12', 'Pharma Wholesale', '15'],
-      ['Eye Drops 10ml', '30049031', 'Drops', 'BATCH007', 'STU Pharma', '2025-11-15', '90', '35.00', '60.00', '12', 'Medical Suppliers Ltd', '20'],
-      ['Baby Diaper Pack', '96190010', 'Baby Care', 'PACK001', 'VWX Baby Care', '2026-05-01', '60', '180.00', '250.00', '18', 'Baby Products Inc', '15'],
-      ['Hand Sanitizer 500ml', '38089400', 'Personal Care', 'BATCH008', 'YZA Healthcare', '2025-10-20', '100', '45.00', '75.00', '18', 'Health Distributors', '25']
+      ['Paracetamol 500mg', '30049099', 'Tablets', 'BATCH001', 'ABC Pharma', '2026-12-01', '100', '5.50', '10.00', '12', 'Vaibhav', '20'],
+      ['Amoxicillin 250mg', '30042090', 'Capsules', 'BATCH002', 'XYZ Pharma', '2026-12-02', '150', '8.00', '15.00', '12', 'Vaibhav', '25'],
+      ['Cough Syrup 100ml', '30049011', 'Syrups', 'BATCH003', 'DEF Pharma', '2026-12-03', '75', '45.00', '75.00', '18', 'Vaibhav', '15'],
+      ['Antiseptic Cream 50g', '30039000', 'Ointments', 'BATCH004', 'GHI Pharma', '2026-12-04', '200', '25.00', '40.00', '18', 'Vaibhav', '30'],
+      ['Vitamin D3 Tablets', '21069000', 'Supplements', 'BATCH005', 'JKL Nutrition', '2026-12-05', '120', '15.00', '25.00', '12', 'Vaibhav', '20'],
+      ['Digital Thermometer', '90251180', 'Medical Devices', 'DEV001', 'MNO Medical', '2026-12-06', '50', '150.00', '250.00', '18', 'Vaibhav', '10'],
+      ['Insulin Injection 10ml', '30043100', 'Injections', 'BATCH006', 'PQR Pharma', '2026-12-07', '80', '200.00', '350.00', '12', 'Vaibhav', '15'],
+      ['Eye Drops 10ml', '30049031', 'Drops', 'BATCH007', 'STU Pharma', '2026-12-08', '90', '35.00', '60.00', '12', 'Vaibhav', '20'],
+      ['Baby Diaper Pack', '96190010', 'Baby Care', 'PACK001', 'VWX Baby Care', '2026-12-09', '60', '180.00', '250.00', '18', 'Sajal Srivastava', '15'],
+      ['Hand Sanitizer 500ml', '38089400', 'Personal Care', 'BATCH008', 'YZA Healthcare', '2026-12-10', '100', '45.00', '75.00', '18', 'Sajal Srivastava', '25']
     ];
 
     // Create CSV content
@@ -168,6 +256,9 @@ export default function Products() {
 
     setIsSaving(true);
 
+    const pcsPerUnitRaw = formData.get('pcs_per_unit') as string;
+    const pcsPerUnitVal = pcsPerUnitRaw ? parseInt(pcsPerUnitRaw) : null;
+
     const productData = {
       name: formData.get('name') as string,
       hsn_code: formData.get('hsn_code') as string,
@@ -179,8 +270,10 @@ export default function Products() {
       purchase_price: parseFloat(formData.get('purchase_price') as string),
       selling_price: parseFloat(formData.get('selling_price') as string),
       gst: parseFloat(formData.get('gst') as string),
-      supplier: formData.get('supplier') as string,
+      supplier: supplierSearch || (formData.get('supplier') as string) || null,
+      supplier_id: selectedSupplierId || null,
       low_stock_threshold: parseInt(formData.get('low_stock_threshold') as string),
+      pcs_per_unit: (pcsPerUnitVal && pcsPerUnitVal > 0) ? pcsPerUnitVal : null,
       account_id: profile?.account_id,
     };
 
@@ -207,7 +300,9 @@ export default function Products() {
 
       setIsDialogOpen(false);
       setEditingProduct(null);
-      setSelectedCategory(""); // Reset category selection
+      setSelectedCategory("");
+      setSupplierSearch('');
+      setSelectedSupplierId(null);
       fetchProducts();
     } catch (error: any) {
       toast({
@@ -323,6 +418,9 @@ export default function Products() {
             return colIndex >= 0 ? row[colIndex]?.trim() : '';
           };
 
+          const csvSupplierName = getColumnValue('supplier') || '';
+          const matchedSupplier = allSuppliers.find(s => s.name.toLowerCase() === csvSupplierName.toLowerCase());
+
           return {
             id: (typeof crypto !== 'undefined' && crypto.randomUUID)
               ? crypto.randomUUID()
@@ -341,11 +439,21 @@ export default function Products() {
             purchase_price: parseFloat(getColumnValue('purchase_price') || getColumnValue('purchase price')) || 0,
             selling_price: parseFloat(getColumnValue('selling_price') || getColumnValue('selling price')) || 0,
             gst: parseFloat(getColumnValue('gst')) || 0,
-            supplier: getColumnValue('supplier') || '',
+            supplier: matchedSupplier ? matchedSupplier.name : csvSupplierName,
+            supplier_id: matchedSupplier ? matchedSupplier.id : null,
             low_stock_threshold: parseInt(getColumnValue('low_stock_threshold') || getColumnValue('low stock threshold')) || 10,
+            pcs_per_unit: parseInt(getColumnValue('pcs_per_unit') || getColumnValue('pcs per unit') || getColumnValue('tablets_per_strip') || getColumnValue('tablets per strip')) || null,
             created_at: new Date().toISOString()
           };
         }).filter(product => product.name && product.selling_price > 0);
+
+        // Identify distinct unmatched supplier names
+        const unmatched = Array.from(new Set(
+          products
+            .filter(p => !p.supplier_id && p.supplier)
+            .map(p => p.supplier as string)
+        ));
+        setUnmatchedSupplierNames(unmatched);
 
         setParsedProducts(products);
 
@@ -370,17 +478,37 @@ export default function Products() {
         setParsedProducts([]);
       }
     }
-  }, [uploadedData, toast]);
+  }, [uploadedData, toast, allSuppliers]);
 
   const saveAllProducts = async () => {
     if (parsedProducts.length === 0) return;
     if (!profile?.account_id || isSavingAll) return;
+
+    // Hustle-free logic: check if ANY product is missing a supplier
+    const needsSupplier = parsedProducts.some(p => !p.supplier_id);
+    if (needsSupplier && !csvGlobalSupplierId && allSuppliers.length > 0) {
+      if (unmatchedSupplierNames.length > 1) {
+        toast({
+          variant: "destructive",
+          title: "Too many new suppliers",
+          description: `You have ${unmatchedSupplierNames.length} different unknown suppliers. Please add them in the Suppliers section first.`,
+          action: <Button variant="outline" size="sm" onClick={() => navigate('/suppliers')}>Go to Suppliers</Button>
+        });
+        setUnmatchedSupplierDialogOpen(true);
+        return;
+      }
+      // Pause saving and show popup to ask for default supplier
+      setUnmatchedSupplierDialogOpen(true);
+      return;
+    }
 
     setIsSavingAll(true);
 
     try {
       const productsToInsert = parsedProducts.map(product => ({
         ...product,
+        // Override unmatched supplier ID with the user-selected global fallback
+        supplier_id: product.supplier_id || csvGlobalSupplierId || null,
         account_id: profile?.account_id
       }));
 
@@ -397,6 +525,8 @@ export default function Products() {
 
       setUploadedData([]);
       setParsedProducts([]);
+      setCsvGlobalSupplierId(null);
+      setCsvGlobalSupplierSearch('');
       fetchProducts();
     } catch (error: any) {
       toast({
@@ -409,12 +539,16 @@ export default function Products() {
     }
   };
 
-  // Reset selected category when dialog opens/closes or when editing product changes
+  // Reset selected category and supplier when dialog opens/closes
   useEffect(() => {
     if (isDialogOpen && editingProduct) {
       setSelectedCategory(editingProduct.category || "");
+      setSupplierSearch(editingProduct.supplier || '');
+      setSelectedSupplierId(editingProduct.supplier_id || null);
     } else if (!isDialogOpen) {
       setSelectedCategory("");
+      setSupplierSearch('');
+      setSelectedSupplierId(null);
     }
   }, [isDialogOpen, editingProduct]);
 
@@ -488,6 +622,100 @@ export default function Products() {
             </CardContent>
           </Card>
         )}
+
+        {/* Global Supplier Fallback Dialog */}
+        <Dialog open={unmatchedSupplierDialogOpen} onOpenChange={setUnmatchedSupplierDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-xl text-amber-600 flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5" />
+                Unmatched Suppliers Detected!
+              </DialogTitle>
+              <DialogDescription className="text-base pt-2">
+                {unmatchedSupplierNames.length > 1 
+                  ? `There are ${unmatchedSupplierNames.length} different suppliers in your CSV that aren't registered. It's recommended to add them first, or you can assign a single fallback supplier below.`
+                  : "Some products in your CSV don't have a recognized supplier. Please assign a supplier to apply to these unmatched products, or leave empty if you want to proceed without one."
+                }
+              </DialogDescription>
+            </DialogHeader>
+            {unmatchedSupplierNames.length > 1 && (
+              <div className="bg-amber-50 p-3 rounded-md border border-amber-200 mb-4">
+                <p className="text-sm font-medium text-amber-800 mb-1">Unrecognized Suppliers found:</p>
+                <div className="flex flex-wrap gap-2">
+                  {unmatchedSupplierNames.map((name, i) => (
+                    <Badge key={i} variant="outline" className="bg-white">{name}</Badge>
+                  ))}
+                </div>
+                <Button 
+                  variant="link" 
+                  className="mt-2 h-auto p-0 text-amber-900 font-bold underline"
+                  onClick={() => navigate('/suppliers')}
+                >
+                  Click here to add them first →
+                </Button>
+              </div>
+            )}
+            <div className="py-2">
+              <div className="space-y-2 relative" ref={csvSupplierRef}>
+                <Label>Select Supplier for Unmatched Products</Label>
+                <Input
+                  placeholder="Search existing suppliers..."
+                  value={csvGlobalSupplierSearch}
+                  autoComplete="off"
+                  onChange={(e) => {
+                    setCsvGlobalSupplierSearch(e.target.value);
+                    setCsvSupplierDropdownOpen(true);
+                    if (csvGlobalSupplierId && !e.target.value) {
+                      setCsvGlobalSupplierId(null);
+                    }
+                  }}
+                  onFocus={() => setCsvSupplierDropdownOpen(true)}
+                  className="w-full transition-all focus-visible:ring-blue-500"
+                />
+                {csvSupplierDropdownOpen && (
+                  <div className="absolute z-50 w-full mt-1 bg-white rounded-md shadow-lg border max-h-48 overflow-auto">
+                    {filteredCsvSupplierOptions.length > 0 ? (
+                      <ul className="py-1 relative z-50 bg-white shadow-md">
+                        {filteredCsvSupplierOptions.map((supplier) => (
+                          <li
+                            key={supplier.id}
+                            className={`px-3 py-2 text-sm cursor-pointer hover:bg-slate-100 ${csvGlobalSupplierId === supplier.id ? 'bg-blue-50 font-medium' : ''}`}
+                            onClick={() => {
+                              setCsvGlobalSupplierId(supplier.id);
+                              setCsvGlobalSupplierSearch(supplier.name);
+                              setCsvSupplierDropdownOpen(false);
+                            }}
+                          >
+                            <div className="font-medium">{supplier.name}</div>
+                            {supplier.phone && <div className="text-xs text-muted-foreground">{supplier.phone}</div>}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="px-3 py-4 text-sm text-center text-muted-foreground">
+                        No suppliers found matching "{csvGlobalSupplierSearch}".
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-4">
+              <Button variant="outline" onClick={() => setUnmatchedSupplierDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  setUnmatchedSupplierDialogOpen(false);
+                  saveAllProducts();
+                }}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                Proceed & Save
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
           if (!open) {
@@ -567,15 +795,75 @@ export default function Products() {
                     value={selectedCategory || editingProduct?.category || ""}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="supplier" className="text-lg font-medium">Supplier</Label>
-                  <Input
-                    id="supplier"
-                    name="supplier"
-                    defaultValue={editingProduct?.supplier}
-                    className="text-lg py-3 px-4"
-                    placeholder="Enter supplier"
-                  />
+                <div className="space-y-2" ref={supplierRef}>
+                  <Label htmlFor="supplier_search" className="text-lg font-medium">Supplier</Label>
+                  <div className="relative">
+                    <Input
+                      id="supplier_search"
+                      value={supplierSearch}
+                      onChange={e => {
+                        setSupplierSearch(e.target.value);
+                        setSelectedSupplierId(null);
+                        setSupplierDropdownOpen(true);
+                      }}
+                      onFocus={() => setSupplierDropdownOpen(true)}
+                      className="text-lg py-3 px-4"
+                      placeholder="Search by name or phone..."
+                      autoComplete="off"
+                    />
+                    {selectedSupplierId && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono bg-violet-100 text-violet-700 px-2 py-0.5 rounded">
+                        {allSuppliers.find(s => s.id === selectedSupplierId)?.supplier_code}
+                      </span>
+                    )}
+                    {supplierDropdownOpen && (
+                      <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                        {filteredSupplierOptions.map(s => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            className="w-full text-left px-4 py-3 hover:bg-violet-50 flex items-center justify-between border-b border-gray-50 last:border-0"
+                            onMouseDown={e => {
+                              e.preventDefault();
+                              setSupplierSearch(s.name);
+                              setSelectedSupplierId(s.id);
+                              setSupplierDropdownOpen(false);
+                            }}
+                          >
+                            <div>
+                              <span className="font-medium text-base">{s.name}</span>
+                              {s.contact_person && <span className="text-sm text-muted-foreground ml-2">· {s.contact_person}</span>}
+                            </div>
+                            <div className="text-right">
+                              <span className="text-xs font-mono bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded">{s.supplier_code}</span>
+                              {s.phone && <div className="text-xs text-muted-foreground mt-0.5">{s.phone}</div>}
+                            </div>
+                          </button>
+                        ))}
+                        <div className="border-t border-gray-100 p-2 bg-gray-50 sticky bottom-0">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="w-full justify-start text-blue-600 hover:text-blue-700 hover:bg-blue-100 font-medium"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              navigate('/suppliers');
+                            }}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add New Supplier
+                          </Button>
+                        </div>
+                        {allSuppliers.length === 0 && filteredSupplierOptions.length === 0 && (
+                          <div className="px-4 py-3 text-muted-foreground text-sm">No suppliers registered yet. <span className="text-violet-600 font-medium">Register one in Suppliers section.</span></div>
+                        )}
+                        {allSuppliers.length > 0 && filteredSupplierOptions.length === 0 && (
+                          <div className="px-4 py-3 text-muted-foreground text-sm">No matches found for "{supplierSearch}"</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <input type="hidden" name="supplier" value={supplierSearch} />
                 </div>
               </div>
 
@@ -612,9 +900,9 @@ export default function Products() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="quantity" className="text-lg font-medium">Quantity</Label>
+                  <Label htmlFor="quantity" className="text-lg font-medium">Quantity (Strips/Units)</Label>
                   <Input
                     id="quantity"
                     name="quantity"
@@ -625,6 +913,22 @@ export default function Products() {
                     placeholder="0"
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pcs_per_unit" className="text-lg font-medium">PCS per Strip</Label>
+                  <Input
+                    id="pcs_per_unit"
+                    name="pcs_per_unit"
+                    type="number"
+                    min="1"
+                    defaultValue={editingProduct?.pcs_per_unit || ''}
+                    className="text-lg py-3 px-4"
+                    placeholder="e.g. 10, 15 (leave empty if N/A)"
+                  />
+                  <p className="text-xs text-muted-foreground">How many tablets/pieces in one strip? Leave empty for non-strip items.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="low_stock_threshold" className="text-lg font-medium">Low Stock Alert</Label>
                   <Input
@@ -878,16 +1182,13 @@ export default function Products() {
               <Table>
                 <TableHeader className="bg-gradient-to-r from-blue-50 to-indigo-50">
                   <TableRow>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Name</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">HSN Code</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Category</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Batch</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Manufacturer</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Expiry</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Quantity</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Product Details</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Category & Mfg</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Batch & Expiry</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4 text-center">Stock Info</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Price</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Status</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Actions</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -896,69 +1197,96 @@ export default function Products() {
                       key={product.id}
                       className="hover:bg-blue-50 transition-colors"
                     >
-                      <TableCell className="font-medium text-lg py-4">{product.name}</TableCell>
-                      <TableCell className="text-lg py-4">{product.hsn_code}</TableCell>
-                      <TableCell className="text-lg py-4">{product.category}</TableCell>
-                      <TableCell className="text-lg py-4">{product.batch_number}</TableCell>
-                      <TableCell className="text-lg py-4">{product.manufacturer}</TableCell>
-                      <TableCell className="text-lg py-4">{product.expiry_date ? new Date(product.expiry_date).toLocaleDateString() : '-'}</TableCell>
-                      <TableCell className="text-lg py-4">
-                        <Badge
-                          variant={product.quantity === 0 ? "destructive" : product.quantity <= product.low_stock_threshold ? "warning" : "success"}
-                          className="text-lg py-2 px-3"
-                        >
-                          {product.quantity}
-                        </Badge>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-lg text-blue-900">{product.name}</span>
+                          {product.hsn_code && (
+                            <span className="text-sm text-muted-foreground font-mono">HSN: {product.hsn_code}</span>
+                          )}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-lg py-4">₹{product.selling_price}</TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="text-lg">{product.category || '-'}</span>
+                          <span className="text-sm text-muted-foreground italic">{product.manufacturer || 'Unknown Mfg'}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="text-lg font-medium">{product.batch_number || '-'}</span>
+                          <span className={cn(
+                            "text-sm",
+                            (() => {
+                              if (!product.expiry_date) return "text-muted-foreground";
+                              const today = new Date();
+                              const exp = new Date(product.expiry_date);
+                              const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                              return diffDays <= 30 ? "text-red-500 font-bold" : "text-muted-foreground";
+                            })()
+                          )}>
+                            Exp: {product.expiry_date ? new Date(product.expiry_date).toLocaleDateString() : '-'}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col items-center">
+                          <Badge
+                            variant={product.quantity === 0 ? "destructive" : product.quantity <= product.low_stock_threshold ? "warning" : "success"}
+                            className="text-lg py-1 px-3 mb-1"
+                          >
+                            {product.quantity} Units
+                          </Badge>
+                          {product.pcs_per_unit && (
+                            <span className="text-xs text-muted-foreground">({product.pcs_per_unit} pcs/strip)</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="text-lg font-bold text-green-700">₹{product.selling_price}</span>
+                          {product.gst && <span className="text-xs text-muted-foreground">Incl. {product.gst}% GST</span>}
+                        </div>
+                      </TableCell>
                       <TableCell className="py-4">
                         <div className="flex flex-wrap gap-2">
                           <Badge
                             variant={product.quantity === 0 ? "destructive" : product.quantity <= product.low_stock_threshold ? "warning" : "success"}
-                            className="text-lg py-2 px-3"
+                            className="text-sm py-1 px-2 whitespace-nowrap"
                           >
                             {product.quantity === 0 ? "Out of Stock" : product.quantity <= product.low_stock_threshold ? "Low Stock" : "In Stock"}
                           </Badge>
-                          {(() => {
-                            if (!product.expiry_date) return null;
-                            const today = new Date();
-                            const exp = new Date(product.expiry_date);
-                            const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                            if (diffDays < 0) {
-                              return <Badge variant="default" className="text-lg py-2 px-3">Expired</Badge>;
-                            }
-                            if (diffDays <= 30) {
-                              return <Badge variant="destructive" className="text-lg py-2 px-3">Expiring Soon</Badge>;
-                            }
-                            return null;
-                          })()}
                         </div>
                       </TableCell>
-                      <TableCell className="py-4">
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setEditingProduct(product);
-                              setSelectedCategory(product.category || "");
-                              setIsDialogOpen(true);
-                            }}
-                            className="text-lg py-2 px-4"
-                          >
-                            <Edit className="h-5 w-5 mr-1" />
-                            Edit
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => confirmDelete(product)}
-                            className="text-lg py-2 px-4 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-                          >
-                            <Trash2 className="h-5 w-5 mr-1" />
-                            Delete
-                          </Button>
-                        </div>
+                      <TableCell className="py-4 text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" className="h-10 w-10 p-0 hover:bg-blue-100 rounded-full">
+                              <MoreVertical className="h-5 w-5 text-gray-500" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40 p-2">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEditingProduct(product);
+                                setSelectedCategory(product.category || "");
+                                setIsDialogOpen(true);
+                              }}
+                              className="cursor-pointer py-2 focus:bg-blue-50 focus:text-blue-700"
+                            >
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit Product
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => confirmDelete(product)}
+                              className="cursor-pointer py-2 text-red-600 focus:bg-red-50 focus:text-red-700"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Product
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))}

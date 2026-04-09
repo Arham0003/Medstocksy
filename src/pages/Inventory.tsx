@@ -5,7 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Search, Package, AlertTriangle, Filter, X } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from '@/components/ui/button';
@@ -306,13 +306,11 @@ export default function Inventory() {
               <Table>
                 <TableHeader className="bg-gradient-to-r from-purple-50 to-pink-50">
                   <TableRow>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Name</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">SKU</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Category</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Stock</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Product Details</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Category & Supplier</TableHead>
+                    <TableHead className="text-lg font-bold text-gray-700 py-4">Stock Level</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Price</TableHead>
                     <TableHead className="text-lg font-bold text-gray-700 py-4">Status</TableHead>
-                    <TableHead className="text-lg font-bold text-gray-700 py-4">Supplier</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -321,11 +319,20 @@ export default function Inventory() {
                       key={product.id}
                       className="hover:bg-purple-50 transition-colors"
                     >
-                      <TableCell className="font-medium text-lg py-4">{product.name}</TableCell>
-                      <TableCell className="text-lg py-4">{product.sku}</TableCell>
-                      <TableCell className="text-lg py-4">{product.category}</TableCell>
-                      <TableCell className="text-lg py-4">{product.quantity}</TableCell>
-                      <TableCell className="text-lg py-4">₹{product.selling_price}</TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-lg text-purple-900">{product.name}</span>
+                          {product.sku && <span className="text-sm text-muted-foreground font-mono">SKU: {product.sku}</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="text-lg">{product.category}</span>
+                          <span className="text-sm text-muted-foreground italic">{product.supplier}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-lg py-4 font-medium">{product.quantity} Units</TableCell>
+                      <TableCell className="text-lg py-4 font-bold text-green-700">₹{product.selling_price}</TableCell>
                       <TableCell className="py-4">
                         <Badge
                           variant={
@@ -335,7 +342,7 @@ export default function Inventory() {
                                 ? "warning"
                                 : "success"
                           }
-                          className="text-lg py-2 px-3"
+                          className="text-sm py-1 px-2"
                         >
                           {product.quantity === 0
                             ? "Out of Stock"
@@ -345,7 +352,6 @@ export default function Inventory() {
                           }
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-lg py-4">{product.supplier}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

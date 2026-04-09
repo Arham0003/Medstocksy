@@ -1,27 +1,44 @@
+// @ts-ignore
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 
 console.log("Create Razorpay Order Function Invoked")
 
-serve(async (req) => {
+// @ts-ignore
+serve(async (req: any) => {
     // Handle CORS preflight request
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
     }
 
     try {
-        const { planName } = await req.json()
+        const body = await req.json()
+        const { planName, isAnnual } = body
+        const isAnnualPlan = !!isAnnual;
+
+        console.log(`Processing order for plan: ${planName}, isAnnual: ${isAnnualPlan}`);
 
         // Define Plan Details (Could also be fetched from DB)
         let amount = 0;
         if (planName === 'Professional') {
-            amount = 39900; // Fixed ₹399.00 in paise for Professional plan
+            if (isAnnualPlan) {
+                amount = 399900; // ₹3999.00 in paise for Professional Annual
+            } else {
+                amount = 39900; // ₹399.00 in paise for Professional Monthly
+            }
+        } else if (planName === 'Testing Plan') {
+            amount = 5000; // Fixed ₹50.00 in paise for Testing Plan
         } else {
+            console.error(`Invalid plan name received: ${planName}`);
             throw new Error("Invalid Plan Selected");
         }
+        
+        console.log(`Calculated amount: ${amount} paise`);
 
-        // Razorpay Credentials from Env
+      // Razorpay Credentials from Env
+        // @ts-ignore
         const key_id = Deno.env.get('RAZORPAY_KEY_ID')
+        // @ts-ignore
         const key_secret = Deno.env.get('RAZORPAY_KEY_SECRET')
 
         if (!key_id || !key_secret) {
@@ -64,7 +81,7 @@ serve(async (req) => {
             },
         )
 
-    } catch (error) {
+    } catch (error: any) {
         return new Response(
             JSON.stringify({ error: error.message }),
             {

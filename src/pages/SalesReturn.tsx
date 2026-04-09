@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Textarea } from '@/components/ui/textarea';
 import { RotateCcw, Search, Eye } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 
 interface Sale {
@@ -132,8 +132,12 @@ export default function SalesReturn() {
 
         setIsProcessing(true);
 
-        // Use sub_qty for max return quantity when available
-        const maxReturnQty = selectedSale.sub_qty || selectedSale.quantity;
+        // Calculate the effective total quantity (strips + loose tablets as fraction)
+        const hasSub = selectedSale.sub_qty && selectedSale.pcs_per_unit && selectedSale.pcs_per_unit > 0;
+        const effectiveQty = hasSub
+          ? selectedSale.quantity + (selectedSale.sub_qty! / selectedSale.pcs_per_unit!)
+          : selectedSale.quantity;
+        const maxReturnQty = selectedSale.quantity;
 
         if (returnQuantity > maxReturnQty) {
             toast({
@@ -145,9 +149,11 @@ export default function SalesReturn() {
         }
 
         try {
-            // Calculate return amount proportionally
-            // When sub_qty is present, use it for proportional calculation
-            const effectiveQty = selectedSale.sub_qty || selectedSale.quantity;
+            // Calculate return amount proportionally based on effective quantity
+            const hasSub = selectedSale.sub_qty && selectedSale.pcs_per_unit && selectedSale.pcs_per_unit > 0;
+            const effectiveQty = hasSub
+              ? selectedSale.quantity + (selectedSale.sub_qty! / selectedSale.pcs_per_unit!)
+              : selectedSale.quantity;
             const totalReturnAmount = (selectedSale.total_price * returnQuantity) / effectiveQty;
             const returnGstAmount = selectedSale.gst_amount
                 ? (selectedSale.gst_amount * returnQuantity) / effectiveQty
@@ -310,8 +316,8 @@ export default function SalesReturn() {
                                                 <TableCell className="font-medium text-lg">{sale.products?.name}</TableCell>
                                                 <TableCell className="text-lg">{sale.customer_name || 'Walk-in'}</TableCell>
                                                 <TableCell className="text-lg">
-                                                    {sale.quantity}
-                                                    {sale.sub_qty && <span className="text-sm text-blue-600 ml-1">| Sub Qty: {sale.sub_qty}</span>}
+                                                    {sale.quantity} {sale.quantity === 1 ? 'strip' : 'strips'}
+                                                    {sale.sub_qty ? <span className="text-sm text-blue-600 ml-1">+{sale.sub_qty} tabs</span> : null}
                                                 </TableCell>
                                                 <TableCell className="text-lg">₹{sale.total_price.toFixed(2)}</TableCell>
                                                 <TableCell className="text-lg">{new Date(sale.created_at).toLocaleDateString()}</TableCell>
@@ -357,20 +363,20 @@ export default function SalesReturn() {
                                     <h4 className="font-medium text-lg mb-2">Sale Details</h4>
                                     <p className="text-sm text-muted-foreground">Product: {selectedSale.products?.name}</p>
                                     <p className="text-sm text-muted-foreground">
-                                        Quantity Sold: {selectedSale.quantity}
-                                        {selectedSale.sub_qty && <span className="text-blue-600 ml-1">| Sub Qty: {selectedSale.sub_qty}</span>}
+                                        Quantity Sold: {selectedSale.quantity} {selectedSale.quantity === 1 ? 'strip' : 'strips'}
+                                        {selectedSale.sub_qty ? <span className="text-blue-600 ml-1">+ {selectedSale.sub_qty} tablets</span> : null}
                                     </p>
                                     <p className="text-sm text-muted-foreground">Unit Price: ₹{selectedSale.unit_price.toFixed(2)}</p>
                                     <p className="text-sm text-muted-foreground">Total: ₹{selectedSale.total_price.toFixed(2)}</p>
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label htmlFor="returnQuantity">Return Quantity (Max: {selectedSale.sub_qty || selectedSale.quantity})</Label>
+                                    <Label htmlFor="returnQuantity">Return Quantity in Strips (Max: {selectedSale.quantity})</Label>
                                     <Input
                                         id="returnQuantity"
                                         type="number"
                                         min="1"
-                                        max={selectedSale.sub_qty || selectedSale.quantity}
+                                        max={selectedSale.quantity}
                                         value={returnQuantity}
                                         onChange={(e) => setReturnQuantity(parseInt(e.target.value) || 1)}
                                         className="text-lg"
@@ -391,7 +397,13 @@ export default function SalesReturn() {
                                 <div className="p-4 bg-red-50 rounded-lg">
                                     <h4 className="font-medium text-lg mb-2 text-red-700">Return Summary</h4>
                                     <p className="text-sm">Quantity: {returnQuantity}</p>
-                                    <p className="text-sm">Refund Amount: ₹{(selectedSale.total_price * returnQuantity / (selectedSale.sub_qty || selectedSale.quantity)).toFixed(2)}</p>
+                                    <p className="text-sm">Refund Amount: ₹{(() => {
+                                        const hasSub = selectedSale.sub_qty && selectedSale.pcs_per_unit && selectedSale.pcs_per_unit > 0;
+                                        const effectiveQty = hasSub
+                                          ? selectedSale.quantity + (selectedSale.sub_qty! / selectedSale.pcs_per_unit!)
+                                          : selectedSale.quantity;
+                                        return (selectedSale.total_price * returnQuantity / effectiveQty).toFixed(2);
+                                    })()}</p>
                                 </div>
                             </div>
 

@@ -21,6 +21,7 @@ const LoadingComponent = () => (
 // Lazy load pages that are not immediately needed
 const Products = lazy(() => import("./pages/Products"));
 const Sales = lazy(() => import("./pages/Sales"));
+const RecordSale = lazy(() => import("./pages/RecordSale"));
 const SalesReturn = lazy(() => import("./pages/SalesReturn"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -30,6 +31,7 @@ const CustomerRelation = lazy(() => import("./pages/CustomerRelation"));
 const PrintBill = lazy(() => import("./pages/PrintBill"));
 const Pricing = lazy(() => import("./pages/Pricing"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
+const Suppliers = lazy(() => import("./pages/Suppliers"));
 
 const queryClient = new QueryClient();
 
@@ -58,6 +60,14 @@ const App = () => (
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Sales />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="sales/new"
+                element={
+                  <Suspense fallback={<LoadingComponent />}>
+                    <RecordSale />
                   </Suspense>
                 }
               />
@@ -106,6 +116,14 @@ const App = () => (
                 element={
                   <Suspense fallback={<LoadingComponent />}>
                     <Pricing />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="suppliers"
+                element={
+                  <Suspense fallback={<LoadingComponent />}>
+                    <Suppliers />
                   </Suspense>
                 }
               />

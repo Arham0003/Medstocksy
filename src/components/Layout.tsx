@@ -2,7 +2,7 @@ import { Navigate, Outlet } from 'react-router-dom';
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import SubscriptionGuard from './SubscriptionGuard';
 import {
   Home,
@@ -15,7 +15,8 @@ import {
   Store,
   Users,
   RotateCcw,
-  CreditCard
+  CreditCard,
+  Truck
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { memo, useEffect, useState } from 'react';
@@ -23,6 +24,7 @@ import { memo, useEffect, useState } from 'react';
 const ownerNavItems = [
   { title: 'Overview', icon: Home, href: '/' },
   { title: 'Products', icon: Package, href: '/products' },
+  { title: 'Suppliers', icon: Truck, href: '/suppliers' },
   { title: 'Sales', icon: ShoppingCart, href: '/sales' },
   { title: 'Sales Return', icon: RotateCcw, href: '/sales-return' },
   { title: 'Customer Relation', icon: Users, href: '/customer-relation' },

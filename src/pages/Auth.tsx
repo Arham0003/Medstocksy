@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -25,6 +25,7 @@ export default function Auth() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const { signIn, signUp, resetPassword, updatePassword } = useAuth();
   const navigate = useNavigate();
@@ -59,6 +60,9 @@ export default function Auth() {
 
     try {
       if (isSignUp) {
+        if (!agreedToTerms) {
+          throw new Error('Please agree to our Terms and Conditions to continue');
+        }
         if (password !== confirmPassword) {
           throw new Error('Passwords do not match');
         }
@@ -266,9 +270,32 @@ export default function Auth() {
                   </div>
                 )}
 
+                {isSignUp && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="terms"
+                      type="checkbox"
+                      checked={agreedToTerms}
+                      onChange={(e) => setAgreedToTerms(e.target.checked)}
+                      className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-400 accent-primary"
+                    />
+                    <Label htmlFor="terms" className="text-sm leading-none cursor-pointer">
+                      I agree with our{' '}
+                      <a
+                        href="/assets/terms.html"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        Terms and Conditions
+                      </a>
+                    </Label>
+                  </div>
+                )}
+
                 <Button
                   type="submit"
-                  disabled={isLoading}
+                  disabled={isLoading || (isSignUp && !agreedToTerms)}
                   className="w-full h-11 bg-gradient-to-r from-primary to-blue-600 hover:from-primary/90 hover:to-blue-600/90 shadow-md transition-all duration-300 transform hover:scale-[1.02]"
                 >
                   {isLoading ? (

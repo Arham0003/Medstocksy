@@ -1,0 +1,10 @@
+﻿src/pages/RecordSale.tsx(2,24): error TS2307: Cannot find module '@/components/ui/button' or its corresponding type declarations.
+src/pages/RecordSale.tsx(3,23): error TS2307: Cannot find module '@/components/ui/input' or its corresponding type declarations.
+src/pages/RecordSale.tsx(4,23): error TS2307: Cannot find module '@/components/ui/label' or its corresponding type declarations.
+src/pages/RecordSale.tsx(5,23): error TS2307: Cannot find module '@/components/ui/badge' or its corresponding type declarations.
+src/pages/RecordSale.tsx(6,25): error TS2307: Cannot find module '@/hooks/useAuth' or its corresponding type declarations.
+src/pages/RecordSale.tsx(7,26): error TS2307: Cannot find module '@/integrations/supabase/client' or its corresponding type declarations.
+src/pages/RecordSale.tsx(8,26): error TS2307: Cannot find module '@/hooks/use-toast' or its corresponding type declarations.
+src/pages/RecordSale.tsx(9,29): error TS2307: Cannot find module '@/hooks/use-mobile' or its corresponding type declarations.
+src/pages/RecordSale.tsx(569,25): error TS2304: Cannot find name 'addNewRow'.
+src/pages/RecordSale.tsx(569,54): error TS2304: Cannot find name 'activeSearchRow'.

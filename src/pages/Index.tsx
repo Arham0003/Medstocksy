@@ -16,7 +16,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 
 const Index = () => {
   const { isOwner, profile } = useAuth();
@@ -29,16 +29,18 @@ const Index = () => {
     expiringSoon: 0,
     activePrescriptions: 0,
     dueRefills: 0,
+    totalCredit: 0,
   });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [productsRes, salesRes, salesForCrmRes] = await Promise.all([
-          supabase.from('products').select('quantity, low_stock_threshold, expiry_date'),
-          supabase.from('sales').select('id, created_at'),
-          supabase.from('sales').select('id, created_at, prescription_months, months_taken')
+        const [productsRes, salesRes, salesForCrmRes, creditRes] = await Promise.all([
+          supabase.from('products').select('quantity, low_stock_threshold, expiry_date') as any,
+          supabase.from('sales').select('id, created_at') as any,
+          supabase.from('sales').select('id, created_at, prescription_months, months_taken') as any,
+          supabase.from('sales').select('total_price, received_amount').eq('is_settled', false) as any
         ]);
 
         // Define types for the fetched data to avoid type errors
@@ -80,6 +82,11 @@ const Index = () => {
           return s.months_taken! < s.prescription_months! && elapsedDays >= allowedDays;
         }).length;
 
+        const totalCredit = (creditRes.data || []).reduce((sum, s: any) => {
+          const bal = (s.total_price || 0) - (s.received_amount || 0);
+          return sum + (bal > 0.01 ? bal : 0);
+        }, 0);
+
         setStats({
           totalProducts: products.length,
           lowStock: products.filter(p => p.quantity <= (p.low_stock_threshold || 10)).length,
@@ -88,6 +95,7 @@ const Index = () => {
           expiringSoon,
           activePrescriptions,
           dueRefills,
+          totalCredit,
         });
       } catch (error) {
         console.error('Error fetching stats:', error);
@@ -168,6 +176,15 @@ const Index = () => {
           icon={RefreshCw}
           variant="primary"
           description="Follow-ups required"
+        />
+
+        <DashboardStatCard
+          title="Outstanding Credit"
+          value={loading ? '-' : `₹${stats.totalCredit.toFixed(2)}`}
+          icon={TrendingUp}
+          variant="warning"
+          description="Unpaid customer dues"
+          onClick={() => navigate('/reports')}
         />
       </div>
 

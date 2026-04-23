@@ -19,6 +19,7 @@ CREATE OR REPLACE FUNCTION public.update_product_stock()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
   -- Update product quantity

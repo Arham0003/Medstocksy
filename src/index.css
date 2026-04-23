@@ -94,33 +94,40 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
-    font-size: 16px; /* Increase base font size for better readability */
+    font-size: 16px;
+    /* Increase base font size for better readability */
   }
-  
+
   /* Larger font sizes for better accessibility */
   h1 {
     @apply text-4xl font-bold;
   }
-  
+
   h2 {
     @apply text-2xl font-bold;
   }
-  
+
   h3 {
     @apply text-xl font-semibold;
   }
-  
+
   /* Larger interactive elements */
-  button, .button, [role="button"] {
+  button,
+  .button,
+  [role="button"] {
     @apply py-3 px-4 text-lg rounded-lg;
-    min-height: 48px; /* Minimum touch target size */
+    min-height: 48px;
+    /* Minimum touch target size */
   }
-  
-  input, select, textarea {
+
+  input,
+  select,
+  textarea {
     @apply py-3 px-4 text-lg rounded-lg;
-    min-height: 48px; /* Minimum touch target size */
+    min-height: 48px;
+    /* Minimum touch target size */
   }
-  
+
   /* Larger sidebar menu items */
   .sidebar-menu-button {
     @apply py-3 text-lg;
@@ -149,5 +156,257 @@ All colors MUST be HSL.
 @media (max-width: 768px) {
   .card-lg-padding {
     @apply p-4;
+  }
+}
+
+/* ========================================
+   SMOOTH SCROLLING & TRANSITIONS (Global)
+   ======================================== */
+html {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Smooth scroll for all overflow containers */
+[class*="overflow-y-auto"],
+[class*="overflow-x-auto"],
+[class*="overflow-auto"] {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* ========================================
+   MOBILE-OPTIMIZED DIALOG STYLES
+   ======================================== */
+@media (max-width: 640px) {
+
+  /* Dialog overlay - smoother backdrop */
+  [data-radix-dialog-overlay] {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: opacity 0.2s ease-out;
+  }
+
+  /* Dialog content - full-screen on mobile */
+  .mobile-fullscreen-dialog {
+    display: flex !important;
+    flex-direction: column !important;
+    border-radius: 0 !important;
+    border: none !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    padding-bottom: env(safe-area-inset-bottom, 16px) !important;
+    -webkit-overflow-scrolling: touch;
+    /* Disable zoom/slide animations on mobile - they don't make sense for full-screen */
+    --tw-enter-scale: 1 !important;
+    --tw-exit-scale: 1 !important;
+    --tw-enter-translate-x: 0 !important;
+    --tw-enter-translate-y: 0 !important;
+    --tw-exit-translate-x: 0 !important;
+    --tw-exit-translate-y: 0 !important;
+  }
+
+  /* Dialog header - tighter on mobile */
+  [data-radix-dialog-content] [class*="DialogHeader"] {
+    padding-bottom: 8px;
+    flex-shrink: 0;
+  }
+
+  /* Dialog title - slightly smaller on mobile */
+  [data-radix-dialog-content] [class*="DialogTitle"] {
+    font-size: 1.25rem !important;
+    line-height: 1.75rem !important;
+  }
+
+  /* Dialog description - compact */
+  [data-radix-dialog-content] [class*="DialogDescription"] {
+    font-size: 0.875rem !important;
+    line-height: 1.25rem !important;
+    margin-bottom: 4px;
+  }
+
+  /* Form inputs inside dialogs - mobile-friendly sizing */
+  [data-radix-dialog-content] input,
+  [data-radix-dialog-content] select,
+  [data-radix-dialog-content] textarea {
+    font-size: 16px !important;
+    /* Prevents zoom on input focus in iOS */
+    min-height: 44px !important;
+    padding: 8px 12px !important;
+    border-radius: 8px !important;
+  }
+
+  /* Labels inside dialogs */
+  [data-radix-dialog-content] label {
+    font-size: 0.8125rem !important;
+    font-weight: 500;
+    margin-bottom: 2px;
+  }
+
+  /* Buttons inside dialogs - proper touch targets */
+  [data-radix-dialog-content] button {
+    min-height: 44px;
+    font-size: 0.9375rem !important;
+    border-radius: 10px !important;
+    transition: all 0.15s ease-out;
+  }
+
+  [data-radix-dialog-content] button:active {
+    transform: scale(0.97);
+    opacity: 0.9;
+  }
+
+  /* Grid cols adjustment inside dialogs for mobile */
+  [data-radix-dialog-content] .grid.grid-cols-1.sm\:grid-cols-2,
+  [data-radix-dialog-content] .grid.grid-cols-1.sm\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* Cart items in Record Sale dialog - compact display */
+  [data-radix-dialog-content] .max-h-60 {
+    max-height: 200px !important;
+  }
+
+  /* Cart item rows - mobile-friendly layout */
+  [data-radix-dialog-content] .flex.items-center.justify-between.p-3 {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px !important;
+  }
+
+  [data-radix-dialog-content] .flex.items-center.justify-between.p-3 .flex.items-center.gap-2.ml-4 {
+    margin-left: 0 !important;
+    width: 100%;
+    justify-content: space-between;
+    padding-top: 6px;
+    border-top: 1px solid hsl(var(--border));
+  }
+
+  /* Space between form sections */
+  [data-radix-dialog-content] .space-y-6>*+* {
+    margin-top: 14px !important;
+  }
+
+  [data-radix-dialog-content] .space-y-4>*+* {
+    margin-top: 10px !important;
+  }
+
+  /* Section headings inside dialog */
+  [data-radix-dialog-content] h3 {
+    font-size: 0.9375rem !important;
+    font-weight: 600;
+  }
+
+  /* Order summary card - compact on mobile */
+  [data-radix-dialog-content] .space-y-4.p-6 {
+    padding: 12px !important;
+  }
+
+  /* Select triggers inside dialog */
+  [data-radix-dialog-content] [data-radix-select-trigger] {
+    font-size: 16px !important;
+    min-height: 44px !important;
+  }
+
+  /* Product search list inside dialog */
+  [data-radix-dialog-content] .max-h-40 {
+    max-height: 160px !important;
+  }
+
+  /* Action buttons row at bottom of dialog */
+  [data-radix-dialog-content] .flex.gap-4.pt-2 {
+    position: sticky;
+    bottom: 0;
+    background: hsl(var(--background));
+    padding: 12px 0 !important;
+    z-index: 10;
+    border-top: 1px solid hsl(var(--border));
+    margin-top: auto;
+  }
+
+  /* Close button (X) in top-right of dialog */
+  [data-radix-dialog-content]>button[class*="absolute"] {
+    top: 12px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    min-height: 36px !important;
+    padding: 0 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Sale details modal - compact grid */
+  [data-radix-dialog-content] .grid.grid-cols-2 {
+    gap: 8px !important;
+  }
+
+  /* Footer buttons (for delete confirmation etc) */
+  [data-radix-dialog-content] [class*="DialogFooter"] {
+    gap: 8px;
+    flex-direction: column-reverse;
+  }
+
+  [data-radix-dialog-content] [class*="DialogFooter"] button {
+    width: 100%;
+  }
+}
+
+/* ========================================
+   SMOOTH TRANSITIONS FOR INTERACTIVE ELEMENTS
+   ======================================== */
+button,
+a,
+input,
+select,
+textarea,
+[role="button"] {
+  transition: all 0.15s ease-out;
+}
+
+/* Table row hover transitions */
+tr {
+  transition: background-color 0.15s ease-out;
+}
+
+/* Card hover/interaction smoothness */
+[class*="Card"] {
+  transition: box-shadow 0.2s ease-out, transform 0.2s ease-out;
+}
+
+/* Scrollbar styling for smoother feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Mobile - hide scrollbars for cleaner look, but keep scrollable */
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+
+  /* Prevent body scroll when dialog is open */
+  body[data-scroll-locked] {
+    overflow: hidden !important;
+    position: fixed;
+    width: 100%;
   }
 }

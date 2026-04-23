@@ -8,7 +8,7 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Settings as SettingsIcon, Store, DollarSign } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 
 interface Settings {
@@ -23,6 +23,7 @@ interface Settings {
 interface Account {
   id: string;
   name: string;
+  manager_name?: string | null;
   address?: string | null;
   phone?: string | null;
   gstin?: string | null;
@@ -79,6 +80,7 @@ export default function Settings() {
 
     const formData = new FormData(e.currentTarget);
     const name = formData.get('storeName') as string;
+    const manager_name = (formData.get('managerName') as string) || null;
     const address = (formData.get('storeAddress') as string) || null;
     const phone = (formData.get('storePhone') as string) || null;
     const gstin = (formData.get('storeGSTIN') as string) || null;
@@ -87,12 +89,12 @@ export default function Settings() {
       // Try to update all fields
       const { error } = await supabase
         .from('accounts')
-        .update({ name, address, phone, gstin } as any)
+        .update({ name, manager_name, address, phone, gstin } as any)
         .eq('id', profile?.account_id);
 
       if (error) {
         // Check if error is likely due to missing columns
-        if (error.message?.includes('column') || error.message?.includes('address') || error.message?.includes('phone') || error.message?.includes('gstin')) {
+        if (error.message?.includes('column') || error.message?.includes('address') || error.message?.includes('phone') || error.message?.includes('gstin') || error.message?.includes('manager_name')) {
           console.warn("Extended fields not found in database, falling back to basic update");
 
           // Fallback: Update only 'name' which we know exists
@@ -240,6 +242,16 @@ export default function Settings() {
                   defaultValue={account?.name}
                   placeholder="Enter your store name"
                   required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="managerName">Manager Name</Label>
+                <Input
+                  id="managerName"
+                  name="managerName"
+                  defaultValue={account?.manager_name || ''}
+                  placeholder="Enter manager name"
                 />
               </div>
 

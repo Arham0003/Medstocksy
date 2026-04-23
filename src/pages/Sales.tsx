@@ -1,15 +1,16 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Plus, ShoppingCart, Package, Eye, Search, Printer, Download } from 'lucide-react';
+import { Plus, ShoppingCart, Package, Eye, Search, Printer, Download, ChevronDown, ChevronRight, Receipt } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useNavigate } from 'react-router-dom';
@@ -27,20 +28,37 @@ interface Sale {
   bill_id?: string; // Added bill_id
   product_id: string;
   quantity: number;
+  sub_qty?: number | null;
+  pcs_per_unit?: number | null;
   unit_price: number;
   total_price: number;
   gst_amount: number | null;
   created_at: string;
+  sale_date?: string | null;
   customer_name?: string | null;
   customer_phone?: string | null;
   customer_address?: string | null;
   prescription_months?: number | null;
   months_taken?: number | null;
   prescription_notes?: string | null;
+  payment_mode?: string | null;
   products: {
     name: string;
   };
-} // @ts-ignore - customer fields will be added by migration
+} // @ts-ignore
+
+interface GroupedTransaction {
+  bill_id: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_address: string;
+  created_at: string;
+  sale_date?: string | null;
+  total_amount: number;
+  gst_amount: number;
+  items: Sale[];
+  prescription_notes?: string | null;
+}
 
 interface Settings {
   gst_enabled: boolean;
@@ -65,8 +83,7 @@ export default function Sales() {
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>('');
-  const [monthsTaken, setMonthsTaken] = useState<number | ''>('');
-  const [prescriptionNotes, setPrescriptionNotes] = useState('');
+  const [monthsTaken, setMonthsTaken] = useState<number | ''>(1);
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [totalSales, setTotalSales] = useState(0);
@@ -74,7 +91,8 @@ export default function Sales() {
   const [productSearchTerm, setProductSearchTerm] = useState('');
   // Sales detail modal state
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<GroupedTransaction | null>(null);
+  const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
   const [productPrices, setProductPrices] = useState<Record<string, number>>({});
   // Custom GST rates for items in cart
   const [customGstRates, setCustomGstRates] = useState<Record<string, number>>({});
@@ -82,6 +100,13 @@ export default function Sales() {
   const [discountPercentage, setDiscountPercentage] = useState<number>(0);
   // Payment mode state
   const [paymentMode, setPaymentMode] = useState<string>('cash');
+  // Sub quantity state (for loose tablet sales)
+  const [currentSubQty, setCurrentSubQty] = useState<number | ''>('');
+  const [currentPcsPerUnit, setCurrentPcsPerUnit] = useState<number>(10);
+  const [subQtyMap, setSubQtyMap] = useState<Record<string, number>>({});
+  const [pcsPerUnitMap, setPcsPerUnitMap] = useState<Record<string, number>>({});
+  // Loading state for recording sale
+  const [isRecordingSales, setIsRecordingSales] = useState(false);
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -115,8 +140,8 @@ export default function Sales() {
         const result = await supabase
           .from('sales')
           .select(`
-            id, bill_id, product_id, quantity, unit_price, total_price, gst_amount, created_at,
-            customer_name, customer_phone, customer_address, prescription_months, months_taken, prescription_notes,
+            id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date,
+            customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode,
             products(name)
           `, { count: 'exact' })
           .order('created_at', { ascending: false })
@@ -137,7 +162,7 @@ export default function Sales() {
           const fallbackRes = await supabase
             .from('sales')
             .select(`
-              id, bill_id, product_id, quantity, unit_price, total_price, gst_amount, created_at,
+              id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, payment_mode,
               products(name)
             `, { count: 'exact' })
             .order('created_at', { ascending: false })
@@ -152,7 +177,9 @@ export default function Sales() {
               customer_address: null,
               prescription_months: null,
               months_taken: null,
-              prescription_notes: null
+              sale_date: null,
+              sub_qty: null,
+              pcs_per_unit: null
             })) as unknown as Sale[];
             totalCount = fallbackRes.count || 0;
           }
@@ -278,9 +305,20 @@ export default function Sales() {
       setSelectedProducts([...selectedProducts, { id: currentProduct, quantity: currentQuantity }]);
     }
 
+    // Save sub qty and pcs per unit for this product
+    if (currentSubQty !== '' && Number(currentSubQty) > 0) {
+      setSubQtyMap(prev => ({ ...prev, [currentProduct]: Number(currentSubQty) }));
+      setPcsPerUnitMap(prev => ({ ...prev, [currentProduct]: currentPcsPerUnit }));
+    } else {
+      setSubQtyMap(prev => { const next = { ...prev }; delete next[currentProduct]; return next; });
+      setPcsPerUnitMap(prev => { const next = { ...prev }; delete next[currentProduct]; return next; });
+    }
+
     // Reset current selection
     setCurrentProduct('');
     setCurrentQuantity(1);
+    setCurrentSubQty('');
+    setCurrentPcsPerUnit(10);
     // Reset search term
     setProductSearchTerm('');
     // Note: We don't reset the custom price here because it's needed for the cart calculation
@@ -289,6 +327,9 @@ export default function Sales() {
 
   const handleRemoveFromCart = (productId: string) => {
     setSelectedProducts(selectedProducts.filter(p => p.id !== productId));
+    // Clean up sub qty and pcs per unit maps
+    setSubQtyMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
+    setPcsPerUnitMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
   };
 
   const handleUpdateQuantity = (productId: string, newQuantity: number) => {
@@ -314,17 +355,38 @@ export default function Sales() {
   const handleSale = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (selectedProducts.length === 0) {
-      toast({
-        variant: "destructive",
-        title: "Please add at least one product to cart",
-      });
+    if (isRecordingSales || selectedProducts.length === 0) {
+      if (selectedProducts.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "Please add at least one product to cart",
+        });
+      }
       return;
     }
 
+    // Validation for Credit sales
+    if (paymentMode === 'credit') {
+      if (!customerName.trim() || !customerPhone.trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'Customer Info Required',
+          description: 'Name and Phone number are mandatory for credit sales.',
+        });
+        return;
+      }
+    }
+
+    setIsRecordingSales(true);
+
     try {
       // Generate a unique bill ID for this transaction
-      const billId = crypto.randomUUID();
+      const billId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
 
       // Fetch the latest settings to ensure we're using current GST settings
       const settingsRes = await supabase
@@ -347,8 +409,13 @@ export default function Sales() {
 
         // Use custom price if set, otherwise use product's selling price
         const unitPrice = productPrices[item.id] || product.selling_price;
-        // 1st: Amount * Quantity
-        const grossAmount = unitPrice * item.quantity;
+        // 1st: Amount = (full strips × rate) + (loose tablets × per-tablet rate)
+        const itemSubQty = subQtyMap[item.id];
+        const itemPcsPerUnit = pcsPerUnitMap[item.id];
+        let grossAmount = unitPrice * item.quantity;
+        if (itemSubQty && itemPcsPerUnit) {
+          grossAmount += (unitPrice / itemPcsPerUnit) * itemSubQty;
+        }
 
         // 2nd: Deduct discount
         const discountAmount = (grossAmount * discountPercentage) / 100;
@@ -361,16 +428,11 @@ export default function Sales() {
         let finalGstAmount = 0;
         let finalTotalPrice = 0;
 
-        // Note: For database storage, we typically store the Final Total Price and the GST component of it.
-
         if (currentSettings?.gst_enabled) {
           if (isGstInclusive) {
-            // Inclusive: User requested calculation is Net Amount * Rate / 100
-            // Although standard accounting is Net - (Net / (1+Rate)), the user specifically requested this flow.
             finalGstAmount = (netAmount * itemGstRate) / 100;
             finalTotalPrice = netAmount;
           } else {
-            // Exclusive: GST is added ON TOP of the Net Amount (which is treated as Base)
             finalGstAmount = (netAmount * itemGstRate) / 100;
             finalTotalPrice = netAmount + finalGstAmount;
           }
@@ -379,25 +441,29 @@ export default function Sales() {
           finalGstAmount = 0;
         }
 
+        const totalPriceRounded = Math.round(finalTotalPrice);
+        const isSettled = paymentMode !== 'credit';
+
         return {
           account_id: profile?.account_id,
-          // @ts-ignore - bill_id might not exist in types yet
           bill_id: billId,
           product_id: item.id,
           user_id: profile?.id,
           quantity: item.quantity,
+          sub_qty: subQtyMap[item.id] || null,
+          pcs_per_unit: pcsPerUnitMap[item.id] || null,
           unit_price: Math.round(unitPrice * 100) / 100,
-          total_price: Math.round(finalTotalPrice), // Round to nearest whole number
+          total_price: totalPriceRounded,
           gst_amount: Math.round(finalGstAmount * 100) / 100,
           payment_mode: paymentMode,
-          // Add customer details - use "Walk-in Customer" if name is empty
           customer_name: customerName || "Walk-in Customer",
           customer_phone: customerPhone || null,
           customer_address: customerAddress || null,
           prescription_months: prescriptionMonths === '' ? null : Number(prescriptionMonths),
           months_taken: monthsTaken === '' ? null : Number(monthsTaken),
-          prescription_notes: prescriptionNotes || null,
           discount_percentage: discountPercentage,
+          received_amount: isSettled ? totalPriceRounded : 0,
+          is_settled: isSettled,
         };
       });
 
@@ -407,28 +473,24 @@ export default function Sales() {
       if (error && error.message && error.message.includes('column')) {
         console.log('Missing column detected, trying without optional fields');
         const fallbackSalesToInsert = salesToInsert.map(sale => {
-          const { customer_name, customer_phone, customer_address, prescription_months, months_taken, prescription_notes, payment_mode, ...rest } = sale;
+          const { customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit, ...rest } = sale;
           return rest;
         });
 
         const fallbackResult = await supabase.from('sales').insert(fallbackSalesToInsert);
         error = fallbackResult.error;
 
-        // If the fallback also fails, show a more specific error message
         if (error) {
           throw new Error("The database needs to be updated. Please run the required migrations in Supabase.");
         } else {
-          // If fallback succeeds, show a warning
           toast({
             title: "Sale recorded",
-            description: `Sale of ${selectedProducts.length} item(s) recorded successfully${customerName ? ' for ' + customerName : ''}. Note: Some fields could not be saved due to missing database columns.`,
+            description: `Sale of ${selectedProducts.length} item(s) recorded successfully. Note: Some fields could not be saved.`,
           });
         }
       } else if (error) {
-        // Some other error occurred
         throw error;
       } else {
-        // Success with customer info
         toast({
           title: "Sale recorded",
           description: `Sale of ${selectedProducts.length} item(s) recorded successfully${customerName ? ' for ' + customerName : ''}`,
@@ -448,28 +510,28 @@ export default function Sales() {
       setSelectedProducts([]);
       setCurrentProduct('');
       setCurrentQuantity(1);
-      // Reset customer details
       setCustomerName('');
       setCustomerPhone('');
       setCustomerAddress('');
       setPrescriptionMonths('');
-      setMonthsTaken('');
-      setPrescriptionNotes('');
-      // Reset discount and custom rates
+      setMonthsTaken(1);
       setDiscountPercentage(0);
       setProductPrices({});
       setCustomGstRates({});
       setPaymentMode('cash');
-      // Refresh data after recording sale
+      setSubQtyMap({});
+      setPcsPerUnitMap({});
+      setCurrentSubQty('');
+      setCurrentPcsPerUnit(10);
       fetchData();
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Error recording sale",
-        description: error.message.includes('customer_name') || error.message.includes('column')
-          ? "The database needs to be updated to support customer information. Please ask your administrator to apply the required database migration from the Supabase dashboard."
-          : error.message,
+        description: error.message,
       });
+    } finally {
+      setIsRecordingSales(false);
     }
   };
 
@@ -489,7 +551,12 @@ export default function Sales() {
       if (product) {
         // Use custom price if set, otherwise use product's selling price
         const unitPrice = productPrices[item.id] || product.selling_price;
-        const grossAmount = unitPrice * item.quantity;
+        const itemSubQty = subQtyMap[item.id];
+        const itemPcsPerUnit = pcsPerUnitMap[item.id];
+        let grossAmount = unitPrice * item.quantity;
+        if (itemSubQty && itemPcsPerUnit) {
+          grossAmount += (unitPrice / itemPcsPerUnit) * itemSubQty;
+        }
 
         // Accumulate subtotal (Gross)
         subtotal += grossAmount;
@@ -533,7 +600,7 @@ export default function Sales() {
       gstAmount: Math.round(totalGstAmount * 100) / 100,
       grandTotal: Math.round(grandTotal) // Round to nearest whole number
     };
-  }, [selectedProducts, products, productPrices, customGstRates, settings, discountPercentage]);
+  }, [selectedProducts, products, productPrices, customGstRates, settings, discountPercentage, subQtyMap, pcsPerUnitMap]);
 
   // Handle page change
   const handlePageChange = (page: number) => {
@@ -543,30 +610,74 @@ export default function Sales() {
     }
   };
 
+  // Group sales by bill_id
+  const groupedSales = useMemo(() => {
+    const groups: Record<string, GroupedTransaction> = {};
+    sales.forEach(sale => {
+      // Use bill_id, fallback to id for old records
+      const key = sale.bill_id || sale.id; 
+      
+      if (!groups[key]) {
+        groups[key] = {
+          bill_id: key,
+          customer_name: sale.customer_name || 'Walk-in Customer',
+          customer_phone: sale.customer_phone || '-',
+          customer_address: sale.customer_address || '',
+          created_at: sale.created_at,
+          sale_date: sale.sale_date,
+          total_amount: 0,
+          gst_amount: 0,
+          items: []
+        };
+      }
+      
+      groups[key].items.push(sale);
+      groups[key].total_amount += sale.total_price;
+      groups[key].gst_amount += (sale.gst_amount || 0);
+    });
+    
+    // Sort by latest created_at
+    return Object.values(groups).sort((a, b) => {
+      const aDate = new Date(a.sale_date || a.created_at).getTime();
+      const bDate = new Date(b.sale_date || b.created_at).getTime();
+      return bDate - aDate;
+    });
+  }, [sales]);
+
+  const toggleExpand = (billId: string) => {
+    setExpandedBillId(prev => (prev === billId ? null : billId));
+  };
+
   // Function to show sale details in modal
-  const showSaleDetails = (sale: Sale) => {
-    setSelectedSale(sale);
+  const showSaleDetails = (transaction: GroupedTransaction) => {
+    setSelectedTransaction(transaction);
     setIsDetailModalOpen(true);
   };
 
   // Function to download sale details as text
-  const downloadSaleDetails = (sale?: Sale) => {
-    const targetSale = sale || selectedSale;
-    if (!targetSale) return;
+  const downloadSaleDetails = (transaction?: GroupedTransaction) => {
+    const targetTransaction = transaction || selectedTransaction;
+    if (!targetTransaction) return;
 
-    const saleDate = new Date(targetSale.created_at).toLocaleString();
-    const customerName = targetSale.customer_name || "Walk-in Customer";
-    const customerPhone = targetSale.customer_phone || "Not provided";
+    const saleDate = new Date(targetTransaction.sale_date || targetTransaction.created_at).toLocaleString();
+    const customerName = targetTransaction.customer_name || "Walk-in Customer";
+    const customerPhone = targetTransaction.customer_phone || "Not provided";
+
+    let itemsStr = targetTransaction.items.map(item => 
+      `- ${item.products?.name}: ${item.quantity} ${item.sub_qty ? `(+${item.sub_qty} tabs)` : ''} x ₹${item.unit_price} = ₹${item.total_price}`
+    ).join('\n');
 
     const content = `
 SALE RECEIPT
 ====================
 Date: ${saleDate}
-Product: ${targetSale.products?.name}
-Quantity: ${targetSale.quantity}
-Unit Price: ₹${targetSale.unit_price.toFixed(2)}
-GST Amount: ₹${(targetSale.gst_amount || 0).toFixed(2)}
-Total Price: ₹${targetSale.total_price.toFixed(2)}
+
+ITEMS:
+${itemsStr}
+
+====================
+GST Amount: ₹${(targetTransaction.gst_amount || 0).toFixed(2)}
+Total Amount: ₹${targetTransaction.total_amount.toFixed(2)}
 
 CUSTOMER DETAILS
 ====================
@@ -580,7 +691,7 @@ Thank you for your purchase!
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `sale-receipt-${targetSale.id}.txt`;
+    a.download = `sale-receipt-${targetTransaction.bill_id}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -598,34 +709,34 @@ Thank you for your purchase!
             Record and manage sales transactions
           </p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button
-              className="text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
-              onClick={async () => {
-                // Refresh settings when opening the dialog
-                if (profile?.account_id) {
-                  try {
-                    const settingsRes = await supabase
-                      .from('settings')
-                      .select('gst_enabled, default_gst_rate, gst_type')
-                      .eq('account_id', profile.account_id)
-                      .single();
-
-                    if (!settingsRes.error) {
-                      setSettings(settingsRes.data as any);
+        {/* Desktop: Navigate to full-page billing. Mobile: Open dialog */}
+        {isMobile ? (
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button
+                className="text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
+                onClick={async () => {
+                  if (profile?.account_id) {
+                    try {
+                      const settingsRes = await supabase
+                        .from('settings')
+                        .select('gst_enabled, default_gst_rate, gst_type')
+                        .eq('account_id', profile.account_id)
+                        .single();
+                      if (!settingsRes.error) {
+                        setSettings(settingsRes.data as any);
+                      }
+                    } catch (error) {
+                      console.error('Error refreshing settings:', error);
                     }
-                  } catch (error) {
-                    console.error('Error refreshing settings:', error);
                   }
-                }
-              }}
-            >
-              <Plus className="h-5 w-5 mr-2" />
-              Record Sale
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl w-full mx-4 sm:mx-6 md:mx-8 max-h-[90vh] overflow-y-auto">
+                }}
+              >
+                <Plus className="h-5 w-5 mr-2" />
+                Record Sale
+              </Button>
+            </DialogTrigger>
+          <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-2xl">Record New Sale</DialogTitle>
               <DialogDescription className="text-lg">
@@ -648,6 +759,10 @@ Thank you for your purchase!
                       setProductPrices({});
                       setCustomGstRates({});
                       setDiscountPercentage(0);
+                      setSubQtyMap({});
+                      setPcsPerUnitMap({});
+                      setCurrentSubQty('');
+                      setCurrentPcsPerUnit(10);
                     }}
                     className="text-sm"
                   >
@@ -669,8 +784,13 @@ Thank you for your purchase!
 
                       // Use custom price if set, otherwise use product's selling price
                       const unitPrice = productPrices[item.id] || product.selling_price;
-                      // "Subtotal" here refers to the line total before global discount (but includes tax if inclusive)
-                      const itemSubtotal = unitPrice * item.quantity;
+                      // Calculate subtotal: full strips + loose tablets
+                      const cartSubQty = subQtyMap[item.id];
+                      const cartPcsPerUnit = pcsPerUnitMap[item.id];
+                      let itemSubtotal = unitPrice * item.quantity;
+                      if (cartSubQty && cartPcsPerUnit) {
+                        itemSubtotal += (unitPrice / cartPcsPerUnit) * cartSubQty;
+                      }
 
                       // Use custom GST rate if set, otherwise use default from settings
                       const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : settings?.default_gst_rate || 0;
@@ -701,9 +821,18 @@ Thank you for your purchase!
                         <div key={item.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
                           <div className="flex-1">
                             <div className="font-medium text-lg">{product.name}</div>
+                            {cartSubQty && cartPcsPerUnit && (
+                              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                                Sub Qty: {cartSubQty} / {cartPcsPerUnit} pcs
+                              </span>
+                            )}
                             <div className="flex items-center gap-2">
                               <div className="text-sm text-muted-foreground">
-                                ₹{unitPrice.toFixed(2)} × {item.quantity} = ₹{itemSubtotal.toFixed(2)}
+                                {cartSubQty && cartPcsPerUnit ? (
+                                  <>₹{unitPrice.toFixed(2)} / {cartPcsPerUnit} × {cartSubQty} = ₹{itemSubtotal.toFixed(2)}</>
+                                ) : (
+                                  <>₹{unitPrice.toFixed(2)} × {item.quantity} = ₹{itemSubtotal.toFixed(2)}</>
+                                )}
                                 {productPrices[item.id] && productPrices[item.id] !== product.selling_price && (
                                   <span className="text-blue-600 font-medium ml-2">(Adjusted)</span>
                                 )}
@@ -862,6 +991,36 @@ Thank you for your purchase!
                   </div>
                 </div>
 
+                {/* Sub Qty and Pcs per Unit (Optional - for loose tablet sales) */}
+                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="currentSubQty" className="text-sm font-medium">Sub Qty <span className="text-muted-foreground text-xs">(Optional - loose tablets)</span></Label>
+                    <Input
+                      id="currentSubQty"
+                      type="number"
+                      min="0"
+                      value={currentSubQty}
+                      onChange={(e) => setCurrentSubQty(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                      placeholder="e.g. 6 tablets"
+                      className="py-2 px-3"
+                    />
+                  </div>
+                  {currentSubQty !== '' && Number(currentSubQty) > 0 && (
+                    <div className="space-y-2">
+                      <Label htmlFor="currentPcsPerUnit" className="text-sm font-medium">Pcs per Unit</Label>
+                      <Input
+                        id="currentPcsPerUnit"
+                        type="number"
+                        min="1"
+                        value={currentPcsPerUnit}
+                        onChange={(e) => setCurrentPcsPerUnit(parseInt(e.target.value) || 10)}
+                        placeholder="e.g. 10"
+                        className="py-2 px-3"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {currentProduct && (
                   <div className="space-y-2 mt-3">
                     <Label htmlFor="customPrice" className="text-sm font-medium">
@@ -911,6 +1070,7 @@ Thank you for your purchase!
                     <SelectItem value="cash">💵 Cash</SelectItem>
                     <SelectItem value="upi">📱 UPI</SelectItem>
                     <SelectItem value="card">💳 Card</SelectItem>
+                    <SelectItem value="credit">⏳ Credit / Dues</SelectItem>
                     <SelectItem value="net_banking">🏦 Net Banking</SelectItem>
                     <SelectItem value="wallet">👛 Wallet</SelectItem>
                     <SelectItem value="cheque">📝 Cheque</SelectItem>
@@ -958,51 +1118,46 @@ Thank you for your purchase!
                       className="py-2 px-3 w-full"
                     />
                   </div>
-                  <div className="space-y-2 sm:col-span-3">
-                    <Label htmlFor="customerAddress" className="text-sm font-medium">Address</Label>
-                    <Input
-                      id="customerAddress"
-                      value={customerAddress}
-                      onChange={(e) => setCustomerAddress(e.target.value)}
-                      placeholder="Enter address"
-                      className="py-2 px-3 w-full"
-                    />
-                  </div>
                 </div>
-                <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="prescriptionMonths" className="text-sm font-medium">Prescription: Months</Label>
-                    <Input
-                      id="prescriptionMonths"
-                      type="number"
-                      min="0"
-                      value={prescriptionMonths}
-                      onChange={(e) => setPrescriptionMonths(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
-                      placeholder="e.g. 6"
-                      className="py-2 px-3 w-full"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="monthsTaken" className="text-sm font-medium">Months Taken</Label>
-                    <Input
-                      id="monthsTaken"
-                      type="number"
-                      min="0"
-                      value={monthsTaken}
-                      onChange={(e) => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
-                      placeholder="e.g. 1"
-                      className="py-2 px-3 w-full"
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-3">
-                    <Label htmlFor="prescriptionNotes" className="text-sm font-medium">Prescription Notes</Label>
-                    <Input
-                      id="prescriptionNotes"
-                      value={prescriptionNotes}
-                      onChange={(e) => setPrescriptionNotes(e.target.value)}
-                      placeholder="Optional notes"
-                      className="py-2 px-3 w-full"
-                    />
+                <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-100 space-y-4">
+                  <h4 className="text-sm font-bold text-emerald-700 flex items-center gap-2">
+                    <Receipt className="h-4 w-4" /> Prescription Information (Rx)
+                  </h4>
+                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="prescriptionMonths" className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Rx Duration (Months)</Label>
+                      <Input
+                        id="prescriptionMonths"
+                        type="number"
+                        min="0"
+                        value={prescriptionMonths}
+                        onChange={(e) => setPrescriptionMonths(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                        placeholder="e.g. 6"
+                        className="bg-white border-emerald-200 focus:border-emerald-500 shadow-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="monthsTaken" className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Months Done</Label>
+                      <Input
+                        id="monthsTaken"
+                        type="number"
+                        min="0"
+                        value={monthsTaken}
+                        onChange={(e) => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                        placeholder="e.g. 1"
+                        className="bg-white border-emerald-200 focus:border-emerald-500 shadow-sm"
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-1 lg:col-span-2">
+                      <Label htmlFor="customerAddress" className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Address</Label>
+                      <Input
+                        id="customerAddress"
+                        value={customerAddress}
+                        onChange={(e) => setCustomerAddress(e.target.value)}
+                        placeholder="Enter customer address..."
+                        className="bg-white border-emerald-200 focus:border-emerald-500 shadow-sm"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1059,11 +1214,11 @@ Thank you for your purchase!
               <div className="flex gap-4 pt-2">
                 <Button
                   type="submit"
-                  disabled={selectedProducts.length === 0}
+                  disabled={selectedProducts.length === 0 || isRecordingSales}
                   className="flex-1 text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
                 >
                   <ShoppingCart className="h-5 w-5 mr-2" />
-                  Record Sale
+                  {isRecordingSales ? "Recording..." : "Record Sale"}
                 </Button>
                 <Button
                   type="button"
@@ -1076,14 +1231,16 @@ Thank you for your purchase!
                     setCurrentQuantity(1);
                     setCustomerName('');
                     setCustomerPhone('');
-                    setCustomerAddress('');
                     setPrescriptionMonths('');
                     setMonthsTaken('');
-                    setPrescriptionNotes('');
                     setDiscountPercentage(0);
                     setProductPrices({});
                     setCustomGstRates({});
                     setPaymentMode('cash');
+                    setSubQtyMap({});
+                    setPcsPerUnitMap({});
+                    setCurrentSubQty('');
+                    setCurrentPcsPerUnit(10);
                   }}
                   className="flex-1 text-lg py-3 px-6"
                 >
@@ -1093,6 +1250,15 @@ Thank you for your purchase!
             </form>
           </DialogContent>
         </Dialog>
+        ) : (
+          <Button
+            className="text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
+            onClick={() => navigate('/sales/new')}
+          >
+            <Plus className="h-5 w-5 mr-2" />
+            Record Sale
+          </Button>
+        )}
       </div>
 
       <Card className="shadow-xl border-0 bg-gradient-to-br from-white to-gray-50">
@@ -1122,7 +1288,7 @@ Thank you for your purchase!
                 Start recording sales transactions
               </p>
               <Button
-                onClick={() => setIsDialogOpen(true)}
+                onClick={() => isMobile ? setIsDialogOpen(true) : navigate('/sales/new')}
                 className="text-lg py-3 px-8 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
               >
                 <Plus className="h-5 w-5 mr-2" />
@@ -1135,62 +1301,122 @@ Thank you for your purchase!
                 <Table>
                   <TableHeader className="bg-gradient-to-r from-green-50 to-teal-50">
                     <TableRow>
-                      <TableHead className="text-lg font-bold text-gray-700 py-4">Product</TableHead>
-                      <TableHead className="text-lg font-bold text-gray-700 py-4">Quantity</TableHead>
-                      <TableHead className="text-lg font-bold text-gray-700 py-4">Unit Price</TableHead>
-                      <TableHead className="text-lg font-bold text-gray-700 py-4">GST</TableHead>
-                      <TableHead className="text-lg font-bold text-gray-700 py-4">Total</TableHead>
+                      <TableHead className="text-lg font-bold text-gray-700 py-4 w-1/4">Customer</TableHead>
+                      <TableHead className="text-lg font-bold text-gray-700 py-4">Phone</TableHead>
+                      <TableHead className="text-lg font-bold text-gray-700 py-4">Total Items</TableHead>
+                      <TableHead className="text-lg font-bold text-gray-700 py-4">Total Amount</TableHead>
+                      <TableHead className="text-lg font-bold text-gray-700 py-4">Payment</TableHead>
                       <TableHead className="text-lg font-bold text-gray-700 py-4">Date</TableHead>
                       <TableHead className="text-lg font-bold text-gray-700 py-4">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sales.map((sale) => (
-                      <TableRow
-                        key={sale.id}
-                        className="hover:bg-green-50 transition-colors"
-                      >
-                        <TableCell className="font-medium text-lg py-4">{sale.products?.name}</TableCell>
-                        <TableCell className="text-lg py-4">{sale.quantity}</TableCell>
-                        <TableCell className="text-lg py-4">₹{sale.unit_price}</TableCell>
-                        <TableCell className="text-lg py-4">₹{sale.gst_amount?.toFixed(2) || '0.00'}</TableCell>
-                        <TableCell className="text-lg py-4 font-bold text-green-600">₹{sale.total_price.toFixed(2)}</TableCell>
-                        <TableCell className="text-lg py-4">{new Date(sale.created_at).toLocaleDateString()}</TableCell>
-                        <TableCell className="text-lg py-4">
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => showSaleDetails(sale)}
-                              className="h-8 w-8 p-0 border-blue-200 hover:bg-blue-50 text-blue-600"
-                              title="View Details"
+                    {groupedSales.map((group) => (
+                      <React.Fragment key={group.bill_id}>
+                        <TableRow
+                          className="hover:bg-green-50 transition-colors cursor-pointer"
+                          onClick={() => toggleExpand(group.bill_id)}
+                        >
+                          <TableCell className="font-medium text-lg py-4">
+                            <div className="flex items-center gap-2">
+                              {expandedBillId === group.bill_id ? (
+                                <ChevronDown className="h-5 w-5 text-green-600" />
+                              ) : (
+                                <ChevronRight className="h-5 w-5 text-gray-400" />
+                              )}
+                              {group.customer_name}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-lg py-4">{group.customer_phone}</TableCell>
+                          <TableCell className="text-lg py-4">{group.items.length} product(s)</TableCell>
+                          <TableCell className="text-lg py-4 font-bold text-green-600">₹{group.total_amount.toFixed(2)}</TableCell>
+                          <TableCell className="text-lg py-4">
+                            <Badge 
+                              variant={group.items[0]?.payment_mode === 'credit' ? 'destructive' : 'secondary'}
+                              className={`text-sm py-1 px-3 capitalize ${
+                                group.items[0]?.payment_mode === 'credit' 
+                                  ? 'bg-orange-100 text-orange-700 hover:bg-orange-200 border-orange-200' 
+                                  : group.items[0]?.payment_mode === 'cash'
+                                  ? 'bg-green-100 text-green-700 hover:bg-green-200 border-green-200'
+                                  : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border-blue-200'
+                              }`}
                             >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                              {group.items[0]?.payment_mode || 'cash'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-lg py-4">{new Date(group.sale_date || group.created_at).toLocaleDateString()}</TableCell>
+                          <TableCell className="text-lg py-4" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => showSaleDetails(group)}
+                                className="h-8 w-8 p-0 border-blue-200 hover:bg-blue-50 text-blue-600"
+                                title="View Details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
 
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={!sale.bill_id}
-                              onClick={() => sale.bill_id && navigate(`/print-bill/${sale.bill_id}`)}
-                              className="h-8 w-8 p-0 border-purple-200 hover:bg-purple-50 text-purple-600"
-                              title="Print Bill"
-                            >
-                              <Printer className="h-4 w-4" />
-                            </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={!group.items[0]?.bill_id}
+                                onClick={() => group.items[0]?.bill_id && navigate(`/print-bill/${group.items[0].bill_id}`)}
+                                className="h-8 w-8 p-0 border-purple-200 hover:bg-purple-50 text-purple-600"
+                                title="Print Bill"
+                              >
+                                <Printer className="h-4 w-4" />
+                              </Button>
 
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => downloadSaleDetails(sale)}
-                              className="h-8 w-8 p-0 border-green-200 hover:bg-green-50 text-green-600"
-                              title="Download Receipt"
-                            >
-                              <Download className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => downloadSaleDetails(group)}
+                                className="h-8 w-8 p-0 border-green-200 hover:bg-green-50 text-green-600"
+                                title="Download Receipt"
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+
+                        {/* Expanded Inner Items */}
+                        {expandedBillId === group.bill_id && (
+                          <TableRow className="bg-gray-50 hover:bg-gray-50">
+                            <TableCell colSpan={6} className="p-0 border-b">
+                              <div className="px-6 py-4">
+                                <h4 className="font-semibold text-gray-700 mb-3 text-sm uppercase tracking-wider">Items in this Transaction</h4>
+                                <div className="rounded-md border bg-white overflow-hidden shadow-sm">
+                                  <Table>
+                                    <TableHeader className="bg-gray-100/50">
+                                      <TableRow>
+                                        <TableHead className="font-medium text-gray-600">Product</TableHead>
+                                        <TableHead className="font-medium text-gray-600">Qty</TableHead>
+                                        <TableHead className="font-medium text-gray-600">Unit Rate</TableHead>
+                                        <TableHead className="font-medium text-gray-600 text-right">Total</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {group.items.map((item, idx) => (
+                                        <TableRow key={idx}>
+                                          <TableCell className="py-2">{item.products?.name}</TableCell>
+                                          <TableCell className="py-2">
+                                            {item.quantity}
+                                            {item.sub_qty ? <span className="text-xs text-blue-600 ml-1">+{item.sub_qty} tabs</span> : null}
+                                          </TableCell>
+                                          <TableCell className="py-2">₹{item.unit_price.toFixed(2)}</TableCell>
+                                          <TableCell className="py-2 text-right font-medium">₹{item.total_price.toFixed(2)}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
                     ))}
                   </TableBody>
                 </Table>
@@ -1282,42 +1508,34 @@ Thank you for your purchase!
 
       {/* Sale Detail Modal */}
       <Dialog open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
-        <DialogContent className="max-w-md w-full mx-4 sm:mx-6 md:mx-8 max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl">Sale Details</DialogTitle>
             <DialogDescription className="text-lg">
               Detailed information about this sale
             </DialogDescription>
           </DialogHeader>
-          {selectedSale && (
+          {selectedTransaction && (
             <div className="space-y-6">
               <Card className="bg-gradient-to-br from-gray-50 to-white border-0 shadow-md">
                 <CardContent className="p-6 space-y-4">
-                  <h3 className="text-xl font-bold border-b pb-2">Transaction Details</h3>
+                  <h3 className="text-xl font-bold border-b pb-2">Transaction Summary</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <p className="text-sm text-muted-foreground">Product</p>
-                      <p className="font-medium">{selectedSale.products?.name}</p>
-                    </div>
-                    <div>
                       <p className="text-sm text-muted-foreground">Date</p>
-                      <p className="font-medium">{new Date(selectedSale.created_at).toLocaleString()}</p>
+                      <p className="font-medium">{new Date(selectedTransaction.sale_date || selectedTransaction.created_at).toLocaleString()}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Quantity</p>
-                      <p className="font-medium">{selectedSale.quantity}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Unit Price</p>
-                      <p className="font-medium">₹{selectedSale.unit_price.toFixed(2)}</p>
+                      <p className="text-sm text-muted-foreground">Total Items</p>
+                      <p className="font-medium">{selectedTransaction.items.length} product(s)</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">GST Amount</p>
-                      <p className="font-medium">₹{(selectedSale.gst_amount || 0).toFixed(2)}</p>
+                      <p className="font-medium">₹{(selectedTransaction.gst_amount || 0).toFixed(2)}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Total Price</p>
-                      <p className="font-bold text-green-600">₹{selectedSale.total_price.toFixed(2)}</p>
+                      <p className="text-sm text-muted-foreground">Total Amount</p>
+                      <p className="font-bold text-green-600 text-lg">₹{selectedTransaction.total_amount.toFixed(2)}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -1329,27 +1547,58 @@ Thank you for your purchase!
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-muted-foreground">Name</p>
-                      <p className="font-medium">{selectedSale.customer_name || "Walk-in Customer"}</p>
+                      <p className="font-medium">{selectedTransaction.customer_name || "Walk-in Customer"}</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Phone</p>
-                      <p className="font-medium">{selectedSale.customer_phone || "Not provided"}</p>
+                      <p className="font-medium">{selectedTransaction.customer_phone || "Not provided"}</p>
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="bg-gradient-to-br from-gray-50 to-white border-0 shadow-md">
+                <CardContent className="p-0 overflow-hidden">
+                  <div className="bg-gray-100 px-6 py-3 border-b">
+                    <h3 className="text-lg font-bold">Items Purchased</h3>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto p-0">
+                    <Table>
+                      <TableHeader className="bg-white sticky top-0 shadow-sm z-10">
+                        <TableRow>
+                          <TableHead className="font-medium">Product</TableHead>
+                          <TableHead className="font-medium">Qty</TableHead>
+                          <TableHead className="font-medium text-right">Total</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedTransaction.items.map((item, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="py-3 px-6">{item.products?.name}</TableCell>
+                            <TableCell className="py-3 px-6">
+                              {item.quantity}
+                              {item.sub_qty ? <span className="text-xs text-blue-600 ml-1">+{item.sub_qty} tabs</span> : null}
+                            </TableCell>
+                            <TableCell className="py-3 px-6 text-right font-medium">₹{item.total_price.toFixed(2)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 </CardContent>
               </Card>
 
               <div className="flex gap-4">
                 <Button
-                  onClick={() => downloadSaleDetails(selectedSale)}
+                  onClick={() => downloadSaleDetails(selectedTransaction)}
                   className="flex-1 text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
                 >
                   Download Receipt
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={!selectedSale.bill_id}
-                  onClick={() => selectedSale.bill_id && navigate(`/print-bill/${selectedSale.bill_id}`)}
+                  disabled={!selectedTransaction.items[0]?.bill_id}
+                  onClick={() => selectedTransaction.items[0]?.bill_id && navigate(`/print-bill/${selectedTransaction.items[0].bill_id}`)}
                   className="flex-1 text-lg py-3 px-6"
                 >
                   Print Bill
@@ -1369,3 +1618,4 @@ Thank you for your purchase!
     </div>
   );
 }
+

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 
 const DebugInfo = () => {
   const { user, profile, loading } = useAuth();
@@ -88,7 +88,7 @@ const DebugInfo = () => {
     }
   }, [user, profile, loading]);
 
-  if (process.env.NODE_ENV === 'production') {
+  if (import.meta.env.MODE === 'production') {
     return null; // Don't show in production
   }
 

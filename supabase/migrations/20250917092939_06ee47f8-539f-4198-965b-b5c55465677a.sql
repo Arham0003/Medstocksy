@@ -71,6 +71,7 @@ RETURNS UUID
 LANGUAGE SQL
 SECURITY DEFINER
 STABLE
+SET search_path = public
 AS $$
   SELECT account_id FROM public.profiles WHERE id = auth.uid();
 $$;
@@ -81,6 +82,7 @@ RETURNS BOOLEAN
 LANGUAGE SQL
 SECURITY DEFINER
 STABLE
+SET search_path = public
 AS $$
   SELECT role = 'owner' FROM public.profiles WHERE id = auth.uid();
 $$;
@@ -160,6 +162,7 @@ CREATE OR REPLACE FUNCTION public.update_product_stock()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
   -- Update product quantity
@@ -188,6 +191,7 @@ CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   new_account_id UUID;
@@ -219,6 +223,7 @@ CREATE TRIGGER on_auth_user_created
 CREATE OR REPLACE FUNCTION public.update_updated_at()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SET search_path = public
 AS $$
 BEGIN
   NEW.updated_at = NOW();

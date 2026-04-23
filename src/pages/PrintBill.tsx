@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/db conn/supabaseClient';
 import { Button } from '@/components/ui/button';
 import { Loader2, ArrowLeft, Printer } from 'lucide-react';
 
@@ -8,14 +8,19 @@ interface SaleItem {
     id: string;
     product_id: string;
     quantity: number;
+    sub_qty?: number | null;
+    pcs_per_unit?: number | null;
     unit_price: number;
     total_price: number;
     gst_amount: number | null;
     product_name: string;
-    batch_number?: string; // Placeholder
-    hsn?: string; // Placeholder
-    expiry?: string; // Placeholder
+    manufacturer?: string;
+    batch_number?: string;
+    hsn?: string;
+    expiry?: string;
     discount_percentage?: number;
+    gst?: number;
+    selling_price?: number;
 }
 
 interface BillData {
@@ -24,13 +29,14 @@ interface BillData {
     customer_name: string | null;
     customer_phone: string | null;
     customer_address: string | null;
-    doctor_name: string | null; // From prescription notes or new field? Using notes for now
+    doctor_name: string | null;
     items: SaleItem[];
     subtotal: number;
     total_gst: number;
     total_discount: number;
     total_amount: number;
     payment_mode: string;
+    received_amount: number;
 }
 
 interface BusinessDetails {
@@ -60,9 +66,9 @@ export default function PrintBill() {
                 const { data: salesData, error: salesError } = await supabase
                     .from('sales')
                     .select(`
-            id, product_id, quantity, unit_price, total_price, gst_amount, created_at,
-            customer_name, customer_phone, customer_address, prescription_notes, payment_mode, account_id, discount_percentage,
-            products(name)
+            id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at,
+            customer_name, customer_phone, customer_address, doctor_name, payment_mode, account_id, discount_percentage, sale_date, received_amount,
+            products(name, gst, hsn_code, batch_number, expiry_date, manufacturer, selling_price)
           `)
                     .eq('bill_id', billId);
 
@@ -87,59 +93,63 @@ export default function PrintBill() {
 
                 // Aggregate bill data
                 const firstItem = itemsData[0];
-                const items: SaleItem[] = itemsData.map((item: any) => ({
-                    id: item.id,
-                    product_id: item.product_id,
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
-                    total_price: item.total_price,
-                    gst_amount: item.gst_amount,
-                    product_name: item.products?.name || 'Unknown Product',
-                    discount_percentage: item.discount_percentage || 0,
-                }));
+                const items: SaleItem[] = itemsData.map((item: any) => {
+                    let formattedExpiry = '-';
+                    if (item.products?.expiry_date) {
+                        try {
+                            const d = new Date(item.products.expiry_date);
+                            formattedExpiry = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
+                        } catch (e) {
+                            formattedExpiry = '-';
+                        }
+                    }
 
-                const subtotal = items.reduce((sum, item) => sum + (item.total_price - (item.gst_amount || 0)), 0);
-                const total_gst = items.reduce((sum, item) => sum + (item.gst_amount || 0), 0);
+                    return {
+                        id: item.id,
+                        product_id: item.product_id,
+                        quantity: item.quantity,
+                        sub_qty: item.sub_qty || null,
+                        pcs_per_unit: item.pcs_per_unit || null,
+                        unit_price: item.unit_price,
+                        total_price: item.total_price,
+                        gst_amount: item.gst_amount,
+                        product_name: item.products?.name || 'Unknown Product',
+                        manufacturer: item.products?.manufacturer || '-',
+                        batch_number: item.products?.batch_number || '-',
+                        hsn: item.products?.hsn_code || '-',
+                        expiry: formattedExpiry,
+                        discount_percentage: item.discount_percentage || 0,
+                        gst: item.products?.gst || 0,
+                        selling_price: item.products?.selling_price || item.unit_price,
+                    };
+                });
 
-                // Calculate total discount
-                // The item.unit_price is the discounted price? No, usually unit_price is base price. 
-                // Let's check how Sales.tsx saves it.
-                // In Sales.tsx: unit_price = productPrices[item.id] || product.selling_price;
-                // total_price = finalTotalPrice (which is after discount and GST)
-
-                // To calculate discount amount accurately, we need to reverse engineer or simpler:
-                // We know the discount percentage.
-                // If disc% > 0, calculate the discount amount for this item.
-
-                const total_discount = items.reduce((sum, item) => {
-                    if (!item.discount_percentage || item.discount_percentage <= 0) return sum;
-
-                    // Reconstruct base price before discount
-                    // If GST is exclusive: unit_price is base price.
-                    // If GST is inclusive: unit_price is base price (Sales.tsx: unit_price = selling_price).
-
-                    // Actually, Sales.tsx saves unit_price as the price BEFORE discount adjustments but AFTER user override.
-
-                    const itemTotalBase = item.unit_price * item.quantity;
-                    const discountAmount = (itemTotalBase * item.discount_percentage) / 100;
-                    return sum + discountAmount;
+                const subtotal = items.reduce((sum, item) => {
+                    const effectiveQty = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
+                        ? item.quantity + (item.sub_qty / item.pcs_per_unit)
+                        : (item.quantity || 1);
+                    const mrp = item.selling_price || item.unit_price;
+                    return sum + (mrp * effectiveQty);
                 }, 0);
-
+                
+                const total_gst = items.reduce((sum, item) => sum + (item.gst_amount || 0), 0);
                 const total_amount = items.reduce((sum, item) => sum + item.total_price, 0);
+                const total_discount = Math.max(0, subtotal - total_amount);
 
                 setBillData({
                     id: billId,
-                    date: firstItem.created_at,
+                    date: firstItem.sale_date || firstItem.created_at,
                     customer_name: firstItem.customer_name,
                     customer_phone: firstItem.customer_phone,
                     customer_address: firstItem.customer_address,
-                    doctor_name: firstItem.prescription_notes,
+                    doctor_name: firstItem.doctor_name,
                     items,
                     subtotal,
                     total_gst,
                     total_discount,
                     total_amount,
                     payment_mode: firstItem.payment_mode || 'Cash',
+                    received_amount: firstItem.received_amount || total_amount,
                 });
 
             } catch (err: any) {
@@ -170,10 +180,16 @@ export default function PrintBill() {
         );
     }
 
+    const totalQty = billData.items.reduce((sum, item) => sum + item.quantity, 0);
+    const totalProducts = billData.items.length;
+    const invoiceNumber = billData.id.slice(0, 8).toUpperCase();
+    const invoiceDate = new Date(billData.date).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const generationTimestamp = new Date().toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
     return (
         <div className="min-h-screen bg-gray-100 p-4 print:p-0 print:bg-white">
             {/* No-print controls */}
-            <div className="max-w-[210mm] mx-auto mb-4 flex justify-between items-center print:hidden">
+            <div className="max-w-[148mm] mx-auto mb-4 flex justify-between items-center print:hidden">
                 <Button variant="outline" onClick={() => navigate('/sales')}>
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back to Sales
@@ -185,7 +201,23 @@ export default function PrintBill() {
             </div>
 
             {/* Bill Container - A5 Portrait */}
-            <div className="mx-auto bg-white p-[10mm] print:shadow-none print:p-[10mm] w-[148mm] min-h-[210mm] text-[10pt] leading-tight font-sans">
+            <div
+                id="bill-container"
+                style={{
+                    width: '148mm',
+                    height: '210mm',
+                    margin: '0 auto',
+                    background: '#fff',
+                    fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                    fontSize: '8.5pt',
+                    lineHeight: '1.3',
+                    color: '#1a1a1a',
+                    position: 'relative',
+                    boxSizing: 'border-box',
+                    padding: '4mm 5mm 4mm 5mm',
+                    textRendering: 'optimizeLegibility',
+                }}
+            >
                 <style>
                     {`
             @page {
@@ -203,134 +235,267 @@ export default function PrintBill() {
               .print\\:hidden {
                 display: none !important;
               }
-              /* Hide any potential headers/footers injected by browser if possible, 
-                 though margin: 0 usually handles it */
+              #bill-container {
+                box-shadow: none !important;
+                page-break-inside: avoid;
+              }
+            }
+            @media screen {
+              #bill-container {
+                box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+              }
+            }
+            #bill-container * {
+              box-sizing: border-box;
+            }
+            .bill-table {
+              width: 100%;
+              table-layout: fixed;
+              border-collapse: collapse;
+            }
+            .bill-table th, .bill-table td {
+              border: 0.5px solid #444;
+              padding: 2px;
+              vertical-align: middle;
+            }
+            .bill-table th {
+              background: #f0f0f0;
+              font-weight: 700;
+              font-size: 9pt;
+              text-transform: uppercase;
+              letter-spacing: 0.2px;
+              text-align: center;
+              white-space: nowrap;
+            }
+            .bill-table td {
+              font-size: 8pt;
             }
           `}
                 </style>
 
-                {/* Business Header */}
-                <div className="text-center border-b pb-4 mb-4">
-                    <h1 className="text-xl font-bold uppercase">{businessDetails?.name || 'Pharmacy Name'}</h1>
-                    <p className="whitespace-pre-wrap text-sm">{businessDetails?.address || 'Address Line 1, City'}</p>
-                    <div className="flex justify-center gap-4 text-xs mt-1">
-                        <span>Ph: {businessDetails?.phone || 'N/A'}</span>
-                        <span>GSTIN: {businessDetails?.gstin || 'N/A'}</span>
+                <div style={{ border: '1px solid #444' }}>
+                {/* ===== HEADER ZONE ===== */}
+                <div>
+                    {/* Top row: Logo + Business + Invoice */}
+                    <div style={{ display: 'flex', borderBottom: '1px solid #444' }}>
+                        {/* Left: Logo + Business Info */}
+                        <div style={{ flex: '1.2', display: 'flex', borderRight: '1px solid #444', padding: '2mm' }}>
+                            {/* Logo */}
+                            <div style={{ width: '16mm', minHeight: '16mm', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '3mm' }}>
+                                <img
+                                    src="/medstocksy-logo.png"
+                                    alt="Logo"
+                                    style={{ width: '14mm', height: '14mm', objectFit: 'contain' }}
+                                />
+                            </div>
+                            {/* Business details */}
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: '6.5pt', color: '#555', fontWeight: 600, marginBottom: '1px', letterSpacing: '0.5px' }}>BILL OF SUPPLY</div>
+                                <div style={{ fontSize: '12pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
+                                    {businessDetails?.name || 'PHARMA'}
+                                </div>
+                                <div style={{ fontSize: '7pt', marginTop: '2px', color: '#444', lineHeight: '1.4' }}>
+                                    {businessDetails?.address && <div>{businessDetails.address}</div>}
+                                    {businessDetails?.phone && <div>CONTACT: {businessDetails.phone}</div>}
+                                    {businessDetails?.gstin && <div>GSTIN: {businessDetails.gstin}</div>}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right: Invoice Details */}
+                        <div style={{ flex: '1', padding: '2mm' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2mm' }}>
+                                <div style={{ fontSize: '10pt', fontWeight: 700, color: '#1a3a5c' }}>
+                                    Invoice/{invoiceNumber}
+                                </div>
+                                <div style={{ fontSize: '8pt', fontWeight: 600, textAlign: 'right' }}>
+                                    {invoiceDate}
+                                </div>
+                            </div>
+                            <div style={{ fontSize: '7pt', lineHeight: '1.6', color: '#333' }}>
+                                <div style={{ display: 'flex' }}>
+                                    <span style={{ width: '16mm', fontWeight: 600 }}>PARTY:</span>
+                                    <span>{billData.customer_name || 'Walk-in'}</span>
+                                </div>
+                                {billData.customer_address && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '16mm', fontWeight: 600 }}>ADDRESS:</span>
+                                        <span>{billData.customer_address}</span>
+                                    </div>
+                                )}
+                                {billData.customer_phone && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '16mm', fontWeight: 600 }}>CONTACT:</span>
+                                        <span>{billData.customer_phone}</span>
+                                    </div>
+                                )}
+                                {!billData.customer_address && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '16mm', fontWeight: 600 }}>ADDRESS</span>
+                                        <span>-</span>
+                                    </div>
+                                )}
+                                {!billData.customer_phone && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '16mm', fontWeight: 600 }}>CONTACT</span>
+                                        <span>-</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                {/* Bill Meta */}
-                <div className="flex justify-between text-xs mb-4">
-                    <div className="space-y-1">
-                        <p><span className="font-semibold">Patient:</span> {billData.customer_name || 'Walk-in'}</p>
-                        {billData.customer_phone && <p><span className="font-semibold">Ph:</span> {billData.customer_phone}</p>}
-                        {billData.doctor_name && <p><span className="font-semibold">Dr:</span> {billData.doctor_name}</p>}
-                    </div>
-                    <div className="space-y-1 text-right">
-                        <p><span className="font-semibold">Bill No:</span> {billData.id.slice(0, 8).toUpperCase()}</p>
-                        <p><span className="font-semibold">Date:</span> {new Date(billData.date).toLocaleDateString()}</p>
-                        <p><span className="font-semibold">Time:</span> {new Date(billData.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                    </div>
-                </div>
-
-                {/* Items Table */}
-                <div className="mb-4">
-                    <table className="w-full text-[9px]">
+                {/* ===== ITEMIZED TRANSACTION GRID ===== */}
+                <div style={{ borderBottom: '1px solid #444' }}>
+                    <table className="bill-table">
                         <thead>
-                            <tr className="border-b-2 border-black">
-                                <th className="text-left py-1 w-6">S.No</th>
-                                <th className="text-left py-1">Particulars</th>
-                                <th className="text-left py-1 w-12">Batch</th>
-                                <th className="text-left py-1 w-10">HSN</th>
-                                <th className="text-left py-1 w-12">Exp</th>
-                                <th className="text-center py-1 w-8">Qty</th>
-                                <th className="text-right py-1 w-12">MRP</th>
-                                <th className="text-right py-1 w-10">Disc%</th>
-                                <th className="text-right py-1 w-10">CGST</th>
-                                <th className="text-right py-1 w-10">SGST</th>
-                                <th className="text-right py-1 w-14">Net</th>
+                            <tr>
+                                <th style={{ width: '3%' }}>#</th>
+                                <th style={{ textAlign: 'left', width: '29%' }}>Products</th>
+                                <th style={{ width: '10%' }}>HSN</th>
+                                <th style={{ width: '10%' }}>Batch</th>
+                                <th style={{ width: '6%' }}>Exp</th>
+                                <th style={{ width: '5%' }}>Qty</th>
+                                <th style={{ width: '7%' }}>MRP</th>
+                                <th style={{ width: '7%' }}>Rate</th>
+                                <th style={{ width: '5%', fontSize: '7pt' }}>Dis%</th>
+                                <th style={{ width: '5%', fontSize: '7pt' }}>CGST</th>
+                                <th style={{ width: '5%', fontSize: '7pt' }}>SGST</th>
+                                <th style={{ width: '8%' }}>Amt</th>
                             </tr>
                         </thead>
                         <tbody>
                             {billData.items.map((item, index) => {
-                                // Calculate GST split (assuming intra-state for now, so 50-50 CGST/SGST)
-                                const gstRate = (item.gst_amount && item.total_price)
-                                    ? ((item.gst_amount / (item.total_price - item.gst_amount)) * 100)
-                                    : 0;
-                                const halfGstRate = gstRate / 2;
+                                const effectiveQty = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
+                                    ? item.quantity + (item.sub_qty / item.pcs_per_unit)
+                                    : (item.quantity || 1);
+
+                                // Calculate GST rates
+                                const grossAmount = item.unit_price * effectiveQty;
+                                const discountAmt = (grossAmount * (item.discount_percentage || 0)) / 100;
+                                const netAmount = grossAmount - discountAmt;
+
+                                // CGST & SGST amounts
+                                const cgstAmt = (item.gst_amount || 0) / 2;
+                                const sgstAmt = (item.gst_amount || 0) / 2;
+
+                                const mrp = item.selling_price || item.unit_price;
+                                const gstPerUnit = (item.gst_amount || 0) / effectiveQty;
+                                const rate = mrp - gstPerUnit;
 
                                 return (
-                                    <tr key={item.id} className="border-b border-gray-200">
-                                        <td className="py-2">{index + 1}</td>
-                                        <td className="py-2 font-medium">{item.product_name}</td>
-                                        <td className="py-2">-</td> {/* Batch Placeholder */}
-                                        <td className="py-2">-</td> {/* HSN Placeholder */}
-                                        <td className="py-2">-</td> {/* Expiry Placeholder */}
-                                        <td className="py-2 text-center">{item.quantity}</td>
-                                        <td className="py-2 text-right">{item.unit_price.toFixed(2)}</td>
-                                        <td className="py-2 text-right">{item.discount_percentage ? item.discount_percentage + '%' : '0'}</td>
-                                        <td className="py-2 text-right text-[8px]">{halfGstRate > 0 ? `${halfGstRate.toFixed(1)}%` : '-'}</td>
-                                        <td className="py-2 text-right text-[8px]">{halfGstRate > 0 ? `${halfGstRate.toFixed(1)}%` : '-'}</td>
-                                        <td className="py-2 text-right font-medium">{(item.total_price).toFixed(2)}</td>
+                                    <tr key={item.id}>
+                                        <td style={{ textAlign: 'center' }}>{index + 1}</td>
+                                        <td style={{ textAlign: 'left', fontWeight: 600, wordWrap: 'break-word' }}>{item.product_name}</td>
+                                        <td style={{ textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.hsn}</td>
+                                        <td style={{ textAlign: 'center', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.batch_number}</td>
+                                        <td style={{ textAlign: 'center' }}>{item.expiry}</td>
+                                        <td style={{ textAlign: 'center' }}>
+                                            {item.sub_qty ? (
+                                                <span>{item.quantity}<span style={{ fontSize: '0.8em', color: '#1565c0' }}>+{item.sub_qty}</span></span>
+                                            ) : (
+                                                item.quantity
+                                            )}
+                                        </td>
+                                        <td style={{ textAlign: 'right' }}>{mrp.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'right' }}>{rate.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>{item.discount_percentage ? item.discount_percentage + '%' : '-'}</td>
+                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{cgstAmt > 0 ? cgstAmt.toFixed(2) : '-'}</td>
+                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{sgstAmt > 0 ? sgstAmt.toFixed(2) : '-'}</td>
+                                        <td style={{ textAlign: 'right', fontWeight: 700 }}>{item.total_price.toFixed(2)}</td>
                                     </tr>
                                 );
                             })}
+                            {/* Empty rows to fill minimum space */}
+                            {billData.items.length < 5 && Array.from({ length: 5 - billData.items.length }).map((_, i) => (
+                                <tr key={`empty-${i}`}>
+                                    <td style={{ height: '24px' }}>&nbsp;</td>
+                                    <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                                </tr>
+                            ))}
                         </tbody>
                     </table>
                 </div>
 
-                {/* Summary */}
-                <div className="flex justify-end mb-6">
-                    <div className="w-48 space-y-1 text-xs">
-                        <div className="flex justify-between">
-                            <span>Subtotal:</span>
-                            <span>{billData.subtotal.toFixed(2)}</span>
+                {/* ===== FOOTER ZONE - PAYMENT & AUDIT ===== */}
+                <div style={{ borderBottom: '1px solid #444' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        {/* Left: Payment Mode + Terms */}
+                        <div style={{ flex: '1.3', borderRight: '1px solid #444', padding: '2mm', fontSize: '7pt', lineHeight: '1.5', display: 'flex', justifyContent: 'space-between' }}>
+                            <div>
+                                <div style={{ marginBottom: '2mm' }}>
+                                    <span style={{ fontWeight: 700 }}>Payment Mode: </span>
+                                    <span style={{ textTransform: 'lowercase' }}>{billData.payment_mode}</span>
+                                    <br />
+                                    <span>Received with thanks.</span>
+                                </div>
+                                <div>
+                                    <div style={{ fontWeight: 700, marginBottom: '1px' }}>Terms & Conditions:</div>
+                                    <div style={{ fontSize: '6.5pt', lineHeight: '1.4', color: '#333' }}>
+                                        Goods once sold will not be taken back.<br />
+                                        All GST Taxes are included in MRP.<br />
+                                        Subject to local jurisdiction.<br />
+                                        <span style={{ color: '#0d6e3a', fontWeight: 600 }}>Get well soon!</span>
+                                    </div>
+                                </div>
+                            </div>
+                            {/* Authorized Signatory */}
+                            <div style={{ paddingRight: '2mm', paddingTop: '8mm' }}>
+                                <div style={{ borderTop: '0.5px solid #666', width: '28mm', textAlign: 'center', paddingTop: '1mm' }}>
+                                    <span style={{ fontSize: '6pt', color: '#555' }}>Auth Sign</span>
+                                </div>
+                            </div>
                         </div>
-                        {billData.total_gst > 0 && (
-                            <div className="flex justify-between">
-                                <span>GST:</span>
-                                <span>{billData.total_gst.toFixed(2)}</span>
-                            </div>
-                        )}
-                        {billData.total_discount > 0 && (
-                            <div className="flex justify-between text-green-600">
-                                <span>Discount:</span>
-                                <span>- {billData.total_discount.toFixed(2)}</span>
-                            </div>
-                        )}
-                        <div className="flex justify-between font-bold border-t border-black pt-1 text-sm">
-                            <span>Net Amount:</span>
-                            <span>₹{billData.total_amount.toFixed(2)}</span>
+
+                        {/* Right: Totals */}
+                        <div style={{ flex: '0.7', padding: '2mm', fontSize: '7.5pt' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <tbody>
+                                    <tr>
+                                        <td style={{ padding: '1.5px 0', fontWeight: 600, textAlign: 'left' }}>Subtotal</td>
+                                        <td style={{ padding: '1.5px 0', textAlign: 'right' }}>₹{billData.subtotal.toFixed(2)}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style={{ padding: '1.5px 0', fontWeight: 600, textAlign: 'left', color: '#0d6e3a' }}>Total Savings</td>
+                                        <td style={{ padding: '1.5px 0', textAlign: 'right', color: '#0d6e3a' }}>-₹{billData.total_discount.toFixed(2)}</td>
+                                    </tr>
+                                    <tr>
+                                        <td colSpan={2} style={{ padding: 0 }}>
+                                            <div style={{ borderTop: '1.5px solid #1a1a1a', margin: '2px 0' }}></div>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td style={{ padding: '2px 0', fontWeight: 800, fontSize: '9pt', textAlign: 'left' }}>TOTAL</td>
+                                        <td style={{ padding: '2px 0', fontWeight: 800, fontSize: '9pt', textAlign: 'right' }}>₹{billData.total_amount.toFixed(2)}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
                         </div>
                     </div>
                 </div>
 
-                {/* Footer */}
-                <div className="mt-auto pt-4 border-t border-black text-[10px] text-gray-600">
-                    <div className="flex justify-between mb-2">
-                        <div>
-                            <p className="font-semibold">Payment Mode: {billData.payment_mode}</p>
-                            <p>Received with thanks.</p>
-                        </div>
-                        <div className="text-right">
-                            {/* Placeholder for now */}
-                            <p>Authorized Signatory</p>
-                        </div>
+                {/* ===== CONTROL STRIP ===== */}
+                <div style={{
+                    background: '#f5f5f5',
+                    padding: '1.5mm 3mm',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '6pt',
+                    color: '#555',
+                }}>
+                    <div style={{ fontWeight: 600 }}>
+                        PRODUCTS: {totalProducts}, TOTAL QTY: {totalQty}
                     </div>
-
-                    <div className="text-xs font-medium mt-4">
-                        <p>Terms & Conditions:</p>
-                        <ul className="list-disc pl-4 mt-1 text-[9px]">
-                            <li>Goods once sold will not be taken back.</li>
-                            <li>All GST Taxes are included in MRP.</li>
-                            <li>Subject to local jurisdiction.</li>
-                        </ul>
+                    <div>
+                        Generated on <span style={{ fontWeight: 600 }}>{generationTimestamp}</span>
                     </div>
-
-                    <div className="text-center mt-6 text-[8px] text-gray-400">
-                        <p>Get well soon!</p>
-                        <p>Computer Generated Invoice</p>
+                    <div style={{ fontStyle: 'italic' }}>
+                        Powered by <span style={{ fontWeight: 600 }}>medstocksy.in</span>
                     </div>
+                </div>
                 </div>
             </div>
         </div>

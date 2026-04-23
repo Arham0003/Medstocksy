@@ -35,47 +35,65 @@ export type Database = {
       products: {
         Row: {
           account_id: string
+          batch_number: string | null
           category: string | null
           created_at: string | null
+          expiry_date: string | null
           gst: number | null
+          hsn_code: string | null
           id: string
           low_stock_threshold: number | null
+          manufacturer: string | null
           name: string
+          pcs_per_unit: number | null
           purchase_price: number | null
           quantity: number
           selling_price: number
           sku: string | null
           supplier: string | null
+          supplier_id: string | null
           updated_at: string | null
         }
         Insert: {
           account_id: string
+          batch_number?: string | null
           category?: string | null
           created_at?: string | null
+          expiry_date?: string | null
           gst?: number | null
+          hsn_code?: string | null
           id?: string
           low_stock_threshold?: number | null
+          manufacturer?: string | null
           name: string
+          pcs_per_unit?: number | null
           purchase_price?: number | null
           quantity?: number
           selling_price: number
           sku?: string | null
           supplier?: string | null
+          supplier_id?: string | null
           updated_at?: string | null
         }
         Update: {
           account_id?: string
+          batch_number?: string | null
           category?: string | null
           created_at?: string | null
+          expiry_date?: string | null
           gst?: number | null
+          hsn_code?: string | null
           id?: string
           low_stock_threshold?: number | null
+          manufacturer?: string | null
           name?: string
+          pcs_per_unit?: number | null
           purchase_price?: number | null
           quantity?: number
           selling_price?: number
           sku?: string | null
           supplier?: string | null
+          supplier_id?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -84,6 +102,108 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      suppliers: {
+        Row: {
+          id: string
+          account_id: string
+          supplier_code: string
+          name: string
+          contact_person: string | null
+          phone: string | null
+          email: string | null
+          address: string | null
+          gst_number: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          account_id: string
+          supplier_code: string
+          name: string
+          contact_person?: string | null
+          phone?: string | null
+          email?: string | null
+          address?: string | null
+          gst_number?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          account_id?: string
+          supplier_code?: string
+          name?: string
+          contact_person?: string | null
+          phone?: string | null
+          email?: string | null
+          address?: string | null
+          gst_number?: string | null
+          created_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suppliers_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      supplier_payments: {
+        Row: {
+          id: string
+          account_id: string
+          supplier_id: string
+          amount: number
+          payment_type: string
+          payment_date: string
+          notes: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          account_id: string
+          supplier_id: string
+          amount: number
+          payment_type?: string
+          payment_date?: string
+          notes?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          account_id?: string
+          supplier_id?: string
+          amount?: number
+          payment_type?: string
+          payment_date?: string
+          notes?: string | null
+          created_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplier_payments_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "supplier_payments_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
             referencedColumns: ["id"]
           },
         ]

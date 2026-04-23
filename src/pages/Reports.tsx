@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Download, TrendingUp, Package, ShoppingCart, Eye, EyeOff } from 'lucide-react';
+import { Download, TrendingUp, Package, ShoppingCart, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
@@ -46,11 +46,23 @@ interface ProductSales {
   total_revenue: number;
 }
 
+interface PurchaseReturnReport {
+  id: string;
+  return_date: string;
+  quantity: number;
+  return_amount: number;
+  reason: string | null;
+  batch_number: string | null;
+  suppliers: { name: string; supplier_code: string } | null;
+  products: { name: string; category: string | null } | null;
+}
+
 export default function Reports() {
   const { isOwner } = useAuth();
   const { toast } = useToast();
   const [salesData, setSalesData] = useState<SalesReport[]>([]);
   const [productSales, setProductSales] = useState<ProductSales[]>([]);
+  const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturnReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('7');
   const [startDate, setStartDate] = useState('');
@@ -244,6 +256,32 @@ export default function Reports() {
         setGlobalOutstandingCredit(0);
       }
 
+      // --- STEP 4: Purchase Returns ---
+      try {
+        let prQuery = (supabase as any)
+          .from('purchase_returns')
+          .select('id, return_date, quantity, return_amount, reason, batch_number, suppliers(name, supplier_code), products(name, category)')
+          .order('return_date', { ascending: false });
+
+        if (dateRange === 'custom' && startDate && endDate) {
+          prQuery = prQuery.gte('return_date', startDate).lte('return_date', endDate);
+        } else {
+          prQuery = prQuery.gte('return_date', fromDateStr);
+        }
+
+        const { data: prData, error: prError } = await prQuery;
+        if (!prError) {
+          setPurchaseReturns((prData ?? []) as PurchaseReturnReport[]);
+        } else if (prError.code === '42P01' || prError.message?.includes('does not exist')) {
+          setPurchaseReturns([]);  // table not created yet
+        } else {
+          console.warn('Purchase returns fetch error:', prError.message);
+          setPurchaseReturns([]);
+        }
+      } catch (err) {
+        setPurchaseReturns([]);
+      }
+
     } catch (error: any) {
       console.error("Reports Fetch Error:", error);
       toast({
@@ -298,6 +336,11 @@ export default function Reports() {
   const totalProfit = useMemo(() => 
     salesData.reduce((sum, day) => sum + (day.total_profit || 0), 0), 
     [salesData]
+  );
+
+  const totalPurchaseReturns = useMemo(() =>
+    purchaseReturns.reduce((sum, r) => sum + r.return_amount, 0),
+    [purchaseReturns]
   );
   
   // Outstanding credit = sum of (total_price - received_amount) for ALL unsettled rows
@@ -361,7 +404,7 @@ export default function Reports() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
@@ -436,6 +479,17 @@ export default function Reports() {
           <CardContent>
             <div className="text-2xl font-bold text-orange-700">₹{globalOutstandingCredit.toFixed(2)}</div>
             <p className="text-[10px] text-orange-600 font-medium">Unpaid customer dues (All time)</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-red-50/20 border-red-100/50 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-red-800">Purchase Returns</CardTitle>
+            <RotateCcw className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-700">₹{totalPurchaseReturns.toFixed(2)}</div>
+            <p className="text-[10px] text-red-600 font-medium">{purchaseReturns.length} return(s) in period</p>
           </CardContent>
         </Card>
       </div>
@@ -689,6 +743,90 @@ export default function Reports() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Purchase Returns Table */}
+      <Card>
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <RotateCcw className="h-5 w-5 text-red-500" />
+                Purchase Returns
+              </CardTitle>
+              <CardDescription>
+                Products returned to suppliers in this period — {purchaseReturns.length} return(s)
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => exportToCSV(purchaseReturns.map(r => ({
+                Date: r.return_date,
+                Supplier: r.suppliers?.name ?? '—',
+                Product: r.products?.name ?? '—',
+                Category: r.products?.category ?? '—',
+                Quantity: r.quantity,
+                'Return Amount': r.return_amount,
+                Reason: r.reason ?? '—',
+                Batch: r.batch_number ?? '—',
+              })), 'purchase-returns-report')}
+              disabled={purchaseReturns.length === 0}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export Returns
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="text-center py-8">Loading...</div>
+          ) : purchaseReturns.length === 0 ? (
+            <div className="text-center py-10 border border-dashed rounded-lg text-muted-foreground">
+              No purchase returns in this period.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader className="bg-muted/50">
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Supplier</TableHead>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="text-center">Qty</TableHead>
+                  <TableHead className="text-right">Credited (₹)</TableHead>
+                  <TableHead>Reason</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {purchaseReturns.map((r) => (
+                  <TableRow key={r.id} className="hover:bg-red-50/30">
+                    <TableCell className="text-sm">
+                      {new Date(r.return_date).toLocaleDateString('en-IN')}
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">{r.suppliers?.name ?? '—'}</div>
+                      {r.suppliers?.supplier_code && (
+                        <div className="text-xs text-muted-foreground font-mono">{r.suppliers.supplier_code}</div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">{r.products?.name ?? '—'}</div>
+                      {r.products?.category && (
+                        <div className="text-xs text-muted-foreground">{r.products.category}</div>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center font-medium">{r.quantity}</TableCell>
+                    <TableCell className="text-right font-semibold text-red-600">
+                      ₹{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground max-w-[180px] truncate">
+                      {r.reason ?? <span className="italic opacity-40">—</span>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -16,7 +16,8 @@ import {
   Users,
   RotateCcw,
   CreditCard,
-  Truck
+  Truck,
+  PackageX
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { memo, useEffect, useState } from 'react';
@@ -25,6 +26,7 @@ const ownerNavItems = [
   { title: 'Overview', icon: Home, href: '/' },
   { title: 'Products', icon: Package, href: '/products' },
   { title: 'Suppliers', icon: Truck, href: '/suppliers' },
+  { title: 'Purchase Return', icon: PackageX, href: '/purchase-return' },
   { title: 'Sales', icon: ShoppingCart, href: '/sales' },
   { title: 'Sales Return', icon: RotateCcw, href: '/sales-return' },
   { title: 'Customer Relation', icon: Users, href: '/customer-relation' },

@@ -61,6 +61,11 @@ interface SupplierWithStats extends Supplier {
   paymentStatus: 'paid' | 'partial' | 'pending';
 }
 
+const getValidPaymentAmount = (amount: number) => {
+  // Ignore legacy bad rows where amount was stored as negative.
+  return amount > 0 ? amount : 0;
+};
+
 export default function Suppliers() {
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -145,7 +150,9 @@ export default function Suppliers() {
     return suppliers.map(s => {
       const prods = productsBySupplier[s.id] || [];
       const totalPurchaseValue = prods.reduce((sum, p) => sum + ((p.purchase_price ?? 0) * p.quantity), 0);
-      const totalPaid = payments.filter(p => p.supplier_id === s.id).reduce((sum, p) => sum + p.amount, 0);
+      const totalPaid = payments
+        .filter(p => p.supplier_id === s.id)
+        .reduce((sum, p) => sum + getValidPaymentAmount(Number(p.amount || 0)), 0);
       const balance = Math.max(0, totalPurchaseValue - totalPaid);
       let paymentStatus: 'paid' | 'partial' | 'pending' = 'pending';
       if (totalPurchaseValue > 0) {
@@ -301,7 +308,7 @@ export default function Suppliers() {
   const totalStats = useMemo(() => ({
     totalSuppliers: suppliers.length,
     totalProducts: Object.values(productsBySupplier).flat().length,
-    totalPaid: payments.reduce((s, p) => s + p.amount, 0),
+    totalPaid: payments.reduce((s, p) => s + getValidPaymentAmount(Number(p.amount || 0)), 0),
     totalBalance: suppliersWithStats.reduce((s, sup) => s + sup.balance, 0),
   }), [suppliers, productsBySupplier, payments, suppliersWithStats]);
 

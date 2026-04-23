@@ -1588,25 +1588,25 @@ Thank you for your purchase!
                 </CardContent>
               </Card>
 
-              <div className="flex gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 pt-1">
                 <Button
                   onClick={() => downloadSaleDetails(selectedTransaction)}
-                  className="flex-1 text-lg py-3 px-6 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
+                  className="w-full h-10 px-3 text-sm sm:text-base bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
                 >
-                  Download Receipt
+                  Save Receipt
                 </Button>
                 <Button
                   variant="outline"
                   disabled={!selectedTransaction.items[0]?.bill_id}
                   onClick={() => selectedTransaction.items[0]?.bill_id && navigate(`/print-bill/${selectedTransaction.items[0].bill_id}`)}
-                  className="flex-1 text-lg py-3 px-6"
+                  className="w-full h-10 px-3 text-sm sm:text-base"
                 >
                   Print Bill
                 </Button>
                 <Button
                   variant="outline"
                   onClick={() => setIsDetailModalOpen(false)}
-                  className="flex-1 text-lg py-3 px-6"
+                  className="w-full h-10 px-3 text-sm sm:text-base"
                 >
                   Close
                 </Button>

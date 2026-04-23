@@ -90,6 +90,8 @@ export default function Products() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   // State for category selection
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   // Filters
@@ -259,14 +261,13 @@ export default function Products() {
     const pcsPerUnitRaw = formData.get('pcs_per_unit') as string;
     const pcsPerUnitVal = pcsPerUnitRaw ? parseInt(pcsPerUnitRaw) : null;
 
-    const expDateRaw = formData.get('expiry_date') as string;
     const productData = {
       name: formData.get('name') as string,
       hsn_code: formData.get('hsn_code') as string,
       category: formData.get('category') as string,
       batch_number: formData.get('batch_number') as string,
       manufacturer: formData.get('manufacturer') as string,
-      expiry_date: expDateRaw && expDateRaw.length === 7 ? `${expDateRaw}-01` : (expDateRaw || null),
+      expiry_date: (formData.get('expiry_date') as string) || null,
       quantity: parseInt(formData.get('quantity') as string),
       purchase_price: parseFloat(formData.get('purchase_price') as string),
       selling_price: parseFloat(formData.get('selling_price') as string),
@@ -481,6 +482,26 @@ export default function Products() {
     }
   }, [uploadedData, toast, allSuppliers]);
 
+  const handleDeleteAll = async () => {
+    if (!profile?.account_id) return;
+    setIsDeletingAll(true);
+    try {
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('account_id', profile.account_id);
+
+      if (error) throw error;
+      toast({ title: 'All products deleted', description: 'Your inventory has been cleared.' });
+      setProducts([]);
+      setDeleteAllDialogOpen(false);
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'Error deleting products', description: err.message });
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
+
   const saveAllProducts = async () => {
     if (parsedProducts.length === 0) return;
     if (!profile?.account_id || isSavingAll) return;
@@ -585,7 +606,50 @@ export default function Products() {
               Manage your inventory products and stock levels
             </p>
           </div>
+          <div className="flex gap-4">
+            {/* <Button
+              variant="destructive"
+              onClick={() => setDeleteAllDialogOpen(true)}
+              className="text-sm px-4 shadow-sm border border-red-200"
+            >delete all products
+              <Trash2 className="h-4 w-4 mr-2" />
+              
+            </Button> */}
+          </div>
         </div>
+        
+        {/* Delete All Confirmation Dialog */}
+        <Dialog open={deleteAllDialogOpen} onOpenChange={setDeleteAllDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-xl text-red-600 flex items-center gap-2">
+                <AlertTriangle className="h-6 w-6" />
+                Delete ALL Products?
+              </DialogTitle>
+              <DialogDescription className="text-base pt-2">
+                This action cannot be undone. This will permanently delete your entire product inventory. Are you absolutely sure you want to proceed?
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-0 mt-4">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteAllDialogOpen(false)}
+                className="text-lg py-3 px-6"
+                disabled={isDeletingAll}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteAll}
+                className="text-lg py-3 px-6"
+                disabled={isDeletingAll}
+              >
+                {isDeletingAll ? 'Deleting...' : 'Delete All Products'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <CSVUpload onFileUpload={setUploadedData} />
 
         {parsedProducts.length > 0 && (
@@ -890,12 +954,12 @@ export default function Products() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="expiry_date" className="text-lg font-medium">Expiry</Label>
+                  <Label htmlFor="expiry_date" className="text-lg font-medium">Expiry Date</Label>
                   <Input
                     id="expiry_date"
                     name="expiry_date"
-                    type="month"
-                    defaultValue={editingProduct?.expiry_date ? editingProduct.expiry_date.substring(0, 7) : ''}
+                    type="date"
+                    defaultValue={editingProduct?.expiry_date ? editingProduct.expiry_date.substring(0, 10) : ''}
                     className="text-lg py-3 px-4"
                   />
                 </div>
@@ -1225,10 +1289,7 @@ export default function Products() {
                               return diffDays <= 30 ? "text-red-500 font-bold" : "text-muted-foreground";
                             })()
                           )}>
-                            Exp: {product.expiry_date ? (() => {
-                              const d = new Date(product.expiry_date);
-                              return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-                            })() : '-'}
+                            Exp: {product.expiry_date ? new Date(product.expiry_date).toLocaleDateString() : '-'}
                           </span>
                         </div>
                       </TableCell>

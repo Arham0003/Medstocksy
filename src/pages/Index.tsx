@@ -18,7 +18,7 @@ import {
   PieChart as PieChartIcon
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/db conn/supabaseClient';
+import { supabase } from '@/db_conn/supabaseClient';
 import {
   PieChart,
   Pie,

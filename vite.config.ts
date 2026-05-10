@@ -7,7 +7,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   base: "/", // Ensure base path is correctly set
-  envDir: "./src/db conn",
+  envDir: "./src/db_conn",
   server: {
     host: "::",
     port: 8080,

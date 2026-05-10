@@ -1,1 +1,1 @@
-export { supabase } from '@/db conn/supabaseClient';
+export { supabase } from '@/db_conn/supabaseClient';

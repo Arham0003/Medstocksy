@@ -1,0 +1,363 @@
+import { useState, useEffect, useMemo } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableSkeleton } from '@/components/TableSkeleton';
+import { Badge } from '@/components/ui/badge';
+import { Search, Package, AlertTriangle, Filter, X } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/db conn/supabaseClient';
+import { useToast } from '@/hooks/use-toast';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+interface Product {
+  id: string;
+  name: string;
+  sku: string;
+  category: string;
+  quantity: number;
+  selling_price: number;
+  low_stock_threshold: number;
+  supplier: string;
+  expiry_date?: string | null;
+}
+
+export default function Inventory() {
+  const { profile } = useAuth();
+  const { toast } = useToast();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expiryFilter, setExpiryFilter] = useState<string>('all');
+  const [stockFilter, setStockFilter] = useState<string>('all');
+
+  const fetchProducts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+      setProducts(data || []);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Error fetching inventory",
+        description: error.message,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  // Memoize filtered products
+  const filteredProducts = useMemo(() =>
+    products.filter(product => {
+      // Search filter
+      const searchMatch = !searchTerm ||
+        product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.category?.toLowerCase().includes(searchTerm.toLowerCase());
+
+      if (!searchMatch) return false;
+
+      // Stock filter
+      if (stockFilter !== 'all') {
+        const threshold = product.low_stock_threshold || 10;
+        const isLowStock = product.quantity <= threshold && product.quantity > 0;
+        const isOutOfStock = product.quantity === 0;
+        const isInStock = product.quantity > threshold;
+
+        if (stockFilter === 'in_stock' && !isInStock) return false;
+        if (stockFilter === 'low_stock' && !isLowStock) return false;
+        if (stockFilter === 'out_of_stock' && !isOutOfStock) return false;
+      }
+
+      // Expiry filter
+      if (expiryFilter !== 'all') {
+        if (!product.expiry_date) return false;
+
+        const expiryDate = new Date(product.expiry_date);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const thirtyDaysFromNow = new Date();
+        thirtyDaysFromNow.setDate(today.getDate() + 30);
+        thirtyDaysFromNow.setHours(23, 59, 59, 999);
+
+        if (expiryFilter === 'expired' && expiryDate >= today) return false;
+        if (expiryFilter === 'soon' && (expiryDate < today || expiryDate > thirtyDaysFromNow)) return false;
+      }
+
+      return true;
+    }), [products, searchTerm, stockFilter, expiryFilter]);
+
+  const lowStockProducts = useMemo(() =>
+    products.filter(product =>
+      product.quantity <= product.low_stock_threshold
+    ), [products]);
+
+  const outOfStockProducts = useMemo(() =>
+    products.filter(product =>
+      product.quantity === 0
+    ), [products]);
+
+  return (
+    <div className="space-y-8">
+      <div className="text-center py-6">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+          Inventory Overview
+        </h1>
+        <p className="text-muted-foreground text-lg mt-2">
+          View current stock levels and product information
+        </p>
+      </div>
+
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+        <Card className="shadow-lg border-0 bg-gradient-to-br from-blue-50 to-blue-100">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-lg font-bold">Total Products</CardTitle>
+            <div className="bg-blue-100 p-2 rounded-full">
+              <Package className="h-5 w-5 text-blue-600" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-blue-600">{products.length}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-lg border-0 bg-gradient-to-br from-orange-50 to-orange-100">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-lg font-bold">Low Stock</CardTitle>
+            <div className="bg-orange-100 p-2 rounded-full">
+              <AlertTriangle className="h-5 w-5 text-orange-600" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-orange-600">{lowStockProducts.length}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-lg border-0 bg-gradient-to-br from-red-50 to-red-100">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-lg font-bold">Out of Stock</CardTitle>
+            <div className="bg-red-100 p-2 rounded-full">
+              <AlertTriangle className="h-5 w-5 text-red-600" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-red-600">{outOfStockProducts.length}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {lowStockProducts.length > 0 && (
+        <Card className="shadow-lg border-0 bg-gradient-to-r from-orange-50 to-amber-50">
+          <CardHeader>
+            <CardTitle className="text-2xl font-bold flex items-center gap-2">
+              <AlertTriangle className="h-6 w-6 text-orange-600" />
+              Low Stock Alert
+            </CardTitle>
+            <CardDescription className="text-lg">
+              The following products are running low on stock
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+              {lowStockProducts.map((product) => (
+                <div
+                  key={product.id}
+                  className="flex justify-between items-center p-4 bg-white rounded-xl border border-orange-200 shadow-sm"
+                >
+                  <div>
+                    <h3 className="font-bold text-lg">{product.name}</h3>
+                    <p className="text-sm text-muted-foreground">{product.sku}</p>
+                  </div>
+                  <Badge
+                    variant={product.quantity === 0 ? "destructive" : "warning"}
+                    className="text-lg py-2 px-3"
+                  >
+                    {product.quantity === 0 ? "Out of Stock" : `${product.quantity} left`}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="shadow-xl border-0 bg-gradient-to-br from-white to-gray-50">
+        <CardHeader className="pb-4">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <CardTitle className="text-2xl font-bold">Product Inventory</CardTitle>
+              <CardDescription className="text-lg mt-1">
+                Current inventory levels and product details
+              </CardDescription>
+            </div>
+            <div className="flex items-center space-x-2 w-full md:w-auto mt-4 md:mt-0">
+              <div className="relative w-full md:w-80">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-5 w-5" />
+                <Input
+                  placeholder="Search products..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10 text-lg py-3 px-4 w-full"
+                />
+              </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="flex gap-2 items-center text-lg py-3 px-4 h-auto">
+                    <Filter className="h-5 w-5" />
+                    Filters
+                    {(stockFilter !== 'all' || expiryFilter !== 'all') && (
+                      <Badge variant="secondary" className="ml-1 px-2 py-0.5">
+                        {(stockFilter !== 'all' ? 1 : 0) + (expiryFilter !== 'all' ? 1 : 0)}
+                      </Badge>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 p-6" align="end">
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-bold text-xl leading-none">Filters</h4>
+                      {(stockFilter !== 'all' || expiryFilter !== 'all') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setStockFilter('all');
+                            setExpiryFilter('all');
+                          }}
+                          className="h-auto p-1 text-blue-600 hover:text-blue-800"
+                        >
+                          Clear all
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Stock Status</Label>
+                        <Select value={stockFilter} onValueChange={setStockFilter}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="All Stock" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Stock</SelectItem>
+                            <SelectItem value="in_stock">In Stock</SelectItem>
+                            <SelectItem value="low_stock">Low Stock</SelectItem>
+                            <SelectItem value="out_of_stock">Out of Stock</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Expiry Status</Label>
+                        <Select value={expiryFilter} onValueChange={setExpiryFilter}>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="All Expiries" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Expiries</SelectItem>
+                            <SelectItem value="expired">Expired</SelectItem>
+                            <SelectItem value="soon">Expiring Soon (30 days)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <TableSkeleton rows={6} cols={['w-44', 'w-24', 'w-16', 'w-24']} />
+          ) : filteredProducts.length === 0 ? (
+            <div className="text-center py-16">
+              <div className="bg-gray-100 p-6 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-6">
+                <Package className="h-12 w-12 text-gray-400" />
+              </div>
+              <h3 className="text-2xl font-bold mb-2">No Products Found</h3>
+              <p className="text-muted-foreground text-lg">
+                {searchTerm ? 'No products match your search.' : 'No products in inventory.'}
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-xl border-0 bg-white shadow-lg overflow-hidden">
+              <Table>
+                <TableHeader className="bg-gradient-to-r from-purple-50 to-pink-50">
+                  <TableRow>
+                    <TableHead className="text-base md:text-lg font-bold text-gray-700 py-4">Product Details</TableHead>
+                    <TableHead className="hidden md:table-cell text-lg font-bold text-gray-700 py-4">Category & Supplier</TableHead>
+                    <TableHead className="text-base md:text-lg font-bold text-gray-700 py-4">Stock Level</TableHead>
+                    <TableHead className="text-base md:text-lg font-bold text-gray-700 py-4">Price</TableHead>
+                    <TableHead className="hidden sm:table-cell text-base md:text-lg font-bold text-gray-700 py-4">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredProducts.map((product) => (
+                    <TableRow
+                      key={product.id}
+                      className="hover:bg-purple-50 transition-colors"
+                    >
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-lg text-purple-900">{product.name}</span>
+                          {product.sku && <span className="text-sm text-muted-foreground font-mono">SKU: {product.sku}</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell py-4">
+                        <div className="flex flex-col">
+                          <span className="text-lg">{product.category}</span>
+                          <span className="text-sm text-muted-foreground italic">{product.supplier}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-base md:text-lg py-4 font-medium">{product.quantity} Units</TableCell>
+                      <TableCell className="text-base md:text-lg py-4 font-bold text-green-700">₹{product.selling_price}</TableCell>
+                      <TableCell className="hidden sm:table-cell py-4">
+                        <Badge
+                          variant={
+                            product.quantity === 0
+                              ? "destructive"
+                              : product.quantity <= product.low_stock_threshold
+                                ? "warning"
+                                : "success"
+                          }
+                          className="text-sm py-1 px-2"
+                        >
+                          {product.quantity === 0
+                            ? "Out of Stock"
+                            : product.quantity <= product.low_stock_threshold
+                              ? "Low Stock"
+                              : "In Stock"
+                          }
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

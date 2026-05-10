@@ -9,8 +9,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "pwa:icons": "node scripts/generate-pwa-icons.cjs",
-    "git:push": "git init && git add . && git commit -m 'Initial commit' && git branch -M main && git remote add origin https://github.com/Arham0003/Medstocksy.git && git push -u origin main"
+    "pwa:icons": "node scripts/generate-pwa-icons.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

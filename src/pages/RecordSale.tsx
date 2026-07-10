@@ -80,7 +80,7 @@ function calcAmount(row: BillRow, settings: Settings | null): number {
   // Full-strip portion
   let gross = rate * qty;
 
-  // Add loose-tablet portion if sub-qty is provided
+  // Add loose portion if pcs is provided
   if (subQty !== '' && Number(subQty) > 0 && pcsPerUnit > 0) {
     gross += (rate / pcsPerUnit) * Number(subQty);
   }
@@ -796,7 +796,7 @@ export default function RecordSale() {
         phoneRef.current?.focus();
         return;
       }
-      // Alt+S = focus sub qty of current row
+      // Alt+S = focus pcs of current row
       if (e.altKey && e.key === 's') {
         e.preventDefault();
         // Find the currently focused row
@@ -1031,7 +1031,7 @@ export default function RecordSale() {
                             </span>
                           </div>
                           <div className="text-xs text-gray-500 flex gap-3 mt-0.5">
-                            <span>Qty: <strong>{item.quantity}{item.sub_qty ? ` + ${item.sub_qty} tabs` : ''}</strong></span>
+                            <span>Qty: <strong>{item.quantity}{item.sub_qty ? ` + ${item.sub_qty} pcs` : ''}</strong></span>
                             <span>Rate: <strong>₹{item.unit_price}</strong></span>
                             {item.batch && <span>Batch: {item.batch}</span>}
                           </div>
@@ -1093,7 +1093,7 @@ export default function RecordSale() {
                 ['Alt+C', 'Clear current row'],
                 ['Alt+Delete', 'Remove current row'],
                 ['Ctrl+F', 'Jump to Phone field'],
-                ['Alt+S', 'Sub Qty field'],
+                ['Alt+S', 'Pcs field'],
                 ['? / Ctrl+/', 'This help'],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3 py-1.5">
@@ -1383,7 +1383,7 @@ export default function RecordSale() {
                     />
                   </div>
                   <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Sub Qty</Label>
+                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Pcs</Label>
                     <Input
                       ref={el => setFieldRef(row.uid, 'subQty', el)}
                       type="number"
@@ -1491,7 +1491,7 @@ export default function RecordSale() {
           <div className="grid grid-cols-[2.5fr_0.6fr_0.6fr_0.8fr_0.8fr_0.7fr_0.7fr_0.6fr_0.6fr_1fr_0.4fr] bg-green-50 border-b border-green-100 text-xs font-semibold text-green-700 py-2 px-1">
             <div className="pl-4">Product Name</div>
             <div className="text-center">Qty</div>
-            <div className="text-center">Sub</div>
+            <div className="text-center">Pcs</div>
             <div className="px-2">Batch</div>
             <div className="px-2">Expiry</div>
             <div className="px-2">HSN</div>
@@ -1543,7 +1543,7 @@ export default function RecordSale() {
                     />
                   </div>
 
-                  {/* Sub Qty */}
+                  {/* Pcs */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'subQty', el)}

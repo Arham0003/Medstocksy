@@ -98,7 +98,7 @@ const AppSidebar = memo(({ accountName, userName }: { accountName: string; userN
                     <SidebarMenuButton
                       asChild
                       isActive={location.pathname === item.href}
-                      tooltip={`${item.title} (Ctrl+${shortcutKey})`}
+                      tooltip={`${item.title} (${shortcutKey})`}
                       className="text-base py-3 rounded-lg hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
                     >
                       <Link to={item.href} className="flex items-center justify-between w-full">
@@ -107,7 +107,7 @@ const AppSidebar = memo(({ accountName, userName }: { accountName: string; userN
                           <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
                         </div>
                         <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap ml-2">
-                          Ctrl+{shortcutKey}
+                          {shortcutKey}
                         </span>
                       </Link>
                     </SidebarMenuButton>
@@ -214,31 +214,66 @@ export default function Layout() {
   const [accountName, setAccountName] = useState('My Store');
   const [userName, setUserName] = useState('Manager');
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Check if Ctrl or Meta (Command on Mac) is pressed
-      if (e.ctrlKey || e.metaKey) {
-        const key = parseInt(e.key);
-        if (!isNaN(key)) {
-          let item;
-          if (key >= 1 && key <= 9) {
-            item = ownerNavItems[key - 1];
-          } else if (key === 0) {
-            item = ownerNavItems[9];
-          }
-          
-          if (item) {
-            e.preventDefault();
-            navigate(item.href);
-          }
+      // ponytail: ignore navigation keys if typing in standard input or interacting with lists/popups/menus
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable ||
+        target.closest('[role="listbox"]') ||
+        target.closest('[role="dialog"]') ||
+        target.closest('[role="menu"]')
+      ) {
+        return;
+      }
+
+      // Check numbers
+      const key = parseInt(e.key);
+      if (!isNaN(key)) {
+        let item;
+        if (key >= 1 && key <= 9) {
+          item = ownerNavItems[key - 1];
+        } else if (key === 0) {
+          item = ownerNavItems[9];
+        }
+        
+        if (item) {
+          e.preventDefault();
+          navigate(item.href);
+        }
+      }
+
+      // Check up and down arrows
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const currentIndex = ownerNavItems.findIndex((item) => item.href === location.pathname);
+        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % ownerNavItems.length;
+        const nextItem = ownerNavItems[nextIndex];
+        if (nextItem) {
+          navigate(nextItem.href);
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const currentIndex = ownerNavItems.findIndex((item) => item.href === location.pathname);
+        const prevIndex =
+          currentIndex === -1
+            ? ownerNavItems.length - 1
+            : (currentIndex - 1 + ownerNavItems.length) % ownerNavItems.length;
+        const prevItem = ownerNavItems[prevIndex];
+        if (prevItem) {
+          navigate(prevItem.href);
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigate]);
+  }, [navigate, location.pathname]);
 
   useEffect(() => {
     const fetchData = async () => {

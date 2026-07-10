@@ -371,7 +371,7 @@ export default function SalesReturn() {
                                         <div className="flex items-end justify-between gap-2 mt-2 pt-2 border-t">
                                             <div className="text-xs text-muted-foreground">
                                                 {sale.quantity} {sale.quantity === 1 ? 'strip' : 'strips'}
-                                                {sale.sub_qty ? <span className="text-blue-600 ml-1">+{sale.sub_qty} tabs</span> : null}
+                                                {sale.sub_qty ? <span className="text-blue-600 ml-1">+{sale.sub_qty} pcs</span> : null}
                                             </div>
                                             <div className="text-sm font-semibold">{formatINR(sale.total_price)}</div>
                                         </div>

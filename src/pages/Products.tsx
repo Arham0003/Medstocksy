@@ -1232,7 +1232,7 @@ export default function Products() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="quantity" className="text-lg font-medium">Quantity (Strips/Units)</Label>
+                  <Label htmlFor="quantity" className="text-lg font-medium">Quantity (Strips)</Label>
                   <Input
                     id="quantity"
                     name="quantity"
@@ -1244,7 +1244,7 @@ export default function Products() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="pcs_per_unit" className="text-lg font-medium">PCS per Strip</Label>
+                  <Label htmlFor="pcs_per_unit" className="text-lg font-medium">Pcs per Strip</Label>
                   <Input
                     id="pcs_per_unit"
                     name="pcs_per_unit"
@@ -1254,7 +1254,7 @@ export default function Products() {
                     className="text-lg py-3 px-4"
                     placeholder="e.g. 10, 15 (leave empty if N/A)"
                   />
-                  <p className="text-xs text-muted-foreground">How many tablets/pieces in one strip? Leave empty for non-strip items.</p>
+                  <p className="text-xs text-muted-foreground">How many pieces in one strip? Leave empty for non-strip items.</p>
                 </div>
               </div>
 

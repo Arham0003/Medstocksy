@@ -141,7 +141,7 @@ export default function Sales() {
   const [discountPercentage, setDiscountPercentage] = useState<number>(0);
   // Payment mode state
   const [paymentMode, setPaymentMode] = useState<string>('cash');
-  // Sub quantity state (for loose tablet sales)
+  // Pcs state (for loose tablet sales)
   const [currentSubQty, setCurrentSubQty] = useState<number | ''>('');
   const [currentPcsPerUnit, setCurrentPcsPerUnit] = useState<number>(10);
   const [subQtyMap, setSubQtyMap] = useState<Record<string, number>>({});
@@ -424,7 +424,7 @@ export default function Sales() {
       setSelectedProducts([...selectedProducts, { id: currentProduct, quantity: currentQuantity }]);
     }
 
-    // Save sub qty and pcs per unit for this product
+    // Save pcs and pcs per unit for this product
     if (currentSubQty !== '' && Number(currentSubQty) > 0) {
       setSubQtyMap(prev => ({ ...prev, [currentProduct]: Number(currentSubQty) }));
       setPcsPerUnitMap(prev => ({ ...prev, [currentProduct]: currentPcsPerUnit }));
@@ -446,7 +446,7 @@ export default function Sales() {
 
   const handleRemoveFromCart = (productId: string) => {
     setSelectedProducts(selectedProducts.filter(p => p.id !== productId));
-    // Clean up sub qty and pcs per unit maps
+    // Clean up pcs and pcs per unit maps
     setSubQtyMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
     setPcsPerUnitMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
   };
@@ -526,7 +526,7 @@ export default function Sales() {
         toast({
           variant: 'destructive',
           title: `${product.name}: missing pcs/strip`,
-          description: 'Set the pieces-per-strip value next to Sub Qty.',
+          description: 'Set the pieces-per-strip value next to Pcs.',
         });
         return;
       }
@@ -1120,7 +1120,7 @@ export default function Sales() {
     const customerPhone = targetTransaction.customer_phone || "Not provided";
 
     let itemsStr = targetTransaction.items.map(item => 
-      `- ${item.products?.name}: ${item.quantity} ${item.sub_qty ? `(+${item.sub_qty} tabs)` : ''} x ₹${item.unit_price} = ₹${item.total_price}`
+      `- ${item.products?.name}: ${item.quantity} ${item.sub_qty ? `(+${item.sub_qty} pcs)` : ''} x ₹${item.unit_price} = ₹${item.total_price}`
     ).join('\n');
 
     const content = `
@@ -1273,7 +1273,7 @@ Thank you for your purchase!
                 )}
               </div>
 
-              {/* Cart Items — each item is fully inline-editable (Qty, Sub Qty, Rate, GST%) */}
+              {/* Cart Items — each item is fully inline-editable (Qty, Pcs, Rate, GST%) */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <Label className="text-sm font-semibold">
@@ -1405,7 +1405,7 @@ Thank you for your purchase!
                             </div>
 
                             <div className="flex flex-col">
-                              <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Sub</span>
+                              <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Pcs</span>
                               <div className="flex items-center gap-0.5">
                                 <Input
                                   type="number"
@@ -2238,7 +2238,7 @@ Thank you for your purchase!
                                 </div>
                                 {it.pcs_per_unit > 1 && (
                                   <div className="space-y-0.5">
-                                    <Label className="text-[10px] uppercase tracking-wide text-slate-500">Sub qty</Label>
+                                    <Label className="text-[10px] uppercase tracking-wide text-slate-500">Pcs</Label>
                                     <Input
                                       type="number"
                                       min={0}

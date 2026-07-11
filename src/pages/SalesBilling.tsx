@@ -67,17 +67,8 @@ export default function SalesBilling() {
     return () => { cancelled = true; };
   }, [profile?.account_id, toast]);
 
-  // ─── Warn on refresh/close if any tab has unsaved content ────────────────
-  useEffect(() => {
-    const hasUnsaved = sessions.some(s => s.meta.dirty);
-    if (!hasUnsaved) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [sessions]);
+  // (No refresh warning needed — every open bill is saved to localStorage and
+  //  restored automatically, so a refresh or app reopen loses nothing.)
 
   // ─── Handlers ────────────────────────────────────────────────────────────
   const handleAddTab = useCallback(() => {
@@ -238,6 +229,7 @@ export default function SalesBilling() {
               <RecordSale
                 embedded
                 isActive={isActive}
+                persistKey={s.id}
                 injectedProducts={products}
                 injectedSettings={settings}
                 dataLoading={dataLoading}

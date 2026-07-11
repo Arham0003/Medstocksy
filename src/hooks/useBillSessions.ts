@@ -1,6 +1,15 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export const MAX_BILL_TABS = 5;
+
+// localStorage keys — the tab list, and one entry per bill's full contents.
+const SESSIONS_KEY = 'medstocksy.billSessions';
+export const BILL_DATA_PREFIX = 'medstocksy.bill.';
+
+/** Remove a single bill's saved contents (on close / finalize). */
+export function clearBillData(id: string) {
+  try { localStorage.removeItem(BILL_DATA_PREFIX + id); } catch { /* ignore */ }
+}
 
 export interface BillSessionMeta {
   itemCount: number;
@@ -20,17 +29,47 @@ function newSession(seq: number): BillSession {
   return { id: crypto.randomUUID(), seq, meta: { ...EMPTY_META } };
 }
 
+interface PersistedSessions {
+  sessions: BillSession[];
+  activeId: string;
+  seqCounter: number;
+}
+
+// Read the saved tab list once at startup; fall back to a single fresh bill.
+function loadInitial(): PersistedSessions {
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw) as PersistedSessions;
+      if (p?.sessions?.length) {
+        const activeId = p.sessions.some(s => s.id === p.activeId) ? p.activeId : p.sessions[0].id;
+        return { sessions: p.sessions, activeId, seqCounter: p.seqCounter ?? p.sessions.length };
+      }
+    }
+  } catch { /* ignore corrupt data */ }
+  const s = newSession(1);
+  return { sessions: [s], activeId: s.id, seqCounter: 1 };
+}
+
 /**
  * Manages the set of parallel billing sessions (tabs).
- * Each session is just an id + a display-seq + lightweight meta for the tab
- * badge. The heavy per-bill state lives inside each mounted <RecordSale/>.
+ * The tab list is persisted to localStorage so open bills survive a refresh
+ * or an app reopen; each bill's contents are persisted by its <RecordSale/>.
  */
 export function useBillSessions() {
-  const [seqCounter, setSeqCounter] = useState(1);
-  const [sessions, setSessions] = useState<BillSession[]>(() => [newSession(1)]);
-  const [activeId, setActiveId] = useState<string>(() => sessions[0].id);
+  const [initial] = useState(loadInitial);
+  const [seqCounter, setSeqCounter] = useState(initial.seqCounter);
+  const [sessions, setSessions] = useState<BillSession[]>(initial.sessions);
+  const [activeId, setActiveId] = useState<string>(initial.activeId);
 
   const canAddMore = sessions.length < MAX_BILL_TABS;
+
+  // Persist the tab list on every change.
+  useEffect(() => {
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify({ sessions, activeId, seqCounter }));
+    } catch { /* ignore quota errors */ }
+  }, [sessions, activeId, seqCounter]);
 
   const addSession = useCallback((): boolean => {
     // Decide from the current render's length — a functional-updater side effect
@@ -46,6 +85,7 @@ export function useBillSessions() {
   }, [sessions.length, seqCounter]);
 
   const closeSession = useCallback((id: string) => {
+    clearBillData(id); // drop this bill's saved contents
     setSessions(prev => {
       if (prev.length <= 1) return prev; // always keep at least one
       const idx = prev.findIndex(s => s.id === id);

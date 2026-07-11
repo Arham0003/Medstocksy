@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
+import { BILL_DATA_PREFIX, clearBillData } from '@/hooks/useBillSessions';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 export interface Product {
@@ -54,6 +55,8 @@ export interface RecordSaleProps {
   onCompleted?: (billId: string) => void;
   /** Bubbles a freshly quick-added product up so the container can share it across tabs. */
   onProductCreated?: (product: Product) => void;
+  /** localStorage key (the session id) — persists this bill's contents across refresh/reopen. */
+  persistKey?: string;
 }
 
 interface BillRow {
@@ -140,11 +143,21 @@ export default function RecordSale({
   onMetaChange,
   onCompleted,
   onProductCreated,
+  persistKey,
 }: RecordSaleProps = {}) {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { toast } = useToast();
   const isMobile = useIsMobile();
+
+  // Saved contents for this bill (restored on refresh / app reopen). Read once.
+  const [hydrated] = useState<any>(() => {
+    if (!persistKey) return null;
+    try {
+      const raw = localStorage.getItem(BILL_DATA_PREFIX + persistKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
 
   // When the container injects data, this component does NOT fetch on its own.
   const usingInjected = injectedProducts !== undefined;
@@ -164,13 +177,13 @@ export default function RecordSale({
   useEffect(() => { if (usingInjected) setLoading(!!dataLoading); }, [dataLoading, usingInjected]);
 
   // ─── Customer Info ──────────────────────────────────────────────────────
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [doctorName, setDoctorName] = useState('');
-  const [billDate, setBillDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
-  const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>('');
-  const [monthsTaken, setMonthsTaken] = useState<number | ''>(1);
+  const [customerName, setCustomerName] = useState(hydrated?.customerName ?? '');
+  const [customerPhone, setCustomerPhone] = useState(hydrated?.customerPhone ?? '');
+  const [customerAddress, setCustomerAddress] = useState(hydrated?.customerAddress ?? '');
+  const [doctorName, setDoctorName] = useState(hydrated?.doctorName ?? '');
+  const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
+  const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>(hydrated?.prescriptionMonths ?? '');
+  const [monthsTaken, setMonthsTaken] = useState<number | ''>(hydrated?.monthsTaken ?? 1);
 
   // ─── CRM Retrieve Dialog ─────────────────────────────────────────────────
   type CrmField = 'name' | 'address' | 'doctor' | 'prescription_months' | 'months_taken';
@@ -206,12 +219,14 @@ export default function RecordSale({
   const [crmSelectedItems, setCrmSelectedItems] = useState<Set<string>>(new Set()); // sale_id set
 
   // ─── Payment ────────────────────────────────────────────────────────────
-  const [paymentMode, setPaymentMode] = useState('cash');
-  const [receivedAmount, setReceivedAmount] = useState<number | ''>('');
-  const [globalDiscount, setGlobalDiscount] = useState(0);
+  const [paymentMode, setPaymentMode] = useState(hydrated?.paymentMode ?? 'cash');
+  const [receivedAmount, setReceivedAmount] = useState<number | ''>(hydrated?.receivedAmount ?? '');
+  const [globalDiscount, setGlobalDiscount] = useState(hydrated?.globalDiscount ?? 0);
 
   // ─── Rows ───────────────────────────────────────────────────────────────
-  const [rows, setRows] = useState<BillRow[]>([EMPTY_ROW()]);
+  const [rows, setRows] = useState<BillRow[]>(
+    Array.isArray(hydrated?.rows) && hydrated.rows.length ? (hydrated.rows as BillRow[]) : [EMPTY_ROW()],
+  );
 
   // ─── Product search state per row  ─────────────────────────────────────
   const [activeSearchRow, setActiveSearchRow] = useState<number | null>(null);
@@ -694,6 +709,18 @@ export default function RecordSale({
     onMetaChangeRef.current?.({ itemCount, customerName: customerName.trim(), dirty });
   }, [rows, customerName, customerPhone]);
 
+  // ─── Persist this bill's contents locally (survives refresh / app reopen) ─
+  useEffect(() => {
+    if (!persistKey) return;
+    try {
+      localStorage.setItem(BILL_DATA_PREFIX + persistKey, JSON.stringify({
+        customerName, customerPhone, customerAddress, doctorName, billDate,
+        prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
+      }));
+    } catch { /* ignore quota errors */ }
+  }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
+      prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount]);
+
   // ─── Quick Add: add a freshly created product straight into this bill ────
   const handleQuickAddSaved = useCallback((product: Product, qty: number) => {
     // Make it searchable in this instance immediately + bubble up to siblings
@@ -848,6 +875,9 @@ export default function RecordSale({
         description: `${validRows.length} item(s) billed successfully${customerName ? ' for ' + customerName : ''}`,
       });
 
+      // Bill is finalized → drop its locally-saved draft so it isn't restored later.
+      if (persistKey) clearBillData(persistKey);
+
       // Completion: container decides (preserve other tabs); standalone navigates as before.
       if (onCompleted) {
         onCompleted(billId);
@@ -859,7 +889,7 @@ export default function RecordSale({
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted]);
+  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
   useEffect(() => {
@@ -963,20 +993,9 @@ export default function RecordSale({
       return;
     }
 
-    // ── Arrow keys : spreadsheet-style grid navigation ──
-    // ↓ / ↑ : same field, next / previous medicine row
-    if (e.key === 'ArrowDown') {
-      const next = rows[rowIndex + 1];
-      if (next && next.productId) { e.preventDefault(); focusField(next.uid, field); }
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      const prev = rows[rowIndex - 1];
-      if (prev && prev.productId) { e.preventDefault(); focusField(prev.uid, field); }
-      return;
-    }
     // → / ← : next / previous field, but only at the caret boundary so you can
-    // still edit within a text field normally.
+    // still edit within a text field normally. (↑/↓ are handled page-wide on
+    // the root — see handleVerticalArrowNav.)
     if (e.key === 'ArrowRight') {
       if (caretAtEnd(e.currentTarget) && currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
         e.preventDefault();
@@ -1000,6 +1019,39 @@ export default function RecordSale({
     }
   }, [rows, focusField]);
 
+  // ─── ↑ / ↓ : walk every focusable element on the page (top-to-bottom) ────
+  // Vertical keyboard navigation across the whole billing screen — customer
+  // fields, every row's inputs, payment, discount, save. stopPropagation keeps
+  // it from bubbling to the tab-bar's bill-switch handler.
+  const handleVerticalArrowNav = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const active = document.activeElement as HTMLElement | null;
+    if (!active) return;
+    // The product search owns ↑/↓ for its results dropdown — leave it alone.
+    if (active === masterSearchRef.current) return;
+
+    const focusables = Array.from(
+      e.currentTarget.querySelectorAll<HTMLElement>(
+        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter(el => el.offsetParent !== null); // visible only
+
+    const idx = focusables.indexOf(active);
+    if (idx === -1) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const nextIdx = e.key === 'ArrowDown'
+      ? Math.min(idx + 1, focusables.length - 1)
+      : Math.max(idx - 1, 0);
+    const next = focusables[nextIdx];
+    next?.focus();
+    const asInput = next as HTMLInputElement;
+    if (asInput && typeof asInput.select === 'function') {
+      try { asInput.select(); } catch { /* number/date inputs can't select */ }
+    }
+  }, []);
+
   // ─── Payment mode icons ───────────────────────────────────────────────
   const paymentModes = [
     { key: 'cash', label: 'Cash', icon: Banknote },
@@ -1021,7 +1073,7 @@ export default function RecordSale({
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════
   return (
-    <div className={cn('flex flex-col bg-gray-50 overflow-hidden', embedded ? 'absolute inset-0' : 'fixed inset-0 z-50')}>
+    <div className={cn('flex flex-col bg-gray-50 overflow-hidden', embedded ? 'absolute inset-0' : 'fixed inset-0 z-50')} onKeyDown={handleVerticalArrowNav}>
 
 
       {/* ──────── CRM RETRIEVE DIALOG ──────── */}
@@ -1261,10 +1313,10 @@ export default function RecordSale({
           <Button
             type="button"
             onClick={() => setQuickAddOpen(true)}
-            className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-medium h-9 px-3 rounded-md transition-colors shadow-sm"
-            title="Add a new medicine to inventory without leaving billing"
+            className="h-9 gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold px-3 rounded-md shadow-sm shadow-amber-500/25 transition-colors"
+            title="Add a new medicine to inventory and this bill — without leaving billing"
           >
-            <Zap className="h-4 w-4 sm:mr-1.5" />
+            <Zap className="h-4 w-4" />
             <span className="hidden sm:inline">Quick Add</span>
           </Button>
           <Button
@@ -1920,6 +1972,7 @@ export default function RecordSale({
         onOpenChange={setQuickAddOpen}
         existingProducts={products}
         onSaved={handleQuickAddSaved}
+        defaultGst={settings?.default_gst_rate}
       />
 
     </div>

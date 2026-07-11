@@ -218,6 +218,10 @@ export default function Layout() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // The full-screen POS billing page owns its own keyboard (tab switching,
+      // arrow keys, number keys). Never let global section-navigation fire there.
+      if (location.pathname === '/sales/new') return;
+
       // ponytail: ignore navigation keys if typing in standard input or interacting with lists/popups/menus
       const target = e.target as HTMLElement;
       if (

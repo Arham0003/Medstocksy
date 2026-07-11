@@ -11,11 +11,14 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search, X, Save, ChevronDown, ChevronUp, Trash2,
   HelpCircle, ArrowLeft, CreditCard, Banknote, Smartphone, Receipt,
-  CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Package
+  CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Package, Zap
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
+import { BILL_DATA_PREFIX, clearBillData } from '@/hooks/useBillSessions';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-interface Product {
+export interface Product {
   id: string;
   name: string;
   quantity: number;
@@ -29,10 +32,31 @@ interface Product {
   manufacturer?: string | null;
 }
 
-interface Settings {
+export interface Settings {
   gst_enabled: boolean;
   default_gst_rate: number;
   gst_type?: string;
+}
+
+// Props are all optional so <RecordSale/> still works standalone. The tab
+// container (SalesBilling) injects shared data + wires tab behaviour.
+export interface RecordSaleProps {
+  /** When false, this instance is a hidden background tab — global shortcuts are ignored. */
+  isActive?: boolean;
+  /** Rendered inside the tab container (absolute) vs. standalone full-screen (fixed). */
+  embedded?: boolean;
+  /** Shared product list injected by the container; when provided, this component skips its own fetch. */
+  injectedProducts?: Product[];
+  injectedSettings?: Settings | null;
+  dataLoading?: boolean;
+  /** Reports item count / customer / dirty state up for the tab badge. */
+  onMetaChange?: (meta: { itemCount: number; customerName: string; dirty: boolean }) => void;
+  /** Called after a successful save instead of the default in-app navigation. */
+  onCompleted?: (billId: string) => void;
+  /** Bubbles a freshly quick-added product up so the container can share it across tabs. */
+  onProductCreated?: (product: Product) => void;
+  /** localStorage key (the session id) — persists this bill's contents across refresh/reopen. */
+  persistKey?: string;
 }
 
 interface BillRow {
@@ -80,7 +104,7 @@ function calcAmount(row: BillRow, settings: Settings | null): number {
   // Full-strip portion
   let gross = rate * qty;
 
-  // Add loose-tablet portion if sub-qty is provided
+  // Add loose portion if pcs is provided
   if (subQty !== '' && Number(subQty) > 0 && pcsPerUnit > 0) {
     gross += (rate / pcsPerUnit) * Number(subQty);
   }
@@ -98,29 +122,68 @@ function calcAmount(row: BillRow, settings: Settings | null): number {
   return net;
 }
 
+// Caret helpers for arrow-key grid nav. number/date inputs throw on
+// selectionStart access, so we treat those as "at boundary" → arrows navigate.
+function caretAtStart(el: HTMLInputElement): boolean {
+  try { return el.selectionStart === 0 && el.selectionEnd === 0; } catch { return true; }
+}
+function caretAtEnd(el: HTMLInputElement): boolean {
+  try { return el.selectionStart === el.value.length && el.selectionEnd === el.value.length; } catch { return true; }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
-export default function RecordSale() {
+export default function RecordSale({
+  isActive = true,
+  embedded = false,
+  injectedProducts,
+  injectedSettings,
+  dataLoading,
+  onMetaChange,
+  onCompleted,
+  onProductCreated,
+  persistKey,
+}: RecordSaleProps = {}) {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { toast } = useToast();
   const isMobile = useIsMobile();
 
+  // Saved contents for this bill (restored on refresh / app reopen). Read once.
+  const [hydrated] = useState<any>(() => {
+    if (!persistKey) return null;
+    try {
+      const raw = localStorage.getItem(BILL_DATA_PREFIX + persistKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+
+  // When the container injects data, this component does NOT fetch on its own.
+  const usingInjected = injectedProducts !== undefined;
+
   // ─── Data ───────────────────────────────────────────────────────────────
-  const [products, setProducts] = useState<Product[]>([]);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>(injectedProducts ?? []);
+  const [settings, setSettings] = useState<Settings | null>(injectedSettings ?? null);
+  const [loading, setLoading] = useState(usingInjected ? !!dataLoading : true);
   const [isSaving, setIsSaving] = useState(false);
 
+  // ─── Quick Add slide-over ─────────────────────────────────────────────────
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+
+  // Keep injected data in sync when the container updates it (e.g. after Quick Add)
+  useEffect(() => { if (injectedProducts !== undefined) setProducts(injectedProducts); }, [injectedProducts]);
+  useEffect(() => { if (injectedSettings !== undefined) setSettings(injectedSettings); }, [injectedSettings]);
+  useEffect(() => { if (usingInjected) setLoading(!!dataLoading); }, [dataLoading, usingInjected]);
+
   // ─── Customer Info ──────────────────────────────────────────────────────
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerAddress, setCustomerAddress] = useState('');
-  const [doctorName, setDoctorName] = useState('');
-  const [billDate, setBillDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
-  const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>('');
-  const [monthsTaken, setMonthsTaken] = useState<number | ''>(1);
+  const [customerName, setCustomerName] = useState(hydrated?.customerName ?? '');
+  const [customerPhone, setCustomerPhone] = useState(hydrated?.customerPhone ?? '');
+  const [customerAddress, setCustomerAddress] = useState(hydrated?.customerAddress ?? '');
+  const [doctorName, setDoctorName] = useState(hydrated?.doctorName ?? '');
+  const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
+  const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>(hydrated?.prescriptionMonths ?? '');
+  const [monthsTaken, setMonthsTaken] = useState<number | ''>(hydrated?.monthsTaken ?? 1);
 
   // ─── CRM Retrieve Dialog ─────────────────────────────────────────────────
   type CrmField = 'name' | 'address' | 'doctor' | 'prescription_months' | 'months_taken';
@@ -156,12 +219,14 @@ export default function RecordSale() {
   const [crmSelectedItems, setCrmSelectedItems] = useState<Set<string>>(new Set()); // sale_id set
 
   // ─── Payment ────────────────────────────────────────────────────────────
-  const [paymentMode, setPaymentMode] = useState('cash');
-  const [receivedAmount, setReceivedAmount] = useState<number | ''>('');
-  const [globalDiscount, setGlobalDiscount] = useState(0);
+  const [paymentMode, setPaymentMode] = useState(hydrated?.paymentMode ?? 'cash');
+  const [receivedAmount, setReceivedAmount] = useState<number | ''>(hydrated?.receivedAmount ?? '');
+  const [globalDiscount, setGlobalDiscount] = useState(hydrated?.globalDiscount ?? 0);
 
   // ─── Rows ───────────────────────────────────────────────────────────────
-  const [rows, setRows] = useState<BillRow[]>([EMPTY_ROW()]);
+  const [rows, setRows] = useState<BillRow[]>(
+    Array.isArray(hydrated?.rows) && hydrated.rows.length ? (hydrated.rows as BillRow[]) : [EMPTY_ROW()],
+  );
 
   // ─── Product search state per row  ─────────────────────────────────────
   const [activeSearchRow, setActiveSearchRow] = useState<number | null>(null);
@@ -198,6 +263,7 @@ export default function RecordSale() {
 
   // ─── Fetch products & settings ─────────────────────────────────────────
   useEffect(() => {
+    if (usingInjected) return; // container provides the data
     const fetch = async () => {
       try {
         const [prodRes, settingsRes] = await Promise.all([
@@ -634,6 +700,60 @@ export default function RecordSale() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentMode]);
 
+  // ─── Report meta to the tab container (item count / customer / dirty) ────
+  const onMetaChangeRef = useRef(onMetaChange);
+  useEffect(() => { onMetaChangeRef.current = onMetaChange; }, [onMetaChange]);
+  useEffect(() => {
+    const itemCount = rows.filter(r => r.productId).length;
+    const dirty = itemCount > 0 || customerName.trim() !== '' || customerPhone.trim() !== '';
+    onMetaChangeRef.current?.({ itemCount, customerName: customerName.trim(), dirty });
+  }, [rows, customerName, customerPhone]);
+
+  // ─── Persist this bill's contents locally (survives refresh / app reopen) ─
+  useEffect(() => {
+    if (!persistKey) return;
+    try {
+      localStorage.setItem(BILL_DATA_PREFIX + persistKey, JSON.stringify({
+        customerName, customerPhone, customerAddress, doctorName, billDate,
+        prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
+      }));
+    } catch { /* ignore quota errors */ }
+  }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
+      prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount]);
+
+  // ─── Quick Add: add a freshly created product straight into this bill ────
+  const handleQuickAddSaved = useCallback((product: Product, qty: number) => {
+    // Make it searchable in this instance immediately + bubble up to siblings
+    setProducts(prev => (prev.some(p => p.id === product.id) ? prev : [product, ...prev]));
+    onProductCreated?.(product);
+
+    const gstRate = product.gst ?? settings?.default_gst_rate ?? 0;
+    const newRow: BillRow = {
+      uid: crypto.randomUUID(),
+      productId: product.id,
+      productName: product.name,
+      stock: product.quantity,
+      batch: product.batch_number || '',
+      expiry: product.expiry_date ? product.expiry_date.substring(0, 7) : '',
+      hsn: product.hsn_code || '',
+      mrp: product.selling_price,
+      rate: product.selling_price,
+      gst: gstRate,
+      pcsPerUnit: product.pcs_per_unit || 10,
+      qty,
+      subQty: '',
+      discount: 0,
+      amount: 0,
+    };
+    newRow.amount = calcAmount(newRow, settings);
+    setRows(prev => {
+      const last = prev[prev.length - 1];
+      const base = (last && !last.productId) ? prev.slice(0, -1) : prev;
+      return [...base, newRow];
+    });
+    setTimeout(() => focusField(newRow.uid, 'qty'), 80);
+  }, [settings, onProductCreated, focusField]);
+
   // ─── Handle Save ──────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     const validRows = rows.filter(r => r.productId);
@@ -755,18 +875,26 @@ export default function RecordSale() {
         description: `${validRows.length} item(s) billed successfully${customerName ? ' for ' + customerName : ''}`,
       });
 
-      // Navigate to print
-      navigate(`/print-bill/${billId}`);
+      // Bill is finalized → drop its locally-saved draft so it isn't restored later.
+      if (persistKey) clearBillData(persistKey);
+
+      // Completion: container decides (preserve other tabs); standalone navigates as before.
+      if (onCompleted) {
+        onCompleted(billId);
+      } else {
+        navigate(`/print-bill/${billId}`);
+      }
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error recording sale', description: err.message });
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving]);
+  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
+      if (!isActive) return; // background tabs must not hijack the keyboard
       // F10 or Ctrl+S = Save
       if (e.key === 'F10' || (e.ctrlKey && e.key === 's')) {
         e.preventDefault();
@@ -796,7 +924,7 @@ export default function RecordSale() {
         phoneRef.current?.focus();
         return;
       }
-      // Alt+S = focus sub qty of current row
+      // Alt+S = focus pcs of current row
       if (e.altKey && e.key === 's') {
         e.preventDefault();
         // Find the currently focused row
@@ -845,7 +973,7 @@ export default function RecordSale() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleSave, navigate, rows, focusField, clearRow, removeRow]);
+  }, [handleSave, navigate, rows, focusField, clearRow, removeRow, isActive]);
 
   // ─── Tab flow handler for row fields ──────────────────────────────────
   const TAB_FIELDS = ['qty', 'subQty', 'batch', 'expiry', 'hsn', 'rate', 'discount', 'gst'];
@@ -853,30 +981,76 @@ export default function RecordSale() {
   const handleFieldKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number, field: string) => {
     const row = rows[rowIndex];
     if (!row) return;
+    const currentIdx = TAB_FIELDS.indexOf(field);
 
+    // ── Tab / Shift+Tab : move between fields in the same row ──
     if (e.key === 'Tab' && !e.shiftKey) {
-      const currentIdx = TAB_FIELDS.indexOf(field);
-      if (currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
+      if (currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) { e.preventDefault(); focusField(row.uid, TAB_FIELDS[currentIdx + 1]); }
+      return;
+    }
+    if (e.key === 'Tab' && e.shiftKey) {
+      if (currentIdx > 0) { e.preventDefault(); focusField(row.uid, TAB_FIELDS[currentIdx - 1]); }
+      return;
+    }
+
+    // → / ← : next / previous field, but only at the caret boundary so you can
+    // still edit within a text field normally. (↑/↓ are handled page-wide on
+    // the root — see handleVerticalArrowNav.)
+    if (e.key === 'ArrowRight') {
+      if (caretAtEnd(e.currentTarget) && currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
         e.preventDefault();
         focusField(row.uid, TAB_FIELDS[currentIdx + 1]);
       }
+      return;
     }
-
-    if (e.key === 'Tab' && e.shiftKey) {
-      const currentIdx = TAB_FIELDS.indexOf(field);
-      if (currentIdx > 0) {
+    if (e.key === 'ArrowLeft') {
+      if (caretAtStart(e.currentTarget) && currentIdx > 0) {
         e.preventDefault();
         focusField(row.uid, TAB_FIELDS[currentIdx - 1]);
       }
+      return;
     }
 
-    // Enter on discount = focus master search
+    // Enter on discount / gst = jump back to the product search
     if (e.key === 'Enter' && (field === 'discount' || field === 'gst')) {
       e.preventDefault();
       setMasterDropdownOpen(false);
       setTimeout(() => masterSearchRef.current?.focus(), 50);
     }
-  }, [rows, focusField, masterFilteredProducts, activeSearchRow, selectProduct]);
+  }, [rows, focusField]);
+
+  // ─── ↑ / ↓ : walk every focusable element on the page (top-to-bottom) ────
+  // Vertical keyboard navigation across the whole billing screen — customer
+  // fields, every row's inputs, payment, discount, save. stopPropagation keeps
+  // it from bubbling to the tab-bar's bill-switch handler.
+  const handleVerticalArrowNav = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const active = document.activeElement as HTMLElement | null;
+    if (!active) return;
+    // The product search owns ↑/↓ for its results dropdown — leave it alone.
+    if (active === masterSearchRef.current) return;
+
+    const focusables = Array.from(
+      e.currentTarget.querySelectorAll<HTMLElement>(
+        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter(el => el.offsetParent !== null); // visible only
+
+    const idx = focusables.indexOf(active);
+    if (idx === -1) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const nextIdx = e.key === 'ArrowDown'
+      ? Math.min(idx + 1, focusables.length - 1)
+      : Math.max(idx - 1, 0);
+    const next = focusables[nextIdx];
+    next?.focus();
+    const asInput = next as HTMLInputElement;
+    if (asInput && typeof asInput.select === 'function') {
+      try { asInput.select(); } catch { /* number/date inputs can't select */ }
+    }
+  }, []);
 
   // ─── Payment mode icons ───────────────────────────────────────────────
   const paymentModes = [
@@ -899,7 +1073,7 @@ export default function RecordSale() {
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════
   return (
-    <div className="fixed inset-0 flex flex-col bg-gray-50 overflow-hidden z-50">
+    <div className={cn('flex flex-col bg-gray-50 overflow-hidden', embedded ? 'absolute inset-0' : 'fixed inset-0 z-50')} onKeyDown={handleVerticalArrowNav}>
 
 
       {/* ──────── CRM RETRIEVE DIALOG ──────── */}
@@ -1031,7 +1205,7 @@ export default function RecordSale() {
                             </span>
                           </div>
                           <div className="text-xs text-gray-500 flex gap-3 mt-0.5">
-                            <span>Qty: <strong>{item.quantity}{item.sub_qty ? ` + ${item.sub_qty} tabs` : ''}</strong></span>
+                            <span>Qty: <strong>{item.quantity}{item.sub_qty ? ` + ${item.sub_qty} pcs` : ''}</strong></span>
                             <span>Rate: <strong>₹{item.unit_price}</strong></span>
                             {item.batch && <span>Batch: {item.batch}</span>}
                           </div>
@@ -1093,7 +1267,7 @@ export default function RecordSale() {
                 ['Alt+C', 'Clear current row'],
                 ['Alt+Delete', 'Remove current row'],
                 ['Ctrl+F', 'Jump to Phone field'],
-                ['Alt+S', 'Sub Qty field'],
+                ['Alt+S', 'Pcs field'],
                 ['? / Ctrl+/', 'This help'],
               ].map(([key, desc]) => (
                 <div key={key} className="flex items-center gap-3 py-1.5">
@@ -1136,9 +1310,18 @@ export default function RecordSale() {
             <span className="w-1 h-1 bg-emerald-300 rounded-full"></span>
             <span className="flex items-center gap-1"><kbd className="bg-white border px-1 rounded">?</kbd> Help</span>
           </div>
-          <Button 
-            onClick={handleSave} 
-            disabled={isSaving || rows.every(r => !r.productId)} 
+          <Button
+            type="button"
+            onClick={() => setQuickAddOpen(true)}
+            className="h-9 gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold px-3 rounded-md shadow-sm shadow-amber-500/25 transition-colors"
+            title="Add a new medicine to inventory and this bill — without leaving billing"
+          >
+            <Zap className="h-4 w-4" />
+            <span className="hidden sm:inline">Quick Add</span>
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={isSaving || rows.every(r => !r.productId)}
             className="bg-green-600 hover:bg-green-700 text-white font-medium h-9 px-4 rounded-md transition-colors disabled:opacity-50"
           >
             {isSaving ? 'Saving...' : 'Save & Print'}
@@ -1383,7 +1566,7 @@ export default function RecordSale() {
                     />
                   </div>
                   <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Sub Qty</Label>
+                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Pcs</Label>
                     <Input
                       ref={el => setFieldRef(row.uid, 'subQty', el)}
                       type="number"
@@ -1491,7 +1674,7 @@ export default function RecordSale() {
           <div className="grid grid-cols-[2.5fr_0.6fr_0.6fr_0.8fr_0.8fr_0.7fr_0.7fr_0.6fr_0.6fr_1fr_0.4fr] bg-green-50 border-b border-green-100 text-xs font-semibold text-green-700 py-2 px-1">
             <div className="pl-4">Product Name</div>
             <div className="text-center">Qty</div>
-            <div className="text-center">Sub</div>
+            <div className="text-center">Pcs</div>
             <div className="px-2">Batch</div>
             <div className="px-2">Expiry</div>
             <div className="px-2">HSN</div>
@@ -1543,7 +1726,7 @@ export default function RecordSale() {
                     />
                   </div>
 
-                  {/* Sub Qty */}
+                  {/* Pcs */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'subQty', el)}
@@ -1782,6 +1965,15 @@ export default function RecordSale() {
           </div>
         </div>
       </div>
+
+      {/* ══════ QUICK ADD MEDICINE SLIDE-OVER ══════ */}
+      <QuickAddMedicineSheet
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        existingProducts={products}
+        onSaved={handleQuickAddSaved}
+        defaultGst={settings?.default_gst_rate}
+      />
 
     </div>
   );

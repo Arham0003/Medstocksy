@@ -80,10 +80,22 @@ export default {
             height: "0",
           },
         },
+        "blob-one": {
+          "0%, 100%": { transform: "translate(0px, 0px) scale(1)" },
+          "33%": { transform: "translate(30px, -40px) scale(1.1)" },
+          "66%": { transform: "translate(-20px, 20px) scale(0.95)" },
+        },
+        "blob-two": {
+          "0%, 100%": { transform: "translate(0px, 0px) scale(1)" },
+          "33%": { transform: "translate(-35px, 25px) scale(1.05)" },
+          "66%": { transform: "translate(25px, -30px) scale(0.9)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "blob-one": "blob-one 14s ease-in-out infinite",
+        "blob-two": "blob-two 18s ease-in-out infinite",
       },
     },
   },

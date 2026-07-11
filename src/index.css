@@ -96,6 +96,7 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
     font-size: 16px;
     /* Increase base font size for better readability */
+    zoom: 90%; /* ponytail: default app zoom to 90% as per user preference */
   }
 
   /* Larger font sizes for better accessibility */

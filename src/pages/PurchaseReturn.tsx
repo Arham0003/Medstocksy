@@ -1142,10 +1142,10 @@ export default function PurchaseReturn() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="flex items-center gap-1">
-                <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-[140px]" placeholder="From" />
+              <div className="flex items-center gap-1 w-full sm:w-auto">
+                <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="flex-1 min-w-0 sm:w-[140px] sm:flex-none" placeholder="From" />
                 <span className="text-xs text-muted-foreground">→</span>
-                <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-[140px]" placeholder="To" />
+                <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="flex-1 min-w-0 sm:w-[140px] sm:flex-none" placeholder="To" />
               </div>
               <div className="relative flex-1 min-w-[180px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />

@@ -1177,8 +1177,8 @@ export default function Suppliers() {
                 {/* === Band 2: Quick actions === */}
                 {actionCount > 0 && (
                   <div
-                    className="grid gap-2"
-                    style={{ gridTemplateColumns: `repeat(${Math.min(actionCount, 4)}, minmax(0, 1fr))` }}
+                    className="grid gap-2 grid-cols-2 sm:[grid-template-columns:var(--action-cols)]"
+                    style={{ ['--action-cols' as string]: `repeat(${Math.min(actionCount, 4)}, minmax(0, 1fr))` }}
                   >
                     {selectedSupplier.phone && (
                       <a

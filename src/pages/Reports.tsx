@@ -1032,7 +1032,7 @@ export default function Reports() {
       <section>
         <Card className="shadow-sm border-slate-200">
           <CardHeader>
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <RotateCcw className="h-5 w-5 text-red-500" />

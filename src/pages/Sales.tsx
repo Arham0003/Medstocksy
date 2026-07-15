@@ -451,6 +451,34 @@ export default function Sales() {
     setPcsPerUnitMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
   };
 
+  // Shared pricing math for a cart line — used by both the desktop card view and
+  // the mobile spreadsheet table so the two never diverge.
+  const computeCartLine = (item: { id: string; quantity: number }) => {
+    const product = products.find(p => p.id === item.id);
+    if (!product) return null;
+    const unitPrice = productPrices[item.id] !== undefined ? productPrices[item.id] : product.selling_price;
+    const cartSubQty = subQtyMap[item.id];
+    const cartPcsPerUnit = pcsPerUnitMap[item.id] || product.pcs_per_unit || 10;
+    let itemSubtotal = unitPrice * item.quantity;
+    if (cartSubQty && cartPcsPerUnit) {
+      itemSubtotal += (unitPrice / cartPcsPerUnit) * cartSubQty;
+    }
+    const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : settings?.default_gst_rate || 0;
+    let itemGstAmount = 0;
+    let itemTotal = 0;
+    const isGstInclusive = settings?.gst_type === 'inclusive';
+    if (settings?.gst_enabled) {
+      itemGstAmount = (itemSubtotal * itemGstRate) / 100;
+      itemTotal = isGstInclusive ? itemSubtotal : itemSubtotal + itemGstAmount;
+    } else {
+      itemTotal = itemSubtotal;
+    }
+    const isPriceAdjusted = productPrices[item.id] !== undefined && productPrices[item.id] !== product.selling_price;
+    const isCustomGst = customGstRates[item.id] !== undefined && customGstRates[item.id] !== (settings?.default_gst_rate || 0);
+    const overstock = item.quantity > product.quantity;
+    return { product, unitPrice, cartSubQty, cartPcsPerUnit, itemSubtotal, itemGstRate, itemGstAmount, itemTotal, isPriceAdjusted, isCustomGst, overstock };
+  };
+
   const handleUpdateQuantity = (productId: string, newQuantity: number) => {
     if (newQuantity <= 0) return;
 
@@ -1312,7 +1340,9 @@ Thank you for your purchase!
                     <p className="text-xs mt-0.5">Search above to add the first item.</p>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
+                  <>
+                  {/* Laptop / tablet: inline-editable cards */}
+                  <div className="hidden md:block space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
                     {selectedProducts.map((item) => {
                       const product = products.find(p => p.id === item.id);
                       if (!product) return null;
@@ -1506,6 +1536,137 @@ Thank you for your purchase!
                       );
                     })}
                   </div>
+
+                  {/* Mobile: spreadsheet-style billing table (ref: classic billing software).
+                      Columns mirror the laptop line: Product · Batch · Qty · Pcs · Rate · Amount.
+                      Horizontally scrollable so the dense grid never crushes on small screens. */}
+                  <div className="md:hidden -mx-1 overflow-x-auto rounded-md border border-slate-300 max-h-[420px] overflow-y-auto">
+                    <table className="w-full min-w-[540px] border-collapse text-xs">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="bg-sky-100 text-slate-700">
+                          <th className="text-left font-semibold uppercase tracking-wide px-2 py-1.5 border-b border-r border-slate-300">Product</th>
+                          <th className="text-left font-semibold uppercase tracking-wide px-1.5 py-1.5 border-b border-r border-slate-300 w-[52px]">Batch</th>
+                          <th className="text-center font-semibold uppercase tracking-wide px-1 py-1.5 border-b border-r border-slate-300 w-[52px]">Qty</th>
+                          <th className="text-center font-semibold uppercase tracking-wide px-1 py-1.5 border-b border-r border-slate-300 w-[70px]">Pcs</th>
+                          <th className="text-right font-semibold uppercase tracking-wide px-1 py-1.5 border-b border-r border-slate-300 w-[60px]">Rate</th>
+                          <th className="text-right font-semibold uppercase tracking-wide px-1.5 py-1.5 border-b border-r border-slate-300 w-[64px]">Amount</th>
+                          <th className="w-7 border-b border-slate-300" aria-label="Remove" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedProducts.map((item) => {
+                          const line = computeCartLine(item);
+                          if (!line) return null;
+                          const { product, unitPrice, cartSubQty, cartPcsPerUnit, itemGstAmount, itemTotal, isPriceAdjusted, isCustomGst, overstock } = line;
+                          return (
+                            <tr
+                              key={item.id}
+                              className={cn(
+                                "border-b border-slate-200 last:border-b-0",
+                                overstock ? "bg-red-50" : "bg-white even:bg-slate-50/60"
+                              )}
+                            >
+                              {/* Product */}
+                              <td className="px-2 py-1 border-r border-slate-200 align-top">
+                                <div className="font-semibold text-slate-900 leading-snug break-words">{product.name}</div>
+                                <div className="text-[10px] leading-none mt-0.5 flex flex-wrap items-center gap-x-1">
+                                  <span className={cn("font-medium", overstock ? "text-red-600" : "text-emerald-600")}>Stk {product.quantity}</span>
+                                  {overstock && <span className="text-red-600 font-semibold">· exceeds!</span>}
+                                  {isPriceAdjusted && <span className="text-blue-600 font-semibold">· ADJ</span>}
+                                  {isCustomGst && <span className="text-blue-600 font-semibold">· GST*</span>}
+                                </div>
+                              </td>
+                              {/* Batch */}
+                              <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-slate-600 break-words">
+                                {product.batch_number || '—'}
+                              </td>
+                              {/* Qty (strips) */}
+                              <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
+                                <Input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min="1"
+                                  max={product.quantity}
+                                  value={item.quantity}
+                                  onChange={(e) => {
+                                    const raw = parseInt(e.target.value) || 1;
+                                    const q = Math.max(1, Math.min(product.quantity, raw));
+                                    setSelectedProducts(prev => prev.map(p => p.id === item.id ? { ...p, quantity: q } : p));
+                                  }}
+                                  className="h-7 w-full text-xs px-0.5 text-center font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
+                                />
+                              </td>
+                              {/* Pcs (loose) */}
+                              <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
+                                <div className="flex items-center justify-center gap-0.5">
+                                  <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min="0"
+                                    value={cartSubQty ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0);
+                                      if (v <= 0) {
+                                        setSubQtyMap(prev => { const n = { ...prev }; delete n[item.id]; return n; });
+                                        setPcsPerUnitMap(prev => { const n = { ...prev }; delete n[item.id]; return n; });
+                                      } else {
+                                        setSubQtyMap(prev => ({ ...prev, [item.id]: v }));
+                                        if (!pcsPerUnitMap[item.id]) {
+                                          setPcsPerUnitMap(prev => ({ ...prev, [item.id]: product.pcs_per_unit || 10 }));
+                                        }
+                                      }
+                                    }}
+                                    placeholder="—"
+                                    className="h-7 w-9 text-xs px-0.5 text-center font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
+                                  />
+                                  {cartSubQty ? (
+                                    <span className="text-[10px] text-slate-400 leading-none whitespace-nowrap">/{cartPcsPerUnit}</span>
+                                  ) : null}
+                                </div>
+                              </td>
+                              {/* Rate (M.R.P.) */}
+                              <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
+                                <Input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  value={unitPrice}
+                                  onChange={(e) => {
+                                    const v = Math.max(0, parseFloat(e.target.value) || 0);
+                                    setProductPrices(prev => ({ ...prev, [item.id]: v }));
+                                  }}
+                                  className="h-7 w-full text-xs px-0.5 text-right font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
+                                />
+                              </td>
+                              {/* Amount */}
+                              <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-right leading-tight">
+                                <div className="font-bold text-emerald-700 tabular-nums">₹{itemTotal.toFixed(2)}</div>
+                                {settings?.gst_enabled && itemGstAmount > 0 && (
+                                  <div className="text-[9px] text-slate-400 leading-none">+{itemGstAmount.toFixed(2)}</div>
+                                )}
+                              </td>
+                              {/* Remove */}
+                              <td className="px-0 py-1 align-middle text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveFromCart(item.id)}
+                                  className="h-6 w-6 inline-flex items-center justify-center rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+                                  title="Remove"
+                                  aria-label="Remove from cart"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  </>
                 )}
               </div>
 
@@ -2059,11 +2220,11 @@ Thank you for your purchase!
               {totalPages > 1 && (
                 <div className="mt-8">
                   <Pagination>
-                    <PaginationContent>
+                    <PaginationContent className="flex-wrap">
                       <PaginationItem>
                         <PaginationPrevious
                           onClick={() => handlePageChange(currentPage - 1)}
-                          className={`${currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"} text-lg py-2 px-4`}
+                          className={`${currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"} text-sm sm:text-lg py-1 px-2 sm:px-4`}
                         />
                       </PaginationItem>
 
@@ -2072,7 +2233,7 @@ Thank you for your purchase!
                         <PaginationLink
                           onClick={() => handlePageChange(1)}
                           isActive={currentPage === 1}
-                          className="text-lg py-2 px-4"
+                          className="text-sm sm:text-lg py-1 px-2 sm:px-4"
                         >
                           1
                         </PaginationLink>
@@ -2094,7 +2255,7 @@ Thank you for your purchase!
                               <PaginationLink
                                 onClick={() => handlePageChange(page)}
                                 isActive={currentPage === page}
-                                className="text-lg py-2 px-4"
+                                className="text-sm sm:text-lg py-1 px-2 sm:px-4"
                               >
                                 {page}
                               </PaginationLink>
@@ -2117,7 +2278,7 @@ Thank you for your purchase!
                           <PaginationLink
                             onClick={() => handlePageChange(totalPages)}
                             isActive={currentPage === totalPages}
-                            className="text-lg py-2 px-4"
+                            className="text-sm sm:text-lg py-1 px-2 sm:px-4"
                           >
                             {totalPages}
                           </PaginationLink>
@@ -2127,7 +2288,7 @@ Thank you for your purchase!
                       <PaginationItem>
                         <PaginationNext
                           onClick={() => handlePageChange(currentPage + 1)}
-                          className={`${currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"} text-lg py-2 px-4`}
+                          className={`${currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"} text-sm sm:text-lg py-1 px-2 sm:px-4`}
                         />
                       </PaginationItem>
                     </PaginationContent>

@@ -1439,7 +1439,7 @@ export default function Products() {
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-80 p-6" align="end">
+                <PopoverContent className="w-[calc(100vw-2rem)] max-w-80 p-4 sm:p-6" align="end">
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <h4 className="font-bold text-xl leading-none">Filters</h4>
@@ -1662,8 +1662,17 @@ export default function Products() {
                 </Select>
               </div>
 
-              {/* Mobile: card list */}
-              <div className="md:hidden space-y-2">
+              {/* Mobile: compact table — real column alignment (Product | Stock | Price | ⋮)
+                  so rows read like the desktop table and many products fit on screen. */}
+              <div className="md:hidden rounded-md border bg-card overflow-hidden">
+                {/* Column header */}
+                <div className="grid grid-cols-[1fr_auto_auto_1.75rem] items-center gap-2 px-2.5 py-1.5 bg-muted/50 text-[10px] uppercase tracking-wide text-muted-foreground font-medium">
+                  <span>Product</span>
+                  <span className="text-center">Stock</span>
+                  <span className="text-right">Price</span>
+                  <span aria-hidden />
+                </div>
+                <div className="divide-y">
                 {paginatedProducts.map((product) => {
                   const isExpiringSoon = (() => {
                     if (!product.expiry_date) return false;
@@ -1675,97 +1684,76 @@ export default function Products() {
                     product.quantity === 0 ? 'destructive'
                     : product.quantity <= (product.low_stock_threshold || 10) ? 'warning'
                     : 'success';
-                  const stockLabel =
-                    product.quantity === 0 ? 'Out of stock'
-                    : product.quantity <= (product.low_stock_threshold || 10) ? 'Low'
-                    : 'In stock';
 
                   return (
-                    <div key={product.id} className="rounded-md border bg-card p-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-sm truncate">{product.name}</p>
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-xs text-muted-foreground">
-                            {product.hsn_code && <span className="font-mono">HSN: {product.hsn_code}</span>}
-                            {product.category && <span>· {product.category}</span>}
-                            {product.manufacturer && <span>· {product.manufacturer}</span>}
-                          </div>
-                          {(product.batch_number || expiryText) && (
-                            <div className="flex flex-wrap items-center gap-x-2 mt-1 text-xs">
-                              {product.batch_number && (
-                                <span className="text-muted-foreground">Batch {product.batch_number}</span>
-                              )}
-                              {expiryText && (
-                                <span className={cn(isExpiringSoon ? "text-rose-600 font-medium" : "text-muted-foreground")}>
-                                  Exp {expiryText}
-                                </span>
-                              )}
-                            </div>
+                    <div key={product.id} className="grid grid-cols-[1fr_auto_auto_1.75rem] items-center gap-2 px-2.5 py-1.5">
+                      {/* Product: name + tiny meta line (batch/exp/category) */}
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate leading-tight">{product.name}</p>
+                        <p className="text-[10px] text-muted-foreground truncate leading-tight">
+                          {[
+                            product.batch_number && `B:${product.batch_number}`,
+                            product.category,
+                          ].filter(Boolean).join(' · ') || '—'}
+                          {expiryText && (
+                            <span className={cn("ml-1", isExpiringSoon && "text-rose-600 font-medium")}>Exp {expiryText}</span>
                           )}
-                        </div>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 -mr-1 -mt-1 shrink-0">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-40">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setEditingProduct(product);
-                                setSelectedCategory(product.category || "");
-                                setIsDialogOpen(true);
-                              }}
-                            >
-                              <Edit className="h-4 w-4 mr-2" />
-                              Edit Product
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setDuplicateSource(product);
-                                setEditingProduct(null);
-                                setSelectedCategory(product.category || "");
-                                setSupplierSearch(product.supplier || "");
-                                setIsDialogOpen(true);
-                              }}
-                            >
-                              <Copy className="h-4 w-4 mr-2" />
-                              Duplicate
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleDelete(product.id)}
-                              className="text-red-600 focus:text-red-700"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Delete Product
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        </p>
                       </div>
-
-                      <div className="flex items-end justify-between gap-2 mt-2 pt-2 border-t">
-                        <div className="flex flex-col gap-0.5 min-w-0">
-                          <Badge variant={stockVariant} className="h-5 text-xs font-normal w-fit">
-                            {product.quantity} · {stockLabel}
-                          </Badge>
-                          {product.pcs_per_unit && (
-                            <span className="text-[10px] text-muted-foreground">{product.pcs_per_unit} pcs/strip</span>
-                          )}
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-base font-semibold">{formatINR(product.selling_price)}</p>
-                          {product.gst && <p className="text-[10px] text-muted-foreground">Incl. {product.gst}% GST</p>}
-                        </div>
-                      </div>
+                      {/* Stock */}
+                      <Badge variant={stockVariant} className="h-5 px-1.5 text-[10px] font-normal justify-self-center tabular-nums">
+                        {product.quantity}
+                      </Badge>
+                      {/* Price */}
+                      <span className="text-sm font-semibold text-right tabular-nums">{formatINR(product.selling_price)}</span>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setEditingProduct(product);
+                              setSelectedCategory(product.category || "");
+                              setIsDialogOpen(true);
+                            }}
+                          >
+                            <Edit className="h-4 w-4 mr-2" />
+                            Edit Product
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setDuplicateSource(product);
+                              setEditingProduct(null);
+                              setSelectedCategory(product.category || "");
+                              setSupplierSearch(product.supplier || "");
+                              setIsDialogOpen(true);
+                            }}
+                          >
+                            <Copy className="h-4 w-4 mr-2" />
+                            Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleDelete(product.id)}
+                            className="text-red-600 focus:text-red-700"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete Product
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   );
                 })}
+                </div>
               </div>
 
               {/* Desktop: table */}
-              <div className="hidden md:block rounded-md border overflow-hidden">
+              <div className="hidden md:block rounded-md border overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">

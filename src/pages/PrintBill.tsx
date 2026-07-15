@@ -463,7 +463,7 @@ export default function PrintBill() {
     const billTimestamp = billCreatedAt.toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
     return (
-        <div className="min-h-screen bg-gray-100 p-4 print:p-0 print:bg-white">
+        <div className="min-h-screen bg-gray-100 p-4 print:p-0 print:bg-white overflow-x-auto print:overflow-visible">
             {/* No-print controls */}
             <div className="max-w-[148mm] mx-auto mb-4 flex flex-wrap justify-between items-center gap-2 print:hidden">
                 <Button variant="outline" onClick={() => navigate('/sales')}>

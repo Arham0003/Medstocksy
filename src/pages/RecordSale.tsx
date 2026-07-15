@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search, X, Save, ChevronDown, ChevronUp, Trash2,
   HelpCircle, ArrowLeft, CreditCard, Banknote, Smartphone, Receipt,
-  CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Package, Zap
+  CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Zap
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
@@ -235,7 +235,6 @@ export default function RecordSale({
   // ─── UI state ───────────────────────────────────────────────────────────
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [showShortcutOverlay, setShowShortcutOverlay] = useState(false);
-  const [showPrescription, setShowPrescription] = useState(false);
 
   // ─── Master Search (new) ────────────────────────────────────────────────
   const [masterSearch, setMasterSearch] = useState('');
@@ -381,21 +380,68 @@ export default function RecordSale({
     } catch { /* ignore */ }
   }, []);
 
-  // Trigger on phone number
-  useEffect(() => {
-    if (!customerPhone || customerPhone.replace(/\D/g, '').length < 10) return;
-    const timer = setTimeout(() => fetchCrmData(customerPhone, undefined), 600);
-    return () => clearTimeout(timer);
-  }, [customerPhone, fetchCrmData]);
-
-  // Trigger on name (3+ chars, debounced)
+  // ─── Existing-customer autocomplete (inline suggestions, no popup) ────────
+  interface CustomerSuggestion {
+    name: string;
+    phone: string | null;
+    address: string | null;
+    doctor: string | null;
+  }
+  const [customerSuggestions, setCustomerSuggestions] = useState<CustomerSuggestion[]>([]);
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
+  const [customerHighlight, setCustomerHighlight] = useState(0);
   const nameSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchCustomerSuggestions = useCallback(async (name: string) => {
+    const q = name.trim();
+    if (q.length < 1) { setCustomerSuggestions([]); setCustomerDropdownOpen(false); return; }
+    try {
+      const { data } = await (supabase as any)
+        .from('sales')
+        .select('customer_name, customer_phone, customer_address, doctor_name, created_at')
+        .ilike('customer_name', `${q}%`)
+        .order('created_at', { ascending: false })
+        .limit(40);
+      const seen = new Set<string>();
+      const list: CustomerSuggestion[] = [];
+      for (const r of (data || [])) {
+        const nm = (r.customer_name || '').trim();
+        if (!nm || nm.toLowerCase() === 'walk-in customer') continue;
+        const key = nm.toLowerCase() + '|' + (r.customer_phone || '');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push({ name: nm, phone: r.customer_phone ?? null, address: r.customer_address ?? null, doctor: r.doctor_name ?? null });
+        if (list.length >= 6) break;
+      }
+      setCustomerSuggestions(list);
+      setCustomerDropdownOpen(list.length > 0);
+      setCustomerHighlight(0);
+    } catch { /* ignore */ }
+  }, []);
+
   const handleNameChange = useCallback((value: string) => {
     setCustomerName(value);
     if (nameSearchTimer.current) clearTimeout(nameSearchTimer.current);
-    if (value.trim().length < 3 || customerPhone) return; // skip if phone already set
-    nameSearchTimer.current = setTimeout(() => fetchCrmData(undefined, value), 800);
-  }, [customerPhone, fetchCrmData]);
+    if (value.trim().length < 1) { setCustomerSuggestions([]); setCustomerDropdownOpen(false); return; }
+    nameSearchTimer.current = setTimeout(() => fetchCustomerSuggestions(value), 250);
+  }, [fetchCustomerSuggestions]);
+
+  const selectCustomer = useCallback((c: CustomerSuggestion) => {
+    setCustomerName(c.name);
+    if (c.phone) setCustomerPhone(c.phone);
+    if (c.address) setCustomerAddress(c.address);
+    if (c.doctor) setDoctorName(c.doctor);
+    setCustomerDropdownOpen(false);
+    setCustomerSuggestions([]);
+  }, []);
+
+  const handleNameKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!customerDropdownOpen || customerSuggestions.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setCustomerHighlight(h => Math.min(h + 1, customerSuggestions.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setCustomerHighlight(h => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); const c = customerSuggestions[customerHighlight]; if (c) selectCustomer(c); }
+    else if (e.key === 'Escape') { setCustomerDropdownOpen(false); }
+  }, [customerDropdownOpen, customerSuggestions, customerHighlight, selectCustomer]);
 
   // ─── Apply selected CRM fields ──────────────────────────────────────────
   const applyCrmFields = useCallback(() => {
@@ -975,8 +1021,12 @@ export default function RecordSale({
     return () => window.removeEventListener('keydown', handler);
   }, [handleSave, navigate, rows, focusField, clearRow, removeRow, isActive]);
 
-  // ─── Tab flow handler for row fields ──────────────────────────────────
-  const TAB_FIELDS = ['qty', 'subQty', 'batch', 'expiry', 'hsn', 'rate', 'discount', 'gst'];
+  // ─── Tab flow handler for row fields (Marg column order) ──────────────
+  const TAB_FIELDS = ['batch', 'qty', 'subQty', 'discount', 'rate'];
+  // Shared column template for the Marg-style grid: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT ⋯
+  // Mobile uses tighter fractions so all columns fit the full screen width with NO horizontal
+  // scroll; from lg up it opens out to the spacious desktop proportions.
+  const GRID_COLS = 'grid-cols-[1.8fr_0.45fr_0.85fr_0.62fr_0.62fr_0.62fr_0.85fr_1fr_0.34fr] lg:grid-cols-[2.6fr_0.7fr_1fr_0.55fr_0.55fr_0.6fr_0.9fr_1fr_0.4fr]';
 
   const handleFieldKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number, field: string) => {
     const row = rows[rowIndex];
@@ -1011,8 +1061,8 @@ export default function RecordSale({
       return;
     }
 
-    // Enter on discount / gst = jump back to the product search
-    if (e.key === 'Enter' && (field === 'discount' || field === 'gst')) {
+    // Enter on the last field (rate) = jump back to the product search
+    if (e.key === 'Enter' && (field === 'rate' || field === 'discount')) {
       e.preventDefault();
       setMasterDropdownOpen(false);
       setTimeout(() => masterSearchRef.current?.focus(), 50);
@@ -1076,169 +1126,8 @@ export default function RecordSale({
     <div className={cn('flex flex-col bg-gray-50 overflow-hidden', embedded ? 'absolute inset-0' : 'fixed inset-0 z-50')} onKeyDown={handleVerticalArrowNav}>
 
 
-      {/* ──────── CRM RETRIEVE DIALOG ──────── */}
-      {crmDialogOpen && crmFoundData && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setCrmDialogOpen(false)}
-        >
-          <div
-            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center gap-3 p-5 border-b border-gray-100">
-              <div className="bg-green-100 rounded-full p-2 shrink-0">
-                <CheckCircle2 className="h-6 w-6 text-green-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-bold text-gray-800">Returning Customer Found!</h2>
-                <p className="text-sm text-gray-500">
-                  {crmFoundData.customer_name || 'Customer'} &bull; Last visit: {crmFoundData.bill_date ? new Date(crmFoundData.bill_date).toLocaleDateString('en-IN') : 'Unknown'}
-                </p>
-              </div>
-              <button type="button" onClick={() => setCrmDialogOpen(false)} className="text-gray-400 hover:text-gray-600 shrink-0">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Scrollable body */}
-            <div className="overflow-y-auto flex-1 p-5 space-y-5">
-
-              {/* ── Customer Details Section ── */}
-              {[
-                { field: 'name' as CrmField, label: 'Patient Name', value: crmFoundData.customer_name },
-                { field: 'address' as CrmField, label: 'Address', value: crmFoundData.customer_address },
-                { field: 'doctor' as CrmField, label: 'Doctor', value: crmFoundData.doctor_name },
-                { field: 'prescription_months' as CrmField, label: 'Months Prescribed', value: crmFoundData.prescription_months != null ? `${crmFoundData.prescription_months} months` : null },
-                { field: 'months_taken' as CrmField, label: 'Months Taken', value: crmFoundData.months_taken != null ? `${crmFoundData.months_taken} months` : null },
-              ].filter(item => item.value != null).length > 0 && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Patient Details</h3>
-                      <button
-                        type="button"
-                        className="text-xs text-green-700 font-medium hover:underline"
-                        onClick={() => {
-                          const all = new Set<CrmField>(['name', 'address', 'doctor', 'prescription_months', 'months_taken']);
-                          setCrmSelectedFields(all);
-                        }}
-                      >Select All</button>
-                    </div>
-                    <div className="space-y-1.5">
-                      {([
-                        { field: 'name' as CrmField, label: 'Patient Name', value: crmFoundData.customer_name },
-                        { field: 'address' as CrmField, label: 'Address', value: crmFoundData.customer_address },
-                        { field: 'doctor' as CrmField, label: 'Doctor', value: crmFoundData.doctor_name },
-                        { field: 'prescription_months' as CrmField, label: 'Months Prescribed', value: crmFoundData.prescription_months != null ? `${crmFoundData.prescription_months} months` : null },
-                        { field: 'months_taken' as CrmField, label: 'Months Taken', value: crmFoundData.months_taken != null ? `${crmFoundData.months_taken} months` : null },
-                      ]).filter(item => item.value != null).map(item => (
-                        <button
-                          key={item.field}
-                          type="button"
-                          onClick={() => toggleCrmField(item.field)}
-                          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl border transition-all text-left shadow-sm ${crmSelectedFields.has(item.field)
-                              ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500/20'
-                              : 'border-gray-100 hover:border-emerald-200 bg-white'
-                            }`}
-                        >
-                          {crmSelectedFields.has(item.field)
-                            ? <div className="bg-emerald-500 rounded-full p-0.5 shrink-0"><CheckCircle2 className="h-4 w-4 text-white" /></div>
-                            : <div className="border-2 border-gray-200 rounded-full h-5 w-5 shrink-0" />
-                          }
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[9px] font-bold text-emerald-600/60 uppercase tracking-widest block mb-0.5">{item.label}</span>
-                            <span className={`text-sm font-semibold truncate block ${crmSelectedFields.has(item.field) ? 'text-emerald-900' : 'text-gray-700'}`}>
-                              {String(item.value)}
-                            </span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-              {/* ── Prescription Items Section ── */}
-              {crmFoundData.items.length > 0 && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">
-                      💊 Prescription History ({crmFoundData.items.length} unique medicines)
-                    </h3>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className="text-xs text-green-700 font-medium hover:underline"
-                        onClick={() => setCrmSelectedItems(new Set(crmFoundData!.items.map(i => i.item_key)))}
-                      >All</button>
-                      <span className="text-gray-300">|</span>
-                      <button
-                        type="button"
-                        className="text-xs text-gray-500 font-medium hover:underline"
-                        onClick={() => setCrmSelectedItems(new Set())}
-                      >None</button>
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    {crmFoundData.items.map(item => (
-                      <button
-                        key={item.item_key}
-                        type="button"
-                        onClick={() => toggleCrmItem(item.item_key)}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left ${crmSelectedItems.has(item.item_key)
-                            ? 'border-green-500 bg-green-50'
-                            : 'border-gray-200 hover:border-gray-300 bg-white'
-                          }`}
-                      >
-                        {crmSelectedItems.has(item.item_key)
-                          ? <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                          : <Circle className="h-4 w-4 text-gray-300 shrink-0" />
-                        }
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-semibold text-gray-800 truncate">{item.product_name}</span>
-                            {item.in_last_bill && (
-                              <span className="text-[10px] bg-green-100 text-green-700 font-bold px-1.5 py-0.5 rounded-full shrink-0">Last Rx</span>
-                            )}
-                            <span className="text-[10px] bg-gray-100 text-gray-500 font-semibold px-1.5 py-0.5 rounded-full shrink-0 ml-auto">
-                              ×{item.purchase_count} time{item.purchase_count > 1 ? 's' : ''}
-                            </span>
-                          </div>
-                          <div className="text-xs text-gray-500 flex gap-3 mt-0.5">
-                            <span>Qty: <strong>{item.quantity}{item.sub_qty ? ` + ${item.sub_qty} pcs` : ''}</strong></span>
-                            <span>Rate: <strong>₹{item.unit_price}</strong></span>
-                            {item.batch && <span>Batch: {item.batch}</span>}
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Footer buttons */}
-            <div className="p-5 border-t border-gray-100 flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1 text-gray-500"
-                onClick={() => setCrmDialogOpen(false)}
-              >
-                Leave as is
-              </Button>
-              <Button
-                type="button"
-                className="flex-1 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 text-white font-semibold"
-                onClick={applyCrmFields}
-                disabled={crmSelectedFields.size === 0 && crmSelectedItems.size === 0}
-              >
-                Load Prescription
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* CRM "Returning Customer Found" popup removed — replaced by inline
+          existing-customer suggestions in the Patient Name field. */}
       {/* ──────── SHORTCUT OVERLAY ──────── */}
       {showShortcutOverlay && (
         <div
@@ -1283,32 +1172,35 @@ export default function RecordSale({
       )}
 
       {/* ══════ ZONE 1: TOP TOOLBAR (COMPACT & MODERN) ══════ */}
-      <div className="bg-white border-b border-green-100 flex items-center justify-between px-4 py-2 shrink-0 z-40 relative">
+      <div className="bg-gradient-to-r from-emerald-700 to-teal-700 text-white flex items-center justify-between px-4 py-1.5 shrink-0 z-40 relative shadow-sm">
         <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            onClick={() => navigate('/sales')} 
-            className="text-emerald-600 hover:bg-emerald-50 h-9 w-9" 
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/sales')}
+            className="text-white/90 hover:bg-white/15 hover:text-white h-9 w-9"
             title="Back (Esc)"
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div className="flex items-center gap-2">
-            <div className="bg-green-600 p-1.5 rounded-lg">
+            <div className="bg-white/15 p-1.5 rounded-lg">
               <ShoppingCart className="h-4 w-4 text-white" />
             </div>
-            <h1 className="font-semibold text-lg text-emerald-900">Record Sale</h1>
+            <h1 className="font-semibold text-lg tracking-wide text-white">Sale Entry</h1>
           </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="hidden md:flex items-center gap-4 px-3 py-1 bg-emerald-50 rounded-full border border-emerald-100 text-[11px] font-medium text-emerald-700">
-            <span className="flex items-center gap-1"><kbd className="bg-white border px-1 rounded">F2</kbd> Search</span>
-            <span className="w-1 h-1 bg-emerald-300 rounded-full"></span>
-            <span className="flex items-center gap-1"><kbd className="bg-white border px-1 rounded">F10</kbd> Save</span>
-            <span className="w-1 h-1 bg-emerald-300 rounded-full"></span>
-            <span className="flex items-center gap-1"><kbd className="bg-white border px-1 rounded">?</kbd> Help</span>
+          <span className="hidden lg:block text-sm font-medium text-white/80 tabular-nums">
+            {new Date(billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+          </span>
+          <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-white/10 rounded-full border border-white/20 text-[11px] font-medium text-white/90">
+            <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">F2</kbd> Search</span>
+            <span className="w-1 h-1 bg-white/40 rounded-full"></span>
+            <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">F10</kbd> Save</span>
+            <span className="w-1 h-1 bg-white/40 rounded-full"></span>
+            <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">?</kbd> Help</span>
           </div>
           <Button
             type="button"
@@ -1331,8 +1223,8 @@ export default function RecordSale({
 
 
       {/* ══════ ZONE 2 & 3: UNIFIED SEARCH & PATIENT INFO (SLIM) ══════ */}
-      <div className="bg-white border-b border-green-100 px-4 py-2 shrink-0 z-30">
-        <div className="flex flex-col gap-2 max-w-[1700px] mx-auto">
+      <div className="bg-white border-b border-green-100 px-3 py-1.5 shrink-0 z-30">
+        <div className="flex flex-col gap-1.5 max-w-[1700px] mx-auto">
           
           {/* Row 1: Product Search (Large) */}
           <div className="relative" ref={masterDropdownRef}>
@@ -1351,7 +1243,7 @@ export default function RecordSale({
                 onFocus={() => setMasterDropdownOpen(true)}
                 onKeyDown={handleMasterSearchKeyDown}
                 placeholder="Search Medicine... (F2)"
-                className="w-full h-11 bg-transparent outline-none text-base text-gray-800 placeholder-gray-400"
+                className="w-full h-9 bg-transparent outline-none text-sm text-gray-800 placeholder-gray-400"
               />
               {masterSearch && (
                 <button type="button" onClick={() => { setMasterSearch(''); masterSearchRef.current?.focus(); }} className="px-4 text-gray-400 hover:text-emerald-500 transition-colors">
@@ -1398,311 +1290,163 @@ export default function RecordSale({
             )}
           </div>
 
-          {/* Row 2: Patient Info (Compact) */}
-          <div className="flex items-center gap-4 text-sm bg-green-50 p-1.5 rounded-lg border border-green-100">
-            <div className="flex items-center gap-2 pl-2 grow min-w-0">
-               <div className="flex items-center gap-1.5 flex-1 min-w-0 border-r border-emerald-100 pr-3">
-                  <span className="text-emerald-500 shrink-0"><Smartphone className="h-3.5 w-3.5" /></span>
-                  <input
-                    ref={phoneRef}
-                    value={customerPhone}
-                    onChange={e => {
-                      let value = e.target.value;
-                      if (value && !value.startsWith('+')) {
-                        const cleaned = value.replace(/\D/g, '');
-                        if (cleaned.length === 10) value = '+91' + cleaned;
-                        else if (cleaned.length === 12 && cleaned.startsWith('91')) value = '+' + cleaned;
-                        else if (cleaned.length > 0) value = '+91' + cleaned;
-                      }
-                      setCustomerPhone(value);
-                    }}
-                    placeholder="Phone"
-                    className="w-full h-7 bg-transparent outline-none font-medium text-emerald-900 placeholder-emerald-300 text-sm"
-                  />
-               </div>
-               <div className="flex items-center gap-1.5 flex-[1.5] min-w-0 border-r border-emerald-100 pr-3">
-                  <span className="text-emerald-500 shrink-0"><User className="h-3.5 w-3.5" /></span>
+          {/* Row 2: Patient details — Marg-style labelled block (2 lines) */}
+          <div className="bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-0.5">
+
+              {/* Patient (with existing-customer autocomplete) */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Patient</span>
+                <div className="relative flex-1 min-w-0">
                   <input
                     value={customerName}
                     onChange={e => handleNameChange(e.target.value)}
-                    placeholder="Patient Name"
-                    className="w-full h-7 bg-transparent outline-none font-medium text-emerald-900 placeholder-emerald-300 text-sm"
+                    onKeyDown={handleNameKeyDown}
+                    onFocus={() => { if (customerSuggestions.length) setCustomerDropdownOpen(true); }}
+                    onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
+                    placeholder="Name"
+                    autoComplete="off"
+                    className="w-full h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 placeholder-emerald-400/50"
                   />
-               </div>
-               <div className="hidden lg:flex items-center gap-1.5 flex-1 min-w-0 border-r border-emerald-100 pr-3">
-                  <span className="text-emerald-500 shrink-0"><Stethoscope className="h-3.5 w-3.5" /></span>
-                  <input
-                    value={doctorName}
-                    onChange={e => setDoctorName(e.target.value)}
-                    placeholder="Doctor Name"
-                    className="w-full h-7 bg-transparent outline-none font-medium text-emerald-900 placeholder-emerald-300 text-sm"
-                  />
-               </div>
-               <div className="hidden xl:flex items-center gap-1.5 flex-1 min-w-0">
-                  <span className="text-emerald-500 shrink-0"><CalendarDays className="h-3.5 w-3.5" /></span>
-                  <input
-                    type="date"
-                    value={billDate}
-                    onChange={e => setBillDate(e.target.value)}
-                    className="w-full h-7 bg-transparent outline-none font-medium text-emerald-900 placeholder-emerald-300 text-sm appearance-none"
-                  />
-               </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowPrescription(!showPrescription)}
-              className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${showPrescription ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}
-            >
-              Rx Info
-              {showPrescription ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </button>
-          </div>
-
-          {/* Collapsible Rx (Compact & Visible) */}
-          {showPrescription && (
-            <div className="flex items-center gap-4 text-xs bg-emerald-50 p-1.5 rounded-lg border border-emerald-100 shadow-sm animate-in slide-in-from-top-1 duration-200">
-              <div className="flex items-center gap-3 pl-2 grow min-w-0">
-                <div className="flex items-center gap-2 border-r border-emerald-200 pr-4">
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider shrink-0">Months:</span>
-                  <div className="flex items-center gap-1">
-                    <input 
-                      type="number" 
-                      min="0" 
-                      value={prescriptionMonths} 
-                      onChange={e => {
-                        const val = e.target.value === '' ? '' : parseInt(e.target.value) || 0;
-                        setPrescriptionMonths(val);
-                        if (val !== '' && (monthsTaken === '' || monthsTaken === 0)) setMonthsTaken(1);
-                      }} 
-                      className="w-12 h-7 bg-white/70 border border-emerald-200 rounded px-1.5 outline-none focus:border-emerald-500 focus:bg-white text-center font-bold text-emerald-900 transition-all" 
-                    />
-                    <span className="text-[9px] text-emerald-500 font-bold px-1 py-0.5 bg-emerald-100/50 rounded uppercase">Presc.</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 border-r border-emerald-200 pr-4">
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider shrink-0">Taken:</span>
-                  <div className="flex items-center gap-1">
-                    <input 
-                      type="number" 
-                      min="0" 
-                      value={monthsTaken} 
-                      onChange={e => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)} 
-                      className="w-12 h-7 bg-white/70 border border-emerald-200 rounded px-1.5 outline-none focus:border-emerald-500 focus:bg-white text-center font-bold text-emerald-900 transition-all" 
-                    />
-                    <span className="text-[9px] text-emerald-500 font-bold px-1 py-0.5 bg-emerald-100/50 rounded uppercase">Done</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider shrink-0">
-                    <Receipt className="h-3 w-3 inline mr-1 opacity-70" />Address:
-                  </span>
-                  <input 
-                    value={customerAddress} 
-                    onChange={e => setCustomerAddress(e.target.value)} 
-                    placeholder="Enter customer address..." 
-                    className="flex-1 h-7 bg-white/70 border border-emerald-200 rounded px-3 outline-none focus:border-emerald-500 focus:bg-white text-emerald-900 placeholder-emerald-300 font-medium transition-all text-xs" 
-                  />
+                  {customerDropdownOpen && customerSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 mt-1 min-w-[240px] w-max max-w-[320px] bg-white rounded-lg shadow-[0_12px_32px_rgba(0,0,0,0.15)] border border-emerald-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">Existing customers</p>
+                      {customerSuggestions.map((c, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onMouseDown={e => e.preventDefault()} /* keep input focus so click registers before blur */
+                          onClick={() => selectCustomer(c)}
+                          onMouseEnter={() => setCustomerHighlight(idx)}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-50 first:border-t-0 transition-colors ${customerHighlight === idx ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
+                            {(c.phone || c.doctor) && (
+                              <p className="text-[11px] text-gray-400 truncate">{[c.phone, c.doctor && `Dr. ${c.doctor}`].filter(Boolean).join(' · ')}</p>
+                            )}
+                          </div>
+                          <User className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* Date */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Date</span>
+                <input
+                  type="date"
+                  value={billDate}
+                  onChange={e => setBillDate(e.target.value)}
+                  className="flex-1 min-w-0 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 appearance-none"
+                />
+              </div>
+
+              {/* Doctor */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Doctor</span>
+                <input
+                  value={doctorName}
+                  onChange={e => setDoctorName(e.target.value)}
+                  placeholder="Name"
+                  className="flex-1 min-w-0 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 placeholder-emerald-400/50"
+                />
+              </div>
+
+              {/* Phone */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Phone</span>
+                <input
+                  ref={phoneRef}
+                  value={customerPhone}
+                  onChange={e => {
+                    let value = e.target.value;
+                    if (value && !value.startsWith('+')) {
+                      const cleaned = value.replace(/\D/g, '');
+                      if (cleaned.length === 10) value = '+91' + cleaned;
+                      else if (cleaned.length === 12 && cleaned.startsWith('91')) value = '+' + cleaned;
+                      else if (cleaned.length > 0) value = '+91' + cleaned;
+                    }
+                    setCustomerPhone(value);
+                  }}
+                  placeholder="Mobile no."
+                  className="flex-1 min-w-0 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 placeholder-emerald-400/50"
+                />
+              </div>
+
+              {/* Prescription months / taken */}
+              <div className="flex items-center gap-2 min-w-0 md:col-span-2">
+                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Months</span>
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <input
+                    type="number"
+                    min="0"
+                    value={prescriptionMonths}
+                    onChange={e => {
+                      const val = e.target.value === '' ? '' : parseInt(e.target.value) || 0;
+                      setPrescriptionMonths(val);
+                      if (val !== '' && (monthsTaken === '' || monthsTaken === 0)) setMonthsTaken(1);
+                    }}
+                    placeholder="0"
+                    className="w-12 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-bold text-center text-emerald-900"
+                  />
+                  <span className="text-[10px] font-semibold text-emerald-500 uppercase">Presc.</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={monthsTaken}
+                    onChange={e => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                    placeholder="0"
+                    className="w-12 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-bold text-center text-emerald-900"
+                  />
+                  <span className="text-[10px] font-semibold text-emerald-500 uppercase">Taken</span>
+                </div>
+              </div>
+
             </div>
-          )}
+          </div>
         </div>
       </div>
 
 
       {/* ══════ ZONE 4: PRODUCT ENTRY ══════ */}
-      <div className="flex-1 overflow-auto px-2 sm:px-4 py-2 bg-gray-50">
-        {/* Mobile: card list (one card per row with stacked fields, no horizontal scroll) */}
-        <div className="md:hidden space-y-2 max-w-2xl mx-auto">
-          {rows.filter(r => r.productId).length === 0 ? (
-            <div className="text-center py-10 border border-dashed border-emerald-200 rounded-lg bg-white">
-              <Package className="h-6 w-6 text-emerald-300 mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">No medicines added yet.</p>
-              <p className="text-xs text-emerald-600/70 mt-1">Use the product search above to add the first item.</p>
-            </div>
-          ) : (
-            rows.map((row, idx) => row.productId ? (
-              <div
-                key={row.uid}
-                data-row-uid={row.uid}
-                className="bg-white rounded-lg border border-green-100 shadow-sm p-3"
-              >
-                {/* Header: product + remove */}
-                <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-green-50">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-sm text-gray-900 leading-tight">{row.productName}</p>
-                    <div className="flex flex-wrap items-center gap-x-2 mt-0.5 text-[11px]">
-                      <span className="text-emerald-600 font-medium">Stock: {row.stock}</span>
-                      {row.pcsPerUnit ? <span className="text-gray-400">· {row.pcsPerUnit}/strip</span> : null}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeRow(idx)}
-                    className="p-1.5 -mr-1 -mt-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors shrink-0"
-                    title="Remove row"
-                    aria-label="Remove row"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-
-                {/* Editable fields — 2 columns on phone, snug spacing */}
-                <div className="grid grid-cols-2 gap-x-3 gap-y-2 pt-2.5">
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Qty</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'qty', el)}
-                      type="number"
-                      inputMode="numeric"
-                      min="0"
-                      value={row.qty}
-                      onChange={e => updateRow(idx, { qty: parseInt(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'qty')}
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Pcs</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'subQty', el)}
-                      type="number"
-                      inputMode="numeric"
-                      min="0"
-                      value={row.subQty}
-                      onChange={e => updateRow(idx, { subQty: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
-                      placeholder="—"
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Batch</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'batch', el)}
-                      value={row.batch}
-                      onChange={e => updateRow(idx, { batch: e.target.value })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Expiry</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'expiry', el)}
-                      type="month"
-                      value={row.expiry}
-                      onChange={e => updateRow(idx, { expiry: e.target.value })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'expiry')}
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">HSN</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'hsn', el)}
-                      value={row.hsn}
-                      onChange={e => updateRow(idx, { hsn: e.target.value })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'hsn')}
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Rate (₹)</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'rate', el)}
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      value={row.rate || ''}
-                      onChange={e => updateRow(idx, { rate: parseFloat(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'rate')}
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Disc %</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'discount', el)}
-                      type="number"
-                      inputMode="decimal"
-                      step="0.1"
-                      value={row.discount || ''}
-                      onChange={e => updateRow(idx, { discount: parseFloat(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'discount')}
-                      placeholder="0"
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">GST %</Label>
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'gst', el)}
-                      type="number"
-                      inputMode="decimal"
-                      value={row.gst || ''}
-                      onChange={e => updateRow(idx, { gst: parseFloat(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'gst')}
-                      className="h-9 text-sm mt-0.5"
-                    />
-                  </div>
-                </div>
-
-                {/* Amount footer */}
-                <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-green-50">
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Amount</span>
-                  <span className={`text-base font-bold ${row.amount > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
-                    ₹{row.amount > 0 ? row.amount.toFixed(2) : '0.00'}
-                  </span>
-                </div>
-              </div>
-            ) : null)
-          )}
-          {rows.filter(r => r.productId).length > 0 && (
-            <p className="text-center text-[11px] text-emerald-600/70 italic py-1">
-              Use the product search above to add more medicines
-            </p>
-          )}
-        </div>
-
-        {/* Desktop: dense table (unchanged) */}
-        <div className="hidden md:flex bg-white rounded-xl shadow-sm border border-green-100 overflow-hidden min-w-[1100px] max-w-[1700px] mx-auto flex-col">
-          {/* Table header (Thinner) */}
-          <div className="grid grid-cols-[2.5fr_0.6fr_0.6fr_0.8fr_0.8fr_0.7fr_0.7fr_0.6fr_0.6fr_1fr_0.4fr] bg-green-50 border-b border-green-100 text-xs font-semibold text-green-700 py-2 px-1">
-            <div className="pl-4">Product Name</div>
-            <div className="text-center">Qty</div>
-            <div className="text-center">Pcs</div>
-            <div className="px-2">Batch</div>
-            <div className="px-2">Expiry</div>
-            <div className="px-2">HSN</div>
-            <div className="px-2">Rate</div>
-            <div className="px-2">Disc%</div>
-            <div className="px-2">GST%</div>
-            <div className="text-right pr-6">Amount</div>
+      <div className="flex-1 overflow-auto px-1.5 sm:px-4 py-1.5 bg-gray-50">
+        {/* Marg-style dense billing grid — one responsive table for every screen.
+            On phones the fluid fr columns shrink to fill the full width with no
+            horizontal scroll; from lg up it opens out to the spacious desktop size. */}
+        <div className="flex w-full lg:min-w-[1100px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
+          {/* Table header — Marg columns: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT */}
+          <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[9px] lg:text-[11px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
+            <div className="pl-2 lg:pl-4 truncate">Product</div>
+            <div className="px-0.5 lg:px-1 text-center truncate">Pack</div>
+            <div className="px-0.5 lg:px-1 text-center truncate">Batch</div>
+            <div className="px-0.5 lg:px-1 text-center truncate">STRI</div>
+            <div className="px-0.5 lg:px-1 text-center truncate">TAB.</div>
+            <div className="px-0.5 lg:px-1 text-center truncate">Disc%</div>
+            <div className="px-0.5 lg:px-1 text-center truncate">M.R.P.</div>
+            <div className="text-right pr-2 lg:pr-6 truncate">Amount</div>
             <div></div>
           </div>
 
           {/* Table rows */}
-          <div className="divide-y divide-green-50">
+          <div className="divide-y divide-emerald-100/70">
             {rows.map((row, idx) => (
               <div
                 key={row.uid}
                 data-row-uid={row.uid}
-                className={`group transition-all duration-150 ${row.productId ? 'bg-white hover:bg-green-50/40' : 'bg-transparent'}`}
+                className={`group/row group transition-colors duration-100 focus-within:bg-emerald-600 focus-within:shadow-md ${row.productId ? 'bg-white hover:bg-green-50/40' : 'bg-transparent'}`}
               >
-                <div className="grid grid-cols-[2.5fr_0.6fr_0.6fr_0.8fr_0.8fr_0.7fr_0.7fr_0.6fr_0.6fr_1fr_0.4fr] items-center py-1 focus-within:bg-green-50/50">
-                  {/* Product */}
-                  <div className="pl-4 relative flex items-center min-w-0">
+                <div className={`grid ${GRID_COLS} items-center h-9 overflow-hidden divide-x divide-green-50 group-focus-within/row:divide-emerald-500/40`}>
+                  {/* PRODUCT */}
+                  <div className="pl-2 lg:pl-4 relative flex items-center min-w-0">
                     {row.productId ? (
-                      <div className="flex flex-col py-0.5 overflow-hidden pointer-events-none">
-                        <span className="text-sm font-semibold text-gray-800 truncate">{row.productName}</span>
-                        <div className="flex items-center gap-2 mt-0">
-                          <span className="text-[10px] font-medium text-emerald-600">S:{row.stock}</span>
-                          <span className="text-[9px] text-gray-400">U:{row.pcsPerUnit}</span>
-                        </div>
+                      <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 pointer-events-none">
+                        <span className="text-xs lg:text-sm font-semibold text-gray-800 truncate group-focus-within/row:text-white">{row.productName}</span>
+                        <span className="text-[10px] font-medium text-emerald-600 shrink-0 group-focus-within/row:text-emerald-50">S:{row.stock}</span>
+                        {row.expiry && <span className="hidden lg:inline text-[9px] text-gray-400 shrink-0 group-focus-within/row:text-emerald-100/70">Exp:{row.expiry}</span>}
                       </div>
                     ) : (
                       <div className="flex items-center gap-3 py-1 text-[11px] text-emerald-300 pointer-events-none select-none">
@@ -1712,7 +1456,26 @@ export default function RecordSale({
                     )}
                   </div>
 
-                  {/* Qty */}
+                  {/* PACK (units per pack — read only) */}
+                  <div className="px-1 text-center">
+                    <span className="text-[12px] font-medium text-gray-500 group-focus-within/row:text-white">
+                      {row.productId ? (row.pcsPerUnit || '—') : ''}
+                    </span>
+                  </div>
+
+                  {/* BATCH */}
+                  <div className="px-0.5">
+                    <Input
+                      ref={el => setFieldRef(row.uid, 'batch', el)}
+                      value={row.batch}
+                      onChange={e => updateRow(idx, { batch: e.target.value })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
+                      disabled={!row.productId}
+                      className="h-8 text-[12px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
+                    />
+                  </div>
+
+                  {/* STRI (full strips = qty) */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'qty', el)}
@@ -1722,11 +1485,11 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { qty: parseInt(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'qty')}
                       disabled={!row.productId}
-                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
+                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
                     />
                   </div>
 
-                  {/* Pcs */}
+                  {/* TAB (loose tablets = subQty) */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'subQty', el)}
@@ -1737,62 +1500,11 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
                       disabled={!row.productId}
                       placeholder="—"
-                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-all shadow-none text-green-700"
+                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-all shadow-none text-green-700"
                     />
                   </div>
 
-                  {/* Batch */}
-                  <div className="px-0.5">
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'batch', el)}
-                      value={row.batch}
-                      onChange={e => updateRow(idx, { batch: e.target.value })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
-                      disabled={!row.productId}
-                      className="h-8 text-[12px] px-2 font-medium bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
-                    />
-                  </div>
-
-                  {/* Expiry */}
-                  <div className="px-0.5">
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'expiry', el)}
-                      type="month"
-                      value={row.expiry}
-                      onChange={e => updateRow(idx, { expiry: e.target.value })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'expiry')}
-                      disabled={!row.productId}
-                      className="h-8 text-[11px] px-1 font-semibold bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-emerald-400 transition-all shadow-none text-gray-500 appearance-none"
-                    />
-                  </div>
-
-                  {/* HSN */}
-                  <div className="px-0.5">
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'hsn', el)}
-                      value={row.hsn}
-                      onChange={e => updateRow(idx, { hsn: e.target.value })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'hsn')}
-                      disabled={!row.productId}
-                      className="h-8 text-[11px] px-2 font-medium bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-emerald-400 transition-all shadow-none text-gray-500"
-                    />
-                  </div>
-
-                  {/* Rate */}
-                  <div className="px-0.5">
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'rate', el)}
-                      type="number"
-                      step="0.01"
-                      value={row.rate || ''}
-                      onChange={e => updateRow(idx, { rate: parseFloat(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'rate')}
-                      disabled={!row.productId}
-                      className="h-8 text-sm px-1 font-medium bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-emerald-500 transition-all shadow-none text-gray-900"
-                    />
-                  </div>
-
-                  {/* Disc% */}
+                  {/* DISC% */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'discount', el)}
@@ -1803,26 +1515,27 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'discount')}
                       disabled={!row.productId}
                       placeholder="0"
-                      className="h-8 text-sm px-1 font-medium bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-red-400 transition-all shadow-none text-red-500 text-center"
+                      className="h-8 text-sm px-1 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-red-400 transition-all shadow-none text-red-500 text-center"
                     />
                   </div>
 
-                  {/* GST% */}
+                  {/* M.R.P. (rate) */}
                   <div className="px-0.5">
                     <Input
-                      ref={el => setFieldRef(row.uid, 'gst', el)}
+                      ref={el => setFieldRef(row.uid, 'rate', el)}
                       type="number"
-                      value={row.gst || ''}
-                      onChange={e => updateRow(idx, { gst: parseFloat(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'gst')}
+                      step="0.01"
+                      value={row.rate || ''}
+                      onChange={e => updateRow(idx, { rate: parseFloat(e.target.value) || 0 })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'rate')}
                       disabled={!row.productId}
-                      className="h-8 text-sm px-1 font-medium bg-transparent border-transparent hover:bg-white focus:bg-white focus:border-emerald-400 transition-all shadow-none text-gray-500 text-center"
+                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-emerald-500 transition-all shadow-none text-gray-900"
                     />
                   </div>
 
-                  {/* Amount */}
-                  <div className="pr-6 text-right">
-                    <span className={`text-base font-semibold ${row.amount > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
+                  {/* AMOUNT */}
+                  <div className="pr-2 lg:pr-6 text-right">
+                    <span className={`text-sm lg:text-base font-semibold group-focus-within/row:text-white ${row.amount > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
                       {row.amount > 0 ? row.amount.toFixed(2) : '0.00'}
                     </span>
                   </div>
@@ -1832,7 +1545,7 @@ export default function RecordSale({
                     {row.productId && (
                       <button
                         type="button"
-                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 group-focus-within/row:text-white/70 group-focus-within/row:opacity-100"
                         onClick={() => removeRow(idx)}
                         title="Remove row (Alt+Delete)"
                       >
@@ -1841,6 +1554,13 @@ export default function RecordSale({
                     )}
                   </div>
                 </div>
+              </div>
+            ))}
+
+            {/* Empty ledger lines to fill the grid (Marg look) */}
+            {Array.from({ length: Math.max(0, 10 - rows.length) }).map((_, i) => (
+              <div key={`filler-${i}`} className={`grid ${GRID_COLS} h-9 divide-x divide-green-50`}>
+                {Array.from({ length: 9 }).map((__, c) => <div key={c} />)}
               </div>
             ))}
           </div>

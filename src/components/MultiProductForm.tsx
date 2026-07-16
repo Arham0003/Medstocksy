@@ -377,12 +377,14 @@ export const MultiProductForm = ({
                 <div
                   key={row.tempId}
                   className={cn(
-                    'bg-white rounded-xl shadow-sm border overflow-hidden transition-all',
+                    // No `overflow-hidden` here — it would clip the supplier dropdown when it
+                    // opens with several suppliers. The header rounds its own corners instead.
+                    'bg-white rounded-xl shadow-sm border transition-all',
                     missingRequired ? 'border-rose-200 ring-1 ring-rose-100' : 'border-blue-100 hover:border-blue-200'
                   )}
                 >
                   {/* Row header strip — product number, quick summary, delete */}
-                  <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 via-white to-white">
+                  <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 via-white to-white rounded-t-xl">
                     <div className="shrink-0 h-7 w-7 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center text-xs font-bold shadow-sm">
                       {idx + 1}
                     </div>

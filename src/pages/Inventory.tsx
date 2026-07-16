@@ -183,13 +183,13 @@ export default function Inventory() {
                   key={product.id}
                   className="flex justify-between items-center p-4 bg-white rounded-xl border border-orange-200 shadow-sm"
                 >
-                  <div>
-                    <h3 className="font-bold text-lg">{product.name}</h3>
-                    <p className="text-sm text-muted-foreground">{product.sku}</p>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-base md:text-lg truncate">{product.name}</h3>
+                    <p className="text-sm text-muted-foreground truncate">{product.sku}</p>
                   </div>
                   <Badge
                     variant={product.quantity === 0 ? "destructive" : "warning"}
-                    className="text-lg py-2 px-3"
+                    className="text-sm md:text-lg py-1 md:py-2 px-2 md:px-3 shrink-0"
                   >
                     {product.quantity === 0 ? "Out of Stock" : `${product.quantity} left`}
                   </Badge>
@@ -231,7 +231,7 @@ export default function Inventory() {
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-80 p-6" align="end">
+                <PopoverContent className="w-[calc(100vw-2rem)] sm:w-80 p-4 sm:p-6" align="end">
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
                       <h4 className="font-bold text-xl leading-none">Filters</h4>
@@ -304,11 +304,11 @@ export default function Inventory() {
               <Table>
                 <TableHeader className="bg-gradient-to-r from-purple-50 to-pink-50">
                   <TableRow>
-                    <TableHead className="text-base md:text-lg font-bold text-gray-700 py-4">Product Details</TableHead>
-                    <TableHead className="hidden md:table-cell text-lg font-bold text-gray-700 py-4">Category & Supplier</TableHead>
-                    <TableHead className="text-base md:text-lg font-bold text-gray-700 py-4">Stock Level</TableHead>
-                    <TableHead className="text-base md:text-lg font-bold text-gray-700 py-4">Price</TableHead>
-                    <TableHead className="hidden sm:table-cell text-base md:text-lg font-bold text-gray-700 py-4">Status</TableHead>
+                    <TableHead className="text-sm md:text-lg font-bold text-gray-700 py-2 md:py-4">Product Details</TableHead>
+                    <TableHead className="hidden md:table-cell text-sm md:text-lg font-bold text-gray-700 py-2 md:py-4">Category & Supplier</TableHead>
+                    <TableHead className="text-sm md:text-lg font-bold text-gray-700 py-2 md:py-4">Stock Level</TableHead>
+                    <TableHead className="text-sm md:text-lg font-bold text-gray-700 py-2 md:py-4">Price</TableHead>
+                    <TableHead className="hidden sm:table-cell text-sm md:text-lg font-bold text-gray-700 py-2 md:py-4">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -317,21 +317,21 @@ export default function Inventory() {
                       key={product.id}
                       className="hover:bg-purple-50 transition-colors"
                     >
-                      <TableCell className="py-4">
+                      <TableCell className="py-2 md:py-4">
                         <div className="flex flex-col">
-                          <span className="font-bold text-lg text-purple-900">{product.name}</span>
+                          <span className="font-bold text-sm md:text-lg text-purple-900">{product.name}</span>
                           {product.sku && <span className="text-sm text-muted-foreground font-mono">SKU: {product.sku}</span>}
                         </div>
                       </TableCell>
-                      <TableCell className="hidden md:table-cell py-4">
+                      <TableCell className="hidden md:table-cell py-2 md:py-4">
                         <div className="flex flex-col">
-                          <span className="text-lg">{product.category}</span>
+                          <span className="text-sm md:text-lg">{product.category}</span>
                           <span className="text-sm text-muted-foreground italic">{product.supplier}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-base md:text-lg py-4 font-medium">{product.quantity} Units</TableCell>
-                      <TableCell className="text-base md:text-lg py-4 font-bold text-green-700">₹{product.selling_price}</TableCell>
-                      <TableCell className="hidden sm:table-cell py-4">
+                      <TableCell className="text-sm md:text-lg py-2 md:py-4 font-medium">{product.quantity} Units</TableCell>
+                      <TableCell className="text-sm md:text-lg py-2 md:py-4 font-bold text-green-700">₹{product.selling_price}</TableCell>
+                      <TableCell className="hidden sm:table-cell py-2 md:py-4">
                         <Badge
                           variant={
                             product.quantity === 0

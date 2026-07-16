@@ -101,7 +101,7 @@ const AdminPanel = () => {
                                 <Label>
                                     User Email Address
                                 </Label>
-                                <div className="flex gap-2">
+                                <div className="flex flex-col sm:flex-row gap-2">
                                     <Input
                                         placeholder="user@example.com"
                                         value={targetEmail}
@@ -112,7 +112,7 @@ const AdminPanel = () => {
                                     <Button
                                         onClick={handleGrantTrial}
                                         disabled={isLoading}
-                                        className="bg-orange-600 hover:bg-orange-700"
+                                        className="bg-orange-600 hover:bg-orange-700 w-full sm:w-auto"
                                     >
                                         {isLoading ? <RefreshCcw className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
                                         Grant {trialDays} Days

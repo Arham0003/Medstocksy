@@ -216,7 +216,7 @@ const Pricing = () => {
                         <Card
                             key={plan.name}
                             className={`flex flex-col relative transition-all duration-200 ${plan.popular
-                                ? 'border-blue-500 shadow-lg scale-105 z-10'
+                                ? 'border-blue-500 shadow-lg lg:scale-105 z-10'
                                 : 'border-gray-200 hover:shadow-md'
                                 }`}
                         >

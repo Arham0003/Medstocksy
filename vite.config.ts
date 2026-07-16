@@ -107,18 +107,40 @@ export default defineConfig(({ mode }) => ({
   build: {
     // Reduce the chunk size warning limit
     chunkSizeWarningLimit: 1000,
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+      },
+    },
     rollupOptions: {
       output: {
-        manualChunks: {
-          // Separate vendor chunks for better caching
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'ui-components': ['lucide-react'],
-          'supabase': ['@supabase/supabase-js'],
-          'utils': ['clsx', 'tailwind-merge', 'class-variance-authority'],
-          'forms': ['react-hook-form', '@hookform/resolvers', 'zod'],
-          'charts': ['recharts'],
-          'date-utils': ['date-fns'],
-          'virtualization': ['react-window', 'react-virtualized-auto-sizer'],
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('lucide-react')) {
+              return 'ui-icons';
+            }
+            if (id.includes('react-router-dom') || id.includes('@remix-run')) {
+              return 'react-vendor';
+            }
+            if (id.includes('react-dom')) {
+              return 'react-vendor';
+            }
+            if (id.includes('/react/')) {
+              return 'react-vendor';
+            }
+            if (id.includes('@supabase')) {
+              return 'supabase';
+            }
+            if (id.includes('recharts')) {
+              return 'charts';
+            }
+            if (id.includes('date-fns')) {
+              return 'date-utils';
+            }
+            return 'vendor'; // group other dependencies
+          }
         }
       }
     }

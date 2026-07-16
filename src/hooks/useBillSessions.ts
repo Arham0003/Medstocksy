@@ -84,6 +84,20 @@ export function useBillSessions() {
     return true;
   }, [sessions.length, seqCounter]);
 
+  // Create a new tab pre-loaded with bill data (used when editing a finalized
+  // bill). The data is written to localStorage BEFORE the tab is added so the
+  // freshly-mounted <RecordSale/> hydrates it. Returns the new id, or null if full.
+  const addSessionWithData = useCallback((data: unknown): string | null => {
+    if (sessions.length >= MAX_BILL_TABS) return null;
+    const nextSeq = seqCounter + 1;
+    const s = newSession(nextSeq);
+    try { localStorage.setItem(BILL_DATA_PREFIX + s.id, JSON.stringify(data)); } catch { /* ignore */ }
+    setSeqCounter(nextSeq);
+    setSessions(prev => (prev.length >= MAX_BILL_TABS ? prev : [...prev, s]));
+    setActiveId(s.id);
+    return s.id;
+  }, [sessions.length, seqCounter]);
+
   const closeSession = useCallback((id: string) => {
     clearBillData(id); // drop this bill's saved contents
     setSessions(prev => {
@@ -114,5 +128,5 @@ export function useBillSessions() {
     });
   }, []);
 
-  return { sessions, activeId, setActiveId, addSession, closeSession, updateMeta, canAddMore };
+  return { sessions, activeId, setActiveId, addSession, addSessionWithData, closeSession, updateMeta, canAddMore };
 }

@@ -411,3 +411,16 @@ tr {
     width: 100%;
   }
 }
+
+/* ========================================
+   BILLING GRID — hide number spin buttons (they clutter the dense POS row)
+   ======================================== */
+.billing-grid input[type="number"]::-webkit-outer-spin-button,
+.billing-grid input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.billing-grid input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

@@ -22,7 +22,7 @@ const LoadingComponent = () => (
 // Lazy load pages that are not immediately needed
 const Products = lazy(() => import("./pages/Products"));
 const Sales = lazy(() => import("./pages/Sales"));
-const RecordSale = lazy(() => import("./pages/RecordSale"));
+const SalesBilling = lazy(() => import("./pages/SalesBilling"));
 const SalesReturn = lazy(() => import("./pages/SalesReturn"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Settings = lazy(() => import("./pages/Settings"));
@@ -70,7 +70,7 @@ const App = () => (
                 path="sales/new"
                 element={
                   <Suspense fallback={<LoadingComponent />}>
-                    <RecordSale />
+                    <SalesBilling />
                   </Suspense>
                 }
               />

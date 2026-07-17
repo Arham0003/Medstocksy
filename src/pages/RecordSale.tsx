@@ -1533,12 +1533,12 @@ export default function RecordSale({
           {/* Table header — Marg columns: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT */}
           <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[10px] lg:text-[12px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
             <div className="pl-2 lg:pl-4 truncate">Product</div>
-            <div className="px-0.5 lg:px-1 text-center truncate">Pack</div>
-            <div className="px-0.5 lg:px-1 text-center truncate">Batch</div>
-            <div className="px-0.5 lg:px-1 text-center truncate">STRI</div>
-            <div className="px-0.5 lg:px-1 text-center truncate">TAB.</div>
-            <div className="px-0.5 lg:px-1 text-center truncate">Disc%</div>
-            <div className="px-0.5 lg:px-1 text-center truncate">M.R.P.</div>
+            <div className="px-0.5 lg:px-1 text-center">Pack</div>
+            <div className="px-0.5 lg:px-1 text-center">Batch</div>
+            <div className="px-0.5 lg:px-1 text-center">STRI</div>
+            <div className="px-0.5 lg:px-1 text-center">TAB.</div>
+            <div className="px-0.5 lg:px-1 text-center">Disc%</div>
+            <div className="px-0.5 lg:px-1 text-center">M.R.P.</div>
             <div className="text-right pr-2 lg:pr-6 truncate">Amount</div>
             <div></div>
           </div>
@@ -1724,6 +1724,9 @@ export default function RecordSale({
                       <p className={`font-bold text-sm truncate ${searchHighlight === i ? 'text-emerald-700' : 'text-gray-800'}`}>{p.name}</p>
                       <div className="flex items-center gap-2 mt-0.5">
                         <Badge variant="outline" className="text-[10px] h-4 bg-emerald-50 text-emerald-600 border-emerald-100">Stock: {p.quantity}</Badge>
+                        {p.expiry_date && (
+                          <span className="text-[10px] font-medium text-rose-500">Exp: {p.expiry_date.substring(0, 7)}</span>
+                        )}
                         {p.hsn_code && <span className="text-[10px] text-gray-500 font-medium">HSN: {p.hsn_code}</span>}
                         <span className="text-[10px] text-gray-400">U: {p.pcs_per_unit || 10}</span>
                       </div>

@@ -117,6 +117,38 @@ export default function PrintBill() {
         }
     };
 
+    // ─── Actions (shared by buttons and keyboard shortcuts) ───────────────────
+    const doEdit = useCallback(() => {
+        if (billId) navigate(`/sales/new?edit=${billId}`);
+    }, [billId, navigate]);
+
+    const doPrint = useCallback(async () => {
+        // Stamp printed_at so the sale is locked from further edits (ignored if not migrated).
+        if (billId) {
+            try {
+                await (supabase as any)
+                    .from('sales')
+                    .update({ printed_at: new Date().toISOString() })
+                    .eq('bill_id', billId)
+                    .is('printed_at', null);
+            } catch { /* column may not exist yet */ }
+        }
+        window.print();
+    }, [billId]);
+
+    // P = Print · F2 = Edit
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.ctrlKey || e.altKey || e.metaKey) return; // leave Ctrl+P etc. to the browser
+            const t = e.target as HTMLElement | null;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+            if (e.key === 'p' || e.key === 'P') { e.preventDefault(); doPrint(); }
+            else if (e.key === 'F2') { e.preventDefault(); doEdit(); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [doPrint, doEdit]);
+
     const fetchAvailableProducts = async () => {
         if (!billData?.account_id) return;
         const { data, error } = await supabase
@@ -471,26 +503,15 @@ export default function PrintBill() {
                     Back to Sales
                 </Button>
                 <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => navigate(`/sales/new?edit=${billId}`)}>
+                    <Button variant="outline" onClick={doEdit} title="Edit (F2)">
                         <Pencil className="h-4 w-4 mr-2" />
                         Edit
+                        <kbd className="ml-2 hidden sm:inline px-1.5 py-0.5 rounded border text-[10px] font-semibold text-muted-foreground">F2</kbd>
                     </Button>
-                    <Button onClick={async () => {
-                        // Stamp printed_at so the sale is locked from further edits.
-                        // Silently ignored if the migration isn't applied yet.
-                        if (billId) {
-                            try {
-                                await (supabase as any)
-                                    .from('sales')
-                                    .update({ printed_at: new Date().toISOString() })
-                                    .eq('bill_id', billId)
-                                    .is('printed_at', null);
-                            } catch { /* column may not exist yet */ }
-                        }
-                        window.print();
-                    }}>
+                    <Button onClick={doPrint} title="Print (P)">
                         <Printer className="h-4 w-4 mr-2" />
                         Print Bill
+                        <kbd className="ml-2 hidden sm:inline px-1.5 py-0.5 rounded border border-white/30 text-[10px] font-semibold">P</kbd>
                     </Button>
                 </div>
             </div>

@@ -1267,14 +1267,19 @@ Thank you for your purchase!
                 <span className="text-xs bg-white/20 px-2 py-0.5 rounded border border-white/30 opacity-90 hidden sm:inline-block">F2</span>
               </Button>
             </DialogTrigger>
-          <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
-            <DialogHeader className="pr-8 space-y-1">
-              <DialogTitle className="text-lg sm:text-xl">Record New Sale</DialogTitle>
-              <DialogDescription className="text-sm">
-                Select a product and quantity to record the sale.
+          <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[92vh] p-0 overflow-hidden flex flex-col gap-0">
+            {/* Green header — Sale Entry (inspired by the full POS) */}
+            <DialogHeader className="shrink-0 bg-gradient-to-r from-emerald-600 to-emerald-500 px-4 py-3 space-y-0.5 text-left pr-12">
+              <DialogTitle className="text-white text-base sm:text-lg font-semibold flex items-center gap-2">
+                <ShoppingCart className="h-5 w-5" /> Sale Entry
+              </DialogTitle>
+              <DialogDescription className="text-emerald-50 text-xs">
+                Search medicines, add them, then finalize the bill.
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleSale} className="space-y-4 sm:space-y-6">
+            <form onSubmit={handleSale} className="flex flex-col flex-1 min-h-0">
+              {/* Scrollable body */}
+              <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-3 space-y-4">
               {/* Top: persistent product search -adds to cart on click (no separate "Add Product" form) */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-2">
@@ -1725,7 +1730,7 @@ Thank you for your purchase!
 
               {/* Customer & Payment -exactly 2 rows: Name, then Phone | Payment */}
               <div className="space-y-3 p-3 sm:p-4 bg-gray-50 rounded-lg">
-                <h3 className="text-sm font-semibold">Customer & Payment</h3>
+                <h3 className="text-sm font-semibold">Customer details</h3>
 
                 {/* Row 1: Name (full width) */}
                 <div className="space-y-1">
@@ -1739,52 +1744,32 @@ Thank you for your purchase!
                   />
                 </div>
 
-                {/* Row 2: Phone | Payment (50/50 split) */}
-                <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="customerPhone" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Phone</Label>
-                    <Input
-                      id="customerPhone"
-                      type="tel"
-                      inputMode="tel"
-                      autoComplete="tel"
-                      value={customerPhone}
-                      onChange={(e) => {
-                        let value = e.target.value;
-                        if (value && !value.startsWith('+')) {
-                          const cleaned = value.replace(/\D/g, '');
-                          if (cleaned.length === 10) {
-                            value = '+91' + cleaned;
-                          } else if (cleaned.length === 12 && cleaned.startsWith('91')) {
-                            value = '+' + cleaned;
-                          } else if (cleaned.length > 0) {
-                            value = '+91' + cleaned;
-                          }
+                {/* Row 2: Phone (full width — payment mode moved to the finalize bar) */}
+                <div className="space-y-1">
+                  <Label htmlFor="customerPhone" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Phone</Label>
+                  <Input
+                    id="customerPhone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={customerPhone}
+                    onChange={(e) => {
+                      let value = e.target.value;
+                      if (value && !value.startsWith('+')) {
+                        const cleaned = value.replace(/\D/g, '');
+                        if (cleaned.length === 10) {
+                          value = '+91' + cleaned;
+                        } else if (cleaned.length === 12 && cleaned.startsWith('91')) {
+                          value = '+' + cleaned;
+                        } else if (cleaned.length > 0) {
+                          value = '+91' + cleaned;
                         }
-                        setCustomerPhone(value);
-                      }}
-                      placeholder="+91 9876543210"
-                      className="h-9"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="paymentMode" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Payment</Label>
-                    <Select value={paymentMode} onValueChange={setPaymentMode}>
-                      <SelectTrigger id="paymentMode" className="h-9">
-                        <SelectValue placeholder="Mode" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="cash">💵 Cash</SelectItem>
-                        <SelectItem value="upi">📱 UPI</SelectItem>
-                        <SelectItem value="card">💳 Card</SelectItem>
-                        <SelectItem value="credit">⏳ Credit / Dues</SelectItem>
-                        <SelectItem value="net_banking">🏦 Net Banking</SelectItem>
-                        <SelectItem value="wallet">👛 Wallet</SelectItem>
-                        <SelectItem value="cheque">📝 Cheque</SelectItem>
-                        <SelectItem value="other">💰 Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                      }
+                      setCustomerPhone(value);
+                    }}
+                    placeholder="+91 9876543210"
+                    className="h-9"
+                  />
                 </div>
                 <div className="bg-emerald-50/50 p-3 sm:p-4 rounded-lg border border-emerald-100 space-y-3">
                   <h4 className="text-xs font-bold text-emerald-700 uppercase tracking-wide flex items-center gap-1.5">
@@ -1878,41 +1863,72 @@ Thank you for your purchase!
                 </Card>
               )}
 
-              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3 pt-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setIsDialogOpen(false);
-                    // Reset all form fields
-                    setSelectedProducts([]);
-                    setCurrentProduct('');
-                    setCurrentQuantity(1);
-                    setCustomerName('');
-                    setCustomerPhone('');
-                    setPrescriptionMonths('');
-                    setMonthsTaken('');
-                    setDiscountPercentage(0);
-                    setProductPrices({});
-                    setCustomGstRates({});
-                    setPaymentMode('cash');
-                    setSubQtyMap({});
-                    setPcsPerUnitMap({});
-                    setCurrentSubQty('');
-                    setCurrentPcsPerUnit(10);
-                  }}
-                  className="sm:w-auto"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={selectedProducts.length === 0 || isRecordingSales}
-                  className="sm:flex-1 sm:min-w-[200px] h-11 gap-2 bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700"
-                >
-                  <ShoppingCart className="h-4 w-4" />
-                  {isRecordingSales ? 'Recording...' : 'Record Sale'}
-                </Button>
+              </div>{/* end scrollable body */}
+
+              {/* Sticky finalize bar — payment chips + total + actions (POS style) */}
+              <div className="shrink-0 border-t bg-white px-3 sm:px-4 py-2.5 space-y-2">
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { v: 'cash', icon: '💵', label: 'Cash' },
+                    { v: 'upi', icon: '📱', label: 'UPI' },
+                    { v: 'card', icon: '💳', label: 'Card' },
+                    { v: 'credit', icon: '🧾', label: 'Credit' },
+                  ].map(m => (
+                    <button
+                      key={m.v}
+                      type="button"
+                      onClick={() => setPaymentMode(m.v)}
+                      className={cn(
+                        'flex flex-col items-center gap-0.5 rounded-lg border py-1.5 text-[11px] font-medium transition-colors',
+                        paymentMode === m.v
+                          ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+                      )}
+                    >
+                      <span className="text-base leading-none">{m.icon}</span>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payable</span>
+                    <span className="text-xl font-bold text-emerald-700">₹{orderTotals.grandTotal.toFixed(2)}</span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="ml-auto"
+                    onClick={() => {
+                      setIsDialogOpen(false);
+                      setSelectedProducts([]);
+                      setCurrentProduct('');
+                      setCurrentQuantity(1);
+                      setCustomerName('');
+                      setCustomerPhone('');
+                      setPrescriptionMonths('');
+                      setMonthsTaken('');
+                      setDiscountPercentage(0);
+                      setProductPrices({});
+                      setCustomGstRates({});
+                      setPaymentMode('cash');
+                      setSubQtyMap({});
+                      setPcsPerUnitMap({});
+                      setCurrentSubQty('');
+                      setCurrentPcsPerUnit(10);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={selectedProducts.length === 0 || isRecordingSales}
+                    className="h-11 gap-2 px-5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white font-semibold"
+                  >
+                    <ShoppingCart className="h-4 w-4" />
+                    {isRecordingSales ? 'Recording…' : 'Finalize'}
+                  </Button>
+                </div>
               </div>
             </form>
           </DialogContent>

@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft';
 
 interface Product {
   id: string;
@@ -106,7 +107,7 @@ export default function Sales() {
   const [filterPaymentMode, setFilterPaymentMode] = useState('all');
   const [filterDateRange, setFilterDateRange] = useState('all');
 
-  // Edit Sale dialog — full edit: customer info, payment mode, item qty/price/gst, add or remove items
+  // Edit Sale dialog -full edit: customer info, payment mode, item qty/price/gst, add or remove items
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
   const [editingCreatedAt, setEditingCreatedAt] = useState<string | null>(null);
@@ -121,7 +122,7 @@ export default function Sales() {
     sales_id?: string;       // present for existing rows
     product_id: string;
     product_name: string;
-    pcs_per_unit: number;    // strip size — fixed once product is selected
+    pcs_per_unit: number;    // strip size -fixed once product is selected
     quantity: number;        // full units
     sub_qty: number;         // loose pcs
     unit_price: number;
@@ -148,6 +149,49 @@ export default function Sales() {
   const [pcsPerUnitMap, setPcsPerUnitMap] = useState<Record<string, number>>({});
   // Loading state for recording sale
   const [isRecordingSales, setIsRecordingSales] = useState(false);
+
+  // ─── Save / restore the in-progress sale when nipping to Products to add one ───
+  const saveCurrentSaleDraft = () => {
+    saveSaleDraft({
+      selectedProducts,
+      customerName,
+      customerPhone,
+      customerAddress,
+      prescriptionMonths,
+      productPrices,
+      customGstRates,
+      discountPercentage,
+      paymentMode,
+      subQtyMap,
+      pcsPerUnitMap,
+    });
+  };
+
+  const goAddNewProduct = () => {
+    saveCurrentSaleDraft();
+    setIsDialogOpen(false);
+    navigate('/products?from=record-sale');
+  };
+
+  // Restore a saved sale after returning from adding a product.
+  useEffect(() => {
+    const d = loadSaleDraft<any>();
+    if (!d) return;
+    setSelectedProducts(d.selectedProducts ?? []);
+    setCustomerName(d.customerName ?? '');
+    setCustomerPhone(d.customerPhone ?? '');
+    setCustomerAddress(d.customerAddress ?? '');
+    setPrescriptionMonths(d.prescriptionMonths ?? '');
+    setProductPrices(d.productPrices ?? {});
+    setCustomGstRates(d.customGstRates ?? {});
+    setDiscountPercentage(d.discountPercentage ?? 0);
+    setPaymentMode(d.paymentMode ?? 'cash');
+    setSubQtyMap(d.subQtyMap ?? {});
+    setPcsPerUnitMap(d.pcsPerUnitMap ?? {});
+    setIsDialogOpen(true);
+    clearSaleDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -449,6 +493,34 @@ export default function Sales() {
     // Clean up pcs and pcs per unit maps
     setSubQtyMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
     setPcsPerUnitMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
+  };
+
+  // Shared pricing math for a cart line -used by both the desktop card view and
+  // the mobile spreadsheet table so the two never diverge.
+  const computeCartLine = (item: { id: string; quantity: number }) => {
+    const product = products.find(p => p.id === item.id);
+    if (!product) return null;
+    const unitPrice = productPrices[item.id] !== undefined ? productPrices[item.id] : product.selling_price;
+    const cartSubQty = subQtyMap[item.id];
+    const cartPcsPerUnit = pcsPerUnitMap[item.id] || product.pcs_per_unit || 10;
+    let itemSubtotal = unitPrice * item.quantity;
+    if (cartSubQty && cartPcsPerUnit) {
+      itemSubtotal += (unitPrice / cartPcsPerUnit) * cartSubQty;
+    }
+    const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : settings?.default_gst_rate || 0;
+    let itemGstAmount = 0;
+    let itemTotal = 0;
+    const isGstInclusive = settings?.gst_type === 'inclusive';
+    if (settings?.gst_enabled) {
+      itemGstAmount = (itemSubtotal * itemGstRate) / 100;
+      itemTotal = isGstInclusive ? itemSubtotal : itemSubtotal + itemGstAmount;
+    } else {
+      itemTotal = itemSubtotal;
+    }
+    const isPriceAdjusted = productPrices[item.id] !== undefined && productPrices[item.id] !== product.selling_price;
+    const isCustomGst = customGstRates[item.id] !== undefined && customGstRates[item.id] !== (settings?.default_gst_rate || 0);
+    const overstock = item.quantity > product.quantity;
+    return { product, unitPrice, cartSubQty, cartPcsPerUnit, itemSubtotal, itemGstRate, itemGstAmount, itemTotal, isPriceAdjusted, isCustomGst, overstock };
   };
 
   const handleUpdateQuantity = (productId: string, newQuantity: number) => {
@@ -825,8 +897,8 @@ export default function Sales() {
     return null;
   };
   const lockReasonText = (r: LockReason): string => {
-    if (r === 'printed') return 'Locked — bill has been printed';
-    if (r === 'expired') return `Locked — older than ${EDIT_WINDOW_MINUTES} min`;
+    if (r === 'printed') return 'Locked -bill has been printed';
+    if (r === 'expired') return `Locked -older than ${EDIT_WINDOW_MINUTES} min`;
     return '';
   };
 
@@ -841,12 +913,12 @@ export default function Sales() {
         .eq('bill_id', billId)
         .is('printed_at', null);
     } catch {
-      // ignore — column may not exist yet
+      // ignore -column may not exist yet
     }
     navigate(`/print-bill/${billId}`);
   };
 
-  // Open edit dialog for a recorded sale — full edit (items + customer + payment)
+  // Open edit dialog for a recorded sale -full edit (items + customer + payment)
   const openEditSale = (group: GroupedTransaction) => {
     const reason = getLockReason(group);
     if (reason) {
@@ -1203,7 +1275,7 @@ Thank you for your purchase!
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSale} className="space-y-4 sm:space-y-6">
-              {/* Top: persistent product search — adds to cart on click (no separate "Add Product" form) */}
+              {/* Top: persistent product search -adds to cart on click (no separate "Add Product" form) */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-2">
                   <Search className="h-3.5 w-3.5" />
@@ -1237,7 +1309,7 @@ Thank you for your purchase!
                             onClick={() => {
                               if (outOfStock) return;
                               if (alreadyInCart) {
-                                // Already in cart — just clear search and let user edit it inline
+                                // Already in cart -just clear search and let user edit it inline
                                 setProductSearchTerm('');
                                 return;
                               }
@@ -1265,15 +1337,24 @@ Thank you for your purchase!
                         );
                       })
                     ) : (
-                      <div className="py-4 text-center text-muted-foreground text-sm">
+                      <div className="py-3 text-center text-muted-foreground text-sm">
                         No products found
                       </div>
                     )}
+                    {/* Add a brand-new product without losing this sale */}
+                    <button
+                      type="button"
+                      onClick={goAddNewProduct}
+                      className="w-full text-left py-2 px-3 flex items-center gap-2 border-t bg-slate-50 hover:bg-blue-50 text-blue-600 font-medium text-sm sticky bottom-0"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add “{productSearchTerm}” as a new product
+                    </button>
                   </div>
                 )}
               </div>
 
-              {/* Cart Items — each item is fully inline-editable (Qty, Pcs, Rate, GST%) */}
+              {/* Cart Items -each item is fully inline-editable (Qty, Pcs, Rate, GST%) */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <Label className="text-sm font-semibold">
@@ -1312,7 +1393,9 @@ Thank you for your purchase!
                     <p className="text-xs mt-0.5">Search above to add the first item.</p>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
+                  <>
+                  {/* Laptop / tablet: inline-editable cards */}
+                  <div className="hidden md:block space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
                     {selectedProducts.map((item) => {
                       const product = products.find(p => p.id === item.id);
                       if (!product) return null;
@@ -1356,7 +1439,7 @@ Thank you for your purchase!
                           )}
                         >
                           <div className="flex flex-wrap items-end gap-x-2 gap-y-1.5 px-2.5 py-2">
-                            {/* Identity block — full width on mobile, ~36% on tablet+ */}
+                            {/* Identity block -full width on mobile, ~36% on tablet+ */}
                             <div className="flex items-start gap-2 min-w-0 basis-full md:basis-auto md:flex-1 md:min-w-[180px] md:max-w-[40%]">
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-medium text-gray-900 truncate leading-tight">{product.name}</div>
@@ -1383,7 +1466,7 @@ Thank you for your purchase!
                               </button>
                             </div>
 
-                            {/* Editable inputs — labelled stacks, fit in one line on tablet+, wrap below name on mobile */}
+                            {/* Editable inputs -labelled stacks, fit in one line on tablet+, wrap below name on mobile */}
                             <div className="flex flex-col">
                               <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Qty</span>
                               <Input
@@ -1481,7 +1564,7 @@ Thank you for your purchase!
                               </div>
                             )}
 
-                            {/* Total + (optional) GST sub-line + desktop remove — pushed to the far right */}
+                            {/* Total + (optional) GST sub-line + desktop remove -pushed to the far right */}
                             <div className="ml-auto flex items-center gap-2">
                               <div className="text-right leading-tight">
                                 <div className="text-sm sm:text-base font-bold text-emerald-700">₹{itemTotal.toFixed(2)}</div>
@@ -1506,10 +1589,141 @@ Thank you for your purchase!
                       );
                     })}
                   </div>
+
+                  {/* Mobile: spreadsheet-style billing table (ref: classic billing software).
+                      Columns mirror the laptop line: Product · Batch · Qty · Pcs · Rate · Amount.
+                      Horizontally scrollable so the dense grid never crushes on small screens. */}
+                  <div className="md:hidden -mx-1 overflow-x-auto rounded-md border border-slate-300 max-h-[420px] overflow-y-auto">
+                    <table className="w-full min-w-[540px] border-collapse text-xs">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="bg-sky-100 text-slate-700">
+                          <th className="text-left font-semibold uppercase tracking-wide px-2 py-1.5 border-b border-r border-slate-300">Product</th>
+                          <th className="text-left font-semibold uppercase tracking-wide px-1.5 py-1.5 border-b border-r border-slate-300 w-[52px]">Batch</th>
+                          <th className="text-center font-semibold uppercase tracking-wide px-1 py-1.5 border-b border-r border-slate-300 w-[52px]">Qty</th>
+                          <th className="text-center font-semibold uppercase tracking-wide px-1 py-1.5 border-b border-r border-slate-300 w-[70px]">Pcs</th>
+                          <th className="text-right font-semibold uppercase tracking-wide px-1 py-1.5 border-b border-r border-slate-300 w-[60px]">Rate</th>
+                          <th className="text-right font-semibold uppercase tracking-wide px-1.5 py-1.5 border-b border-r border-slate-300 w-[64px]">Amount</th>
+                          <th className="w-7 border-b border-slate-300" aria-label="Remove" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedProducts.map((item) => {
+                          const line = computeCartLine(item);
+                          if (!line) return null;
+                          const { product, unitPrice, cartSubQty, cartPcsPerUnit, itemGstAmount, itemTotal, isPriceAdjusted, isCustomGst, overstock } = line;
+                          return (
+                            <tr
+                              key={item.id}
+                              className={cn(
+                                "border-b border-slate-200 last:border-b-0",
+                                overstock ? "bg-red-50" : "bg-white even:bg-slate-50/60"
+                              )}
+                            >
+                              {/* Product */}
+                              <td className="px-2 py-1 border-r border-slate-200 align-top">
+                                <div className="font-semibold text-slate-900 leading-snug break-words">{product.name}</div>
+                                <div className="text-[10px] leading-none mt-0.5 flex flex-wrap items-center gap-x-1">
+                                  <span className={cn("font-medium", overstock ? "text-red-600" : "text-emerald-600")}>Stk {product.quantity}</span>
+                                  {overstock && <span className="text-red-600 font-semibold">· exceeds!</span>}
+                                  {isPriceAdjusted && <span className="text-blue-600 font-semibold">· ADJ</span>}
+                                  {isCustomGst && <span className="text-blue-600 font-semibold">· GST*</span>}
+                                </div>
+                              </td>
+                              {/* Batch */}
+                              <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-slate-600 break-words">
+                                {product.batch_number || '—'}
+                              </td>
+                              {/* Qty (strips) */}
+                              <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
+                                <Input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min="1"
+                                  max={product.quantity}
+                                  value={item.quantity}
+                                  onChange={(e) => {
+                                    const raw = parseInt(e.target.value) || 1;
+                                    const q = Math.max(1, Math.min(product.quantity, raw));
+                                    setSelectedProducts(prev => prev.map(p => p.id === item.id ? { ...p, quantity: q } : p));
+                                  }}
+                                  className="h-7 w-full text-xs px-0.5 text-center font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
+                                />
+                              </td>
+                              {/* Pcs (loose) */}
+                              <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
+                                <div className="flex items-center justify-center gap-0.5">
+                                  <Input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min="0"
+                                    value={cartSubQty ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0);
+                                      if (v <= 0) {
+                                        setSubQtyMap(prev => { const n = { ...prev }; delete n[item.id]; return n; });
+                                        setPcsPerUnitMap(prev => { const n = { ...prev }; delete n[item.id]; return n; });
+                                      } else {
+                                        setSubQtyMap(prev => ({ ...prev, [item.id]: v }));
+                                        if (!pcsPerUnitMap[item.id]) {
+                                          setPcsPerUnitMap(prev => ({ ...prev, [item.id]: product.pcs_per_unit || 10 }));
+                                        }
+                                      }
+                                    }}
+                                    placeholder="—"
+                                    className="h-7 w-9 text-xs px-0.5 text-center font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
+                                  />
+                                  {cartSubQty ? (
+                                    <span className="text-[10px] text-slate-400 leading-none whitespace-nowrap">/{cartPcsPerUnit}</span>
+                                  ) : null}
+                                </div>
+                              </td>
+                              {/* Rate (M.R.P.) */}
+                              <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
+                                <Input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  value={unitPrice}
+                                  onChange={(e) => {
+                                    const v = Math.max(0, parseFloat(e.target.value) || 0);
+                                    setProductPrices(prev => ({ ...prev, [item.id]: v }));
+                                  }}
+                                  className="h-7 w-full text-xs px-0.5 text-right font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
+                                />
+                              </td>
+                              {/* Amount */}
+                              <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-right leading-tight">
+                                <div className="font-bold text-emerald-700 tabular-nums">₹{itemTotal.toFixed(2)}</div>
+                                {settings?.gst_enabled && itemGstAmount > 0 && (
+                                  <div className="text-[9px] text-slate-400 leading-none">+{itemGstAmount.toFixed(2)}</div>
+                                )}
+                              </td>
+                              {/* Remove */}
+                              <td className="px-0 py-1 align-middle text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveFromCart(item.id)}
+                                  className="h-6 w-6 inline-flex items-center justify-center rounded text-slate-400 hover:text-red-600 hover:bg-red-50"
+                                  title="Remove"
+                                  aria-label="Remove from cart"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  </>
                 )}
               </div>
 
-              {/* Customer & Payment — exactly 2 rows: Name, then Phone | Payment */}
+              {/* Customer & Payment -exactly 2 rows: Name, then Phone | Payment */}
               <div className="space-y-3 p-3 sm:p-4 bg-gray-50 rounded-lg">
                 <h3 className="text-sm font-semibold">Customer & Payment</h3>
 
@@ -2059,11 +2273,11 @@ Thank you for your purchase!
               {totalPages > 1 && (
                 <div className="mt-8">
                   <Pagination>
-                    <PaginationContent>
+                    <PaginationContent className="flex-wrap">
                       <PaginationItem>
                         <PaginationPrevious
                           onClick={() => handlePageChange(currentPage - 1)}
-                          className={`${currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"} text-lg py-2 px-4`}
+                          className={`${currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"} text-sm sm:text-lg py-1 px-2 sm:px-4`}
                         />
                       </PaginationItem>
 
@@ -2072,7 +2286,7 @@ Thank you for your purchase!
                         <PaginationLink
                           onClick={() => handlePageChange(1)}
                           isActive={currentPage === 1}
-                          className="text-lg py-2 px-4"
+                          className="text-sm sm:text-lg py-1 px-2 sm:px-4"
                         >
                           1
                         </PaginationLink>
@@ -2094,7 +2308,7 @@ Thank you for your purchase!
                               <PaginationLink
                                 onClick={() => handlePageChange(page)}
                                 isActive={currentPage === page}
-                                className="text-lg py-2 px-4"
+                                className="text-sm sm:text-lg py-1 px-2 sm:px-4"
                               >
                                 {page}
                               </PaginationLink>
@@ -2117,7 +2331,7 @@ Thank you for your purchase!
                           <PaginationLink
                             onClick={() => handlePageChange(totalPages)}
                             isActive={currentPage === totalPages}
-                            className="text-lg py-2 px-4"
+                            className="text-sm sm:text-lg py-1 px-2 sm:px-4"
                           >
                             {totalPages}
                           </PaginationLink>
@@ -2127,7 +2341,7 @@ Thank you for your purchase!
                       <PaginationItem>
                         <PaginationNext
                           onClick={() => handlePageChange(currentPage + 1)}
-                          className={`${currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"} text-lg py-2 px-4`}
+                          className={`${currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"} text-sm sm:text-lg py-1 px-2 sm:px-4`}
                         />
                       </PaginationItem>
                     </PaginationContent>
@@ -2139,7 +2353,7 @@ Thank you for your purchase!
         </CardContent>
       </Card>
 
-      {/* ── Edit Sale Dialog — full edit (cart + customer + payment) ── */}
+      {/* ── Edit Sale Dialog -full edit (cart + customer + payment) ── */}
       <Dialog
         open={isEditOpen}
         onOpenChange={(open) => {
@@ -2482,7 +2696,7 @@ Thank you for your purchase!
                 </DialogHeader>
 
                 <div className="space-y-4 mt-3">
-                  {/* Identity strip — customer + payment + total */}
+                  {/* Identity strip -customer + payment + total */}
                   <div className="rounded-md border bg-muted/30 p-4">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="min-w-0 flex-1">
@@ -2512,7 +2726,7 @@ Thank you for your purchase!
                     </div>
                   </div>
 
-                  {/* Info grid — 3 cells */}
+                  {/* Info grid -3 cells */}
                   <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     <div className="rounded-md border p-3">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Date</p>

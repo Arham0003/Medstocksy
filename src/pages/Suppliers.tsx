@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -83,6 +83,9 @@ export default function Suppliers() {
 
   // URL-persisted view state
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  // Set when the user came here mid product-entry to register a supplier.
+  const returnToProducts = searchParams.get('from') === 'add-products' || searchParams.get('from') === 'bulk-import';
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -546,6 +549,20 @@ export default function Suppliers() {
 
   return (
     <div className="space-y-8">
+      {returnToProducts && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <p className="text-sm text-blue-800">
+            Add the new supplier here, then head back — your product entry was saved and will be restored.
+          </p>
+          <Button
+            size="sm"
+            onClick={() => navigate('/products')}
+            className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            ← Back to products
+          </Button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -1177,8 +1194,8 @@ export default function Suppliers() {
                 {/* === Band 2: Quick actions === */}
                 {actionCount > 0 && (
                   <div
-                    className="grid gap-2"
-                    style={{ gridTemplateColumns: `repeat(${Math.min(actionCount, 4)}, minmax(0, 1fr))` }}
+                    className="grid gap-2 grid-cols-2 sm:[grid-template-columns:var(--action-cols)]"
+                    style={{ ['--action-cols' as string]: `repeat(${Math.min(actionCount, 4)}, minmax(0, 1fr))` }}
                   >
                     {selectedSupplier.phone && (
                       <a

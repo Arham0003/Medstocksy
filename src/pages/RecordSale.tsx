@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, useRef, KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -184,6 +185,8 @@ export default function RecordSale({
   const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
   const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>(hydrated?.prescriptionMonths ?? '');
   const [monthsTaken, setMonthsTaken] = useState<number | ''>(hydrated?.monthsTaken ?? 1);
+  // When set, this bill is being EDITED — save replaces the finalized bill of this id.
+  const [editBillId] = useState<string | null>(() => hydrated?.editBillId ?? null);
 
   // ─── CRM Retrieve Dialog ─────────────────────────────────────────────────
   type CrmField = 'name' | 'address' | 'doctor' | 'prescription_months' | 'months_taken';
@@ -231,6 +234,16 @@ export default function RecordSale({
   // ─── Product search state per row  ─────────────────────────────────────
   const [activeSearchRow, setActiveSearchRow] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchHighlight, setSearchHighlight] = useState(0);
+  const [searchRect, setSearchRect] = useState<DOMRect | null>(null);
+  const [infoProduct, setInfoProduct] = useState<Product | null>(null); // F1 → full product info
+  const [infoRow, setInfoRow] = useState<number | null>(null); // which row the info was opened from
+  const finalizeRef = useRef<HTMLButtonElement>(null);
+  // Live mirrors so the capture-phase Escape handler always sees current state.
+  const infoProductRef = useRef<Product | null>(null);
+  const activeSearchRowRef = useRef<number | null>(null);
+  infoProductRef.current = infoProduct;
+  activeSearchRowRef.current = activeSearchRow;
 
   // ─── UI state ───────────────────────────────────────────────────────────
   const [showShortcuts, setShowShortcuts] = useState(true);
@@ -243,6 +256,11 @@ export default function RecordSale({
 
   // ─── Refs for tabbing ──────────────────────────────────────────────────
   const phoneRef = useRef<HTMLInputElement>(null);
+  const doctorRef = useRef<HTMLInputElement>(null);
+  const addressRef = useRef<HTMLInputElement>(null);
+  const dateRef = useRef<HTMLInputElement>(null);
+  const prescRef = useRef<HTMLInputElement>(null);
+  const takenRef = useRef<HTMLInputElement>(null);
   const masterSearchRef = useRef<HTMLInputElement>(null);
   const masterDropdownRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, Map<string, HTMLInputElement>>>(new Map());
@@ -443,6 +461,19 @@ export default function RecordSale({
     else if (e.key === 'Escape') { setCustomerDropdownOpen(false); }
   }, [customerDropdownOpen, customerSuggestions, customerHighlight, selectCustomer]);
 
+  // Enter in a patient-detail field → focus the next field (or the master search).
+  const enterTo = (ref: React.RefObject<HTMLElement | null>) =>
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      ref.current?.focus();
+      (ref.current as HTMLInputElement | null)?.select?.();
+    };
+
+  // Modern boxed input used across the patient-detail block.
+  const patientFieldCls =
+    'w-full h-8 rounded-md border border-emerald-200 bg-white px-2 text-sm font-medium text-emerald-900 placeholder-emerald-400/60 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-colors';
+
   // ─── Apply selected CRM fields ──────────────────────────────────────────
   const applyCrmFields = useCallback(() => {
     if (!crmFoundData) return;
@@ -610,8 +641,74 @@ export default function RecordSale({
     });
     setActiveSearchRow(null);
     setSearchTerm('');
-    setTimeout(() => focusField(rows[rowIndex]?.uid || '', 'qty'), 80);
+    setSearchRect(null);
+    const uid = rows[rowIndex]?.uid;
+    // Always keep one empty row at the end so the "next medicine" search drops to
+    // the next line automatically after a product is added.
+    setRows(prev => {
+      const last = prev[prev.length - 1];
+      return last && last.productId ? [...prev, EMPTY_ROW()] : prev;
+    });
+    // Move the cursor to the first editable field of this row (Batch → Qty → …).
+    setTimeout(() => focusField(uid || '', 'batch'), 90);
   }, [updateRow, settings, rows, focusField]);
+
+  // ─── Inline product search (inside each grid row) ─────────────────────────
+  const handleProductSearchKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number) => {
+    const list = filteredProducts.slice(0, 20);
+    if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setSearchHighlight(h => Math.min(h + 1, Math.max(0, list.length - 1))); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setSearchHighlight(h => Math.max(h - 1, 0)); return; }
+    // F1 → show full info for the highlighted product
+    if (e.key === 'F1') {
+      e.preventDefault();
+      const p = list[searchHighlight] || list[0];
+      if (p) { setInfoProduct(p); setInfoRow(rowIndex); }
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (searchTerm.trim() && list.length) {
+        selectProduct(rowIndex, list[searchHighlight] || list[0]);
+      } else {
+        // Nothing typed → go straight to Finalize
+        setActiveSearchRow(null);
+        setSearchRect(null);
+        finalizeRef.current?.focus();
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      // If the info popup is open, close only that; otherwise close the search dropdown.
+      if (infoProduct) { setInfoProduct(null); setInfoRow(null); }
+      else { setSearchTerm(''); setActiveSearchRow(null); setSearchRect(null); }
+    }
+  }, [filteredProducts, searchTerm, searchHighlight, selectProduct, infoProduct]);
+
+  // Focus the search cell of the first row without a product (add one if needed).
+  const focusFirstEmptyProduct = useCallback(() => {
+    const idx = rows.findIndex(r => !r.productId);
+    if (idx >= 0) { setActiveSearchRow(idx); focusField(rows[idx].uid, 'product'); }
+    else { addNewRow(); }
+  }, [rows, focusField, addNewRow]);
+
+  // Measure the active search input right before paint (fresh, never stale) and
+  // keep it aligned while scrolling/resizing.
+  useLayoutEffect(() => {
+    if (activeSearchRow === null) { setSearchRect(null); return; }
+    const measure = () => {
+      const el = rowRefs.current.get(rows[activeSearchRow]?.uid || '')?.get('product');
+      if (el) setSearchRect(el.getBoundingClientRect());
+    };
+    measure();
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [activeSearchRow, searchTerm, rows]);
 
   // ─── Add product via master search bar ───────────────────────────────────
   const addProductFromMasterSearch = useCallback((product: Product) => {
@@ -762,6 +859,7 @@ export default function RecordSale({
       localStorage.setItem(BILL_DATA_PREFIX + persistKey, JSON.stringify({
         customerName, customerPhone, customerAddress, doctorName, billDate,
         prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
+        editBillId,
       }));
     } catch { /* ignore quota errors */ }
   }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
@@ -824,7 +922,8 @@ export default function RecordSale({
     setIsSaving(true);
 
     try {
-      const billId = crypto.randomUUID();
+      // Editing an existing bill → reuse its id (same invoice); otherwise a new bill.
+      const billId = editBillId || crypto.randomUUID();
       const isGstInclusive = settings?.gst_type === 'inclusive';
 
       // receivedNum = how much the customer actually paid right now (can be 0 for pure credit,
@@ -901,6 +1000,27 @@ export default function RecordSale({
         };
       });
 
+      // Editing: un-apply the original bill first (restore its stock, then delete its
+      // rows) so re-inserting below re-deducts cleanly. The stock trigger only fires
+      // on INSERT, so the restore is done manually — mirroring the item-delete flow.
+      if (editBillId) {
+        const { data: orig, error: origErr } = await (supabase.from('sales') as any)
+          .select('product_id, quantity, sub_qty, pcs_per_unit')
+          .eq('bill_id', editBillId);
+        if (origErr) throw origErr;
+        for (const it of (orig || []) as any[]) {
+          const q = Number(it.quantity) || 0;
+          const sq = Number(it.sub_qty) || 0;
+          const pcs = Number(it.pcs_per_unit) || 0;
+          const restore = sq && pcs > 0 ? q + sq / pcs : q;
+          const { data: prod } = await (supabase.from('products') as any).select('quantity').eq('id', it.product_id).single();
+          const cur = Number((prod as any)?.quantity) || 0;
+          await (supabase.from('products') as any).update({ quantity: cur + restore }).eq('id', it.product_id);
+        }
+        const { error: delErr } = await (supabase.from('sales') as any).delete().eq('bill_id', editBillId);
+        if (delErr) throw delErr;
+      }
+
       let { error } = await supabase.from('sales').insert(salesToInsert);
 
       if (error && error.message?.includes('column')) {
@@ -935,7 +1055,7 @@ export default function RecordSale({
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey]);
+  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
   useEffect(() => {
@@ -953,15 +1073,18 @@ export default function RecordSale({
         handleSave();
         return;
       }
-      // Escape = go back
+      // Escape: close any open popup first; only leave the screen when none are open.
       if (e.key === 'Escape') {
+        if (infoProduct) { e.preventDefault(); setInfoProduct(null); setInfoRow(null); return; }
+        if (activeSearchRow !== null) { e.preventDefault(); setActiveSearchRow(null); setSearchTerm(''); setSearchRect(null); return; }
+        if (customerDropdownOpen) { e.preventDefault(); setCustomerDropdownOpen(false); return; }
         navigate('/sales');
         return;
       }
-      // F2 = focus master search
+      // F2 = jump to the first empty row's product search
       if (e.key === 'F2') {
         e.preventDefault();
-        masterSearchRef.current?.focus();
+        focusFirstEmptyProduct();
         return;
       }
       // Ctrl+F = jump to phone
@@ -1019,7 +1142,24 @@ export default function RecordSale({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleSave, navigate, rows, focusField, clearRow, removeRow, isActive]);
+  }, [handleSave, navigate, rows, focusField, clearRow, removeRow, isActive, focusFirstEmptyProduct, infoProduct, activeSearchRow, customerDropdownOpen]);
+
+  // Capture-phase Escape: runs before any field/handler so an open popup ALWAYS
+  // closes first (and only the popup) — even while typing in the product search.
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (infoProductRef.current) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        setInfoProduct(null); setInfoRow(null);
+      } else if (activeSearchRowRef.current !== null) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        setActiveSearchRow(null); setSearchTerm(''); setSearchRect(null);
+      }
+    };
+    window.addEventListener('keydown', onEsc, true); // capture phase
+    return () => window.removeEventListener('keydown', onEsc, true);
+  }, []);
 
   // ─── Tab flow handler for row fields (Marg column order) ──────────────
   const TAB_FIELDS = ['batch', 'qty', 'subQty', 'discount', 'rate'];
@@ -1061,13 +1201,19 @@ export default function RecordSale({
       return;
     }
 
-    // Enter on the last field (rate) = jump back to the product search
-    if (e.key === 'Enter' && (field === 'rate' || field === 'discount')) {
+    // Enter: advance to the next field in the row; after the last field (rate),
+    // jump to the next row's product search (or open a fresh row).
+    if (e.key === 'Enter') {
       e.preventDefault();
-      setMasterDropdownOpen(false);
-      setTimeout(() => masterSearchRef.current?.focus(), 50);
+      if (currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
+        focusField(row.uid, TAB_FIELDS[currentIdx + 1]);
+      } else {
+        const nextRow = rows[rowIndex + 1];
+        if (nextRow) { setActiveSearchRow(rowIndex + 1); focusField(nextRow.uid, 'product'); }
+        else { addNewRow(); }
+      }
     }
-  }, [rows, focusField]);
+  }, [rows, focusField, addNewRow]);
 
   // ─── ↑ / ↓ : walk every focusable element on the page (top-to-bottom) ────
   // Vertical keyboard navigation across the whole billing screen — customer
@@ -1226,87 +1372,29 @@ export default function RecordSale({
       <div className="bg-white border-b border-green-100 px-3 py-1.5 shrink-0 z-30">
         <div className="flex flex-col gap-1.5 max-w-[1700px] mx-auto">
           
-          {/* Row 1: Product Search (Large) */}
-          <div className="relative" ref={masterDropdownRef}>
-            <div className={`flex items-center bg-white border transition-all rounded-xl overflow-hidden ${masterDropdownOpen ? 'border-green-500 ring-2 ring-green-100' : 'border-green-200 hover:border-green-300'}`}>
-              <div className="pl-4 pr-1 text-emerald-500">
-                <Search className="h-5 w-5" />
-              </div>
-              <input
-                ref={masterSearchRef}
-                value={masterSearch}
-                onChange={e => {
-                  setMasterSearch(e.target.value);
-                  setMasterDropdownOpen(true);
-                  setMasterHighlight(0);
-                }}
-                onFocus={() => setMasterDropdownOpen(true)}
-                onKeyDown={handleMasterSearchKeyDown}
-                placeholder="Search Medicine... (F2)"
-                className="w-full h-9 bg-transparent outline-none text-sm text-gray-800 placeholder-gray-400"
-              />
-              {masterSearch && (
-                <button type="button" onClick={() => { setMasterSearch(''); masterSearchRef.current?.focus(); }} className="px-4 text-gray-400 hover:text-emerald-500 transition-colors">
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
+          {/* Product search now lives inline in each grid row's Product cell.
+              Press F2 (or Enter from the last patient field) to jump there. */}
 
-            {/* Dropdown Results (Floating) */}
-            {masterDropdownOpen && masterSearch.trim() !== '' && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.2)] border border-emerald-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
-                <div className="max-h-[350px] overflow-y-auto py-1">
-                  {masterFilteredProducts.length > 0 ? (
-                    masterFilteredProducts.map((p, idx) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        data-item
-                        onClick={() => addProductFromMasterSearch(p)}
-                        onMouseEnter={() => setMasterHighlight(idx)}
-                        className={`w-full text-left px-5 py-2.5 flex items-center justify-between border-b border-gray-50 last:border-0 transition-colors ${masterHighlight === idx ? 'bg-emerald-50' : 'hover:bg-gray-50/50'}`}
-                      >
-                        <div className="flex flex-col">
-                          <p className={`font-bold text-sm ${masterHighlight === idx ? 'text-emerald-700' : 'text-gray-800'}`}>{p.name}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <Badge variant="outline" className="text-[10px] h-4 bg-emerald-50 text-emerald-600 border-emerald-100">Stock: {p.quantity}</Badge>
-                            {p.hsn_code && <span className="text-[10px] text-gray-500 font-medium">HSN: {p.hsn_code}</span>}
-                            {p.category && <span className="text-[10px] text-indigo-500 font-medium px-1 bg-indigo-50 rounded">{p.category}</span>}
-                            <span className="text-[10px] text-gray-400">U: {p.pcs_per_unit || 10}</span>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-bold text-emerald-600 text-sm">₹{p.selling_price.toFixed(2)}</p>
-                        </div>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="px-5 py-8 text-center text-gray-400 text-sm font-medium">
-                      No medicines found matching "{masterSearch}"
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Row 2: Patient details — Marg-style labelled block (2 lines) */}
-          <div className="bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-1">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-0.5">
+          {/* Row 2: Patient details — modern boxed fields, Enter moves to the next */}
+          <div className="bg-white border border-emerald-200 rounded-xl px-3 py-2.5 shadow-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
 
               {/* Patient (with existing-customer autocomplete) */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Patient</span>
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Patient</span>
                 <div className="relative flex-1 min-w-0">
                   <input
                     value={customerName}
                     onChange={e => handleNameChange(e.target.value)}
-                    onKeyDown={handleNameKeyDown}
+                    onKeyDown={e => {
+                      if (customerDropdownOpen && customerSuggestions.length) { handleNameKeyDown(e); return; }
+                      enterTo(phoneRef)(e);
+                    }}
                     onFocus={() => { if (customerSuggestions.length) setCustomerDropdownOpen(true); }}
                     onBlur={() => setTimeout(() => setCustomerDropdownOpen(false), 150)}
                     placeholder="Name"
                     autoComplete="off"
-                    className="w-full h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 placeholder-emerald-400/50"
+                    className={patientFieldCls}
                   />
                   {customerDropdownOpen && customerSuggestions.length > 0 && (
                     <div className="absolute top-full left-0 mt-1 min-w-[240px] w-max max-w-[320px] bg-white rounded-lg shadow-[0_12px_32px_rgba(0,0,0,0.15)] border border-emerald-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
@@ -1334,31 +1422,9 @@ export default function RecordSale({
                 </div>
               </div>
 
-              {/* Date */}
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Date</span>
-                <input
-                  type="date"
-                  value={billDate}
-                  onChange={e => setBillDate(e.target.value)}
-                  className="flex-1 min-w-0 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 appearance-none"
-                />
-              </div>
-
-              {/* Doctor */}
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Doctor</span>
-                <input
-                  value={doctorName}
-                  onChange={e => setDoctorName(e.target.value)}
-                  placeholder="Name"
-                  className="flex-1 min-w-0 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 placeholder-emerald-400/50"
-                />
-              </div>
-
               {/* Phone */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Phone</span>
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Phone</span>
                 <input
                   ref={phoneRef}
                   value={customerPhone}
@@ -1372,16 +1438,57 @@ export default function RecordSale({
                     }
                     setCustomerPhone(value);
                   }}
+                  onKeyDown={enterTo(doctorRef)}
                   placeholder="Mobile no."
-                  className="flex-1 min-w-0 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-medium text-emerald-900 placeholder-emerald-400/50"
+                  className={patientFieldCls}
                 />
               </div>
 
-              {/* Prescription months / taken */}
-              <div className="flex items-center gap-2 min-w-0 md:col-span-2">
-                <span className="w-[62px] shrink-0 text-xs font-semibold text-emerald-700">Months</span>
-                <div className="flex items-center gap-2 flex-1 min-w-0">
+              {/* Doctor */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Doctor</span>
+                <input
+                  ref={doctorRef}
+                  value={doctorName}
+                  onChange={e => setDoctorName(e.target.value)}
+                  onKeyDown={enterTo(addressRef)}
+                  placeholder="Name"
+                  className={patientFieldCls}
+                />
+              </div>
+
+              {/* Address (single column so Months fits on this row too) */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Address</span>
+                <input
+                  ref={addressRef}
+                  value={customerAddress}
+                  onChange={e => setCustomerAddress(e.target.value)}
+                  onKeyDown={enterTo(dateRef)}
+                  placeholder="Area / street"
+                  className={patientFieldCls}
+                />
+              </div>
+
+              {/* Date */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Date</span>
+                <input
+                  ref={dateRef}
+                  type="date"
+                  value={billDate}
+                  onChange={e => setBillDate(e.target.value)}
+                  onKeyDown={enterTo(prescRef)}
+                  className={cn(patientFieldCls, 'appearance-none')}
+                />
+              </div>
+
+              {/* Prescription months / taken — compact, same row as Address & Date */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Months</span>
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
                   <input
+                    ref={prescRef}
                     type="number"
                     min="0"
                     value={prescriptionMonths}
@@ -1390,19 +1497,24 @@ export default function RecordSale({
                       setPrescriptionMonths(val);
                       if (val !== '' && (monthsTaken === '' || monthsTaken === 0)) setMonthsTaken(1);
                     }}
+                    onKeyDown={enterTo(takenRef)}
                     placeholder="0"
-                    className="w-12 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-bold text-center text-emerald-900"
+                    title="Prescribed months"
+                    className={cn(patientFieldCls, 'w-11 px-1 text-center font-bold')}
                   />
-                  <span className="text-[10px] font-semibold text-emerald-500 uppercase">Presc.</span>
+                  <span className="text-[9px] font-semibold text-emerald-500 uppercase">Presc</span>
                   <input
+                    ref={takenRef}
                     type="number"
                     min="0"
                     value={monthsTaken}
                     onChange={e => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); focusFirstEmptyProduct(); } }}
                     placeholder="0"
-                    className="w-12 h-7 bg-transparent border-b border-emerald-200 focus:border-emerald-500 outline-none px-1 text-sm font-bold text-center text-emerald-900"
+                    title="Months taken"
+                    className={cn(patientFieldCls, 'w-11 px-1 text-center font-bold')}
                   />
-                  <span className="text-[10px] font-semibold text-emerald-500 uppercase">Taken</span>
+                  <span className="text-[9px] font-semibold text-emerald-500 uppercase">Taken</span>
                 </div>
               </div>
 
@@ -1417,9 +1529,9 @@ export default function RecordSale({
         {/* Marg-style dense billing grid — one responsive table for every screen.
             On phones the fluid fr columns shrink to fill the full width with no
             horizontal scroll; from lg up it opens out to the spacious desktop size. */}
-        <div className="flex w-full lg:min-w-[1100px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
+        <div className="billing-grid flex w-full lg:min-w-[1100px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
           {/* Table header — Marg columns: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT */}
-          <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[9px] lg:text-[11px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
+          <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[10px] lg:text-[12px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
             <div className="pl-2 lg:pl-4 truncate">Product</div>
             <div className="px-0.5 lg:px-1 text-center truncate">Pack</div>
             <div className="px-0.5 lg:px-1 text-center truncate">Batch</div>
@@ -1437,28 +1549,35 @@ export default function RecordSale({
               <div
                 key={row.uid}
                 data-row-uid={row.uid}
-                className={`group/row group transition-colors duration-100 focus-within:bg-emerald-600 focus-within:shadow-md ${row.productId ? 'bg-white hover:bg-green-50/40' : 'bg-transparent'}`}
+                className={`group/row group transition-colors duration-100 focus-within:bg-emerald-50 focus-within:shadow-sm ${row.productId ? 'bg-white hover:bg-green-50/40' : 'bg-transparent'}`}
               >
-                <div className={`grid ${GRID_COLS} items-center h-9 overflow-hidden divide-x divide-green-50 group-focus-within/row:divide-emerald-500/40`}>
-                  {/* PRODUCT */}
+                <div className={`grid ${GRID_COLS} items-center h-9 overflow-hidden divide-x divide-green-50 group-focus-within/row:divide-emerald-200`}>
+                  {/* PRODUCT — inline search when empty, name once selected */}
                   <div className="pl-2 lg:pl-4 relative flex items-center min-w-0">
                     {row.productId ? (
                       <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 pointer-events-none">
-                        <span className="text-xs lg:text-sm font-semibold text-gray-800 truncate group-focus-within/row:text-white">{row.productName}</span>
-                        <span className="text-[10px] font-medium text-emerald-600 shrink-0 group-focus-within/row:text-emerald-50">S:{row.stock}</span>
-                        {row.expiry && <span className="hidden lg:inline text-[9px] text-gray-400 shrink-0 group-focus-within/row:text-emerald-100/70">Exp:{row.expiry}</span>}
+                        <span className="text-sm lg:text-[15px] font-semibold text-gray-800 truncate">{row.productName}</span>
+                        <span className="text-[10px] font-medium text-emerald-600 shrink-0">S:{row.stock}</span>
+                        {row.expiry && <span className="hidden lg:inline text-[9px] text-gray-400 shrink-0">Exp:{row.expiry}</span>}
                       </div>
                     ) : (
-                      <div className="flex items-center gap-3 py-1 text-[11px] text-emerald-300 pointer-events-none select-none">
-                        <div className="w-4 h-4 border-2 border-dashed border-emerald-100 rounded-full"></div>
-                        <span>Next Medicine (F2)...</span>
-                      </div>
+                      <input
+                        ref={el => setFieldRef(row.uid, 'product', el)}
+                        value={activeSearchRow === idx ? searchTerm : ''}
+                        onFocus={() => { setActiveSearchRow(idx); setSearchTerm(''); setSearchHighlight(0); }}
+                        onChange={e => { setActiveSearchRow(idx); setSearchTerm(e.target.value); setSearchHighlight(0); }}
+                        onKeyDown={e => handleProductSearchKeyDown(e, idx)}
+                        onBlur={() => setTimeout(() => { setActiveSearchRow(cur => (cur === idx ? null : cur)); }, 150)}
+                        placeholder={idx === 0 ? 'Search medicine… (F2)' : 'Next medicine…'}
+                        autoComplete="off"
+                        className="w-full h-8 bg-transparent outline-none px-1 text-sm lg:text-[15px] font-medium text-gray-800 placeholder-emerald-300 rounded-md focus:bg-indigo-100 focus:text-gray-900"
+                      />
                     )}
                   </div>
 
                   {/* PACK (units per pack — read only) */}
                   <div className="px-1 text-center">
-                    <span className="text-[12px] font-medium text-gray-500 group-focus-within/row:text-white">
+                    <span className="text-sm font-medium text-gray-500">
                       {row.productId ? (row.pcsPerUnit || '—') : ''}
                     </span>
                   </div>
@@ -1471,7 +1590,7 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { batch: e.target.value })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
                       disabled={!row.productId}
-                      className="h-8 text-[12px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
+                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
                     />
                   </div>
 
@@ -1485,7 +1604,7 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { qty: parseInt(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'qty')}
                       disabled={!row.productId}
-                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
+                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
                     />
                   </div>
 
@@ -1500,12 +1619,12 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
                       disabled={!row.productId}
                       placeholder="—"
-                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-all shadow-none text-green-700"
+                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-all shadow-none text-green-700"
                     />
                   </div>
 
-                  {/* DISC% */}
-                  <div className="px-0.5">
+                  {/* DISC% (always a percentage) */}
+                  <div className="px-0.5 relative">
                     <Input
                       ref={el => setFieldRef(row.uid, 'discount', el)}
                       type="number"
@@ -1515,8 +1634,11 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'discount')}
                       disabled={!row.productId}
                       placeholder="0"
-                      className="h-8 text-sm px-1 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-red-400 transition-all shadow-none text-red-500 text-center"
+                      className="h-8 text-[15px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-red-400 transition-all shadow-none text-red-500 text-center"
                     />
+                    {row.productId && (
+                      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-red-400/70">%</span>
+                    )}
                   </div>
 
                   {/* M.R.P. (rate) */}
@@ -1529,13 +1651,13 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { rate: parseFloat(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'rate')}
                       disabled={!row.productId}
-                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-white/20 group-focus-within/row:text-white group-focus-within/row:placeholder-white/60 group-focus-within/row:caret-white focus:border-emerald-500 transition-all shadow-none text-gray-900"
+                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-emerald-500 transition-all shadow-none text-gray-900"
                     />
                   </div>
 
                   {/* AMOUNT */}
                   <div className="pr-2 lg:pr-6 text-right">
-                    <span className={`text-sm lg:text-base font-semibold group-focus-within/row:text-white ${row.amount > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
+                    <span className={`text-base lg:text-lg font-semibold ${row.amount > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
                       {row.amount > 0 ? row.amount.toFixed(2) : '0.00'}
                     </span>
                   </div>
@@ -1545,7 +1667,7 @@ export default function RecordSale({
                     {row.productId && (
                       <button
                         type="button"
-                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 group-focus-within/row:text-white/70 group-focus-within/row:opacity-100"
+                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 group-focus-within/row:opacity-100"
                         onClick={() => removeRow(idx)}
                         title="Remove row (Alt+Delete)"
                       >
@@ -1566,6 +1688,120 @@ export default function RecordSale({
           </div>
         </div>
       </div>
+
+      {/* Floating results for the in-row product search (portal → never clipped) */}
+      {activeSearchRow !== null && searchTerm.trim() !== '' && searchRect && createPortal(
+        (() => {
+          const list = filteredProducts.slice(0, 20);
+          const width = Math.min(Math.max(searchRect.width, 320), window.innerWidth - 16);
+          const left = Math.max(8, Math.min(searchRect.left, window.innerWidth - width - 8));
+          const gap = 4;
+          const maxH = 320;
+          // Open below the field by default; flip above only if there isn't room.
+          const spaceBelow = window.innerHeight - searchRect.bottom;
+          const openUp = spaceBelow < 220 && searchRect.top > spaceBelow;
+          const pos = openUp
+            ? { bottom: window.innerHeight - searchRect.top + gap }
+            : { top: searchRect.bottom + gap };
+          return (
+            <div
+              style={{ position: 'fixed', left, width, ...pos, maxHeight: maxH }}
+              className="z-[200] bg-white rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.25)] border border-emerald-100 overflow-hidden flex flex-col"
+              onMouseDown={e => e.preventDefault()} /* keep the input focused so click registers */
+            >
+              <div className="flex-1 overflow-y-auto py-1">
+                {list.length > 0 ? list.map((p, i) => (
+                  <div
+                    key={p.id}
+                    onMouseEnter={() => setSearchHighlight(i)}
+                    className={`group/item w-full px-4 py-2 flex items-center justify-between border-b border-gray-50 last:border-0 transition-colors ${searchHighlight === i ? 'bg-emerald-50' : 'hover:bg-gray-50/50'}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectProduct(activeSearchRow as number, p)}
+                      className="flex flex-col min-w-0 text-left flex-1"
+                    >
+                      <p className={`font-bold text-sm truncate ${searchHighlight === i ? 'text-emerald-700' : 'text-gray-800'}`}>{p.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <Badge variant="outline" className="text-[10px] h-4 bg-emerald-50 text-emerald-600 border-emerald-100">Stock: {p.quantity}</Badge>
+                        {p.hsn_code && <span className="text-[10px] text-gray-500 font-medium">HSN: {p.hsn_code}</span>}
+                        <span className="text-[10px] text-gray-400">U: {p.pcs_per_unit || 10}</span>
+                      </div>
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                      <span className="font-bold text-emerald-600 text-sm">₹{p.selling_price.toFixed(2)}</span>
+                      <button
+                        type="button"
+                        title="View full info (F1)"
+                        onClick={() => { setInfoProduct(p); setInfoRow(activeSearchRow); }}
+                        className="h-6 w-6 inline-flex items-center justify-center rounded-full text-indigo-500 hover:bg-indigo-50"
+                      >
+                        <HelpCircle className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="px-4 py-6 text-center text-gray-400 text-sm font-medium">No medicines found matching "{searchTerm}"</div>
+                )}
+              </div>
+              <div className="px-4 py-1.5 border-t border-gray-100 bg-slate-50 text-[10px] text-gray-500 flex items-center justify-between">
+                <span><kbd className="px-1 rounded border bg-white">↵</kbd> select · <kbd className="px-1 rounded border bg-white">F1</kbd> full info</span>
+                <span><kbd className="px-1 rounded border bg-white">↑↓</kbd> move</span>
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
+      )}
+
+      {/* Full product info (opened with F1 or the ⓘ button in the search results) */}
+      {infoProduct && createPortal(
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setInfoProduct(null)}
+        >
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-bold text-base truncate">{infoProduct.name}</p>
+                <p className="text-[11px] text-emerald-50">Product details</p>
+              </div>
+              <button type="button" onClick={() => setInfoProduct(null)} className="p-1 rounded-full hover:bg-white/20 shrink-0">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-5 grid grid-cols-2 gap-x-4 gap-y-3">
+              {([
+                ['Stock', String(infoProduct.quantity)],
+                ['M.R.P.', `₹${infoProduct.selling_price.toFixed(2)}`],
+                ['GST', infoProduct.gst != null ? `${infoProduct.gst}%` : '—'],
+                ['Pcs / Unit', String(infoProduct.pcs_per_unit || 10)],
+                ['HSN', infoProduct.hsn_code || '—'],
+                ['Batch', infoProduct.batch_number || '—'],
+                ['Expiry', infoProduct.expiry_date ? infoProduct.expiry_date.substring(0, 7) : '—'],
+                ['Category', infoProduct.category || '—'],
+                ['Manufacturer', infoProduct.manufacturer || '—'],
+              ] as [string, string][]).map(([label, value], i, arr) => (
+                <div key={label} className={i === arr.length - 1 ? 'col-span-2' : ''}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+                  <p className="text-sm font-medium text-gray-800 break-words">{value}</p>
+                </div>
+              ))}
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <Button
+                type="button"
+                onClick={() => { if (infoRow !== null) selectProduct(infoRow, infoProduct); setInfoProduct(null); setInfoRow(null); }}
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                Add to bill
+              </Button>
+              <Button type="button" variant="outline" onClick={() => { setInfoProduct(null); setInfoRow(null); }}>Close</Button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
 
       {/* ══════ ZONE 5: STICKY FOOTER (SLEEK) ══════ */}
@@ -1670,6 +1906,7 @@ export default function RecordSale({
             </div>
 
             <Button
+              ref={finalizeRef}
               type="button"
               onClick={handleSave}
               disabled={isSaving || rows.every(r => !r.productId)}

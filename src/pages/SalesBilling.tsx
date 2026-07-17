@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/db_conn/supabaseClient';
@@ -37,8 +37,10 @@ export default function SalesBilling() {
   const [dataLoading, setDataLoading] = useState(true);
 
   // ─── Tab sessions ────────────────────────────────────────────────────────
-  const { sessions, activeId, setActiveId, addSession, closeSession, updateMeta } = useBillSessions();
+  const { sessions, activeId, setActiveId, addSession, addSessionWithData, closeSession, updateMeta } = useBillSessions();
   const [pendingClose, setPendingClose] = useState<BillSession | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editHandled = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +69,80 @@ export default function SalesBilling() {
     return () => { cancelled = true; };
   }, [profile?.account_id, toast]);
 
-  // (No refresh warning needed — every open bill is saved to localStorage and
+  // ─── Edit a finalized bill: ?edit=<billId> opens it here, pre-filled ───────
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId || editHandled.current || dataLoading) return;
+    editHandled.current = true;
+    (async () => {
+      try {
+        const { data: saleRows, error } = await (supabase.from('sales') as any)
+          .select('*')
+          .eq('bill_id', editId);
+        if (error) throw error;
+        if (!saleRows || saleRows.length === 0) {
+          toast({ variant: 'destructive', title: 'Bill not found', description: 'Could not load this bill for editing.' });
+          return;
+        }
+        const first: any = saleRows[0];
+        const ids = Array.from(new Set(saleRows.map((r: any) => r.product_id)));
+        const { data: prods } = await supabase
+          .from('products')
+          .select('id, name, quantity, selling_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit')
+          .in('id', ids as any);
+        const pmap = new Map((prods || []).map((p: any) => [p.id, p]));
+
+        const rows = saleRows.map((r: any) => {
+          const p: any = pmap.get(r.product_id) || {};
+          return {
+            uid: crypto.randomUUID(),
+            productId: r.product_id,
+            productName: p.name || 'Product',
+            stock: Number(p.quantity) || 0,
+            qty: Number(r.quantity) || 0,
+            subQty: r.sub_qty ?? '',
+            pcsPerUnit: Number(r.pcs_per_unit || p.pcs_per_unit || 10),
+            batch: p.batch_number || '',
+            expiry: p.expiry_date ? String(p.expiry_date).substring(0, 7) : '',
+            hsn: p.hsn_code || '',
+            mrp: Number(p.selling_price ?? r.unit_price ?? 0),
+            rate: Number(r.unit_price) || 0,
+            gst: Number(p.gst ?? 0),
+            discount: Number(r.discount_percentage) || 0,
+            amount: Number(r.total_price) || 0,
+          };
+        });
+
+        const draft = {
+          customerName: first.customer_name === 'Walk-in Customer' ? '' : (first.customer_name || ''),
+          customerPhone: first.customer_phone || '',
+          customerAddress: first.customer_address || '',
+          doctorName: first.doctor_name || '',
+          billDate: first.sale_date || new Date().toISOString().split('T')[0],
+          prescriptionMonths: first.prescription_months ?? '',
+          monthsTaken: first.months_taken ?? 1,
+          rows,
+          paymentMode: first.payment_mode || 'cash',
+          receivedAmount: '',
+          globalDiscount: 0,
+          editBillId: editId,
+        };
+
+        const id = addSessionWithData(draft);
+        if (!id) {
+          toast({ variant: 'destructive', title: 'Close a bill first', description: 'You have the maximum number of bills open.' });
+        }
+      } catch (err: any) {
+        toast({ variant: 'destructive', title: 'Error loading bill', description: err.message });
+      } finally {
+        // Drop the query param so a refresh doesn't re-load it.
+        searchParams.delete('edit');
+        setSearchParams(searchParams, { replace: true });
+      }
+    })();
+  }, [searchParams, setSearchParams, dataLoading, addSessionWithData, toast]);
+
+  // (No refresh warning needed -every open bill is saved to localStorage and
   //  restored automatically, so a refresh or app reopen loses nothing.)
 
   // ─── Handlers ────────────────────────────────────────────────────────────
@@ -136,9 +211,9 @@ export default function SalesBilling() {
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-100">
-      {/* ══════ TAB BAR — browser-style tabs (active tab connects to content below) ══════ */}
+      {/* ══════ TAB BAR -browser-style tabs (active tab connects to content below) ══════ */}
       <div className="shrink-0 flex items-end gap-1 bg-muted px-1.5 pt-1.5 border-b border-border">
-        {/* Tab strip — tabs shrink to fit, no scrollbar */}
+        {/* Tab strip -tabs shrink to fit, no scrollbar */}
         <div role="tablist" aria-label="Open bills" className="flex items-end gap-0.5 overflow-hidden flex-1 min-w-0">
           {sessions.map((s, i) => {
             const isActive = s.id === activeId;
@@ -149,7 +224,7 @@ export default function SalesBilling() {
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={0}
-                title={`${label} — Tab / Shift+Tab to switch bills`}
+                title={`${label} -Tab / Shift+Tab to switch bills`}
                 onClick={() => setActiveId(s.id)}
                 onFocus={() => setActiveId(s.id)}
                 onKeyDown={e => {
@@ -164,7 +239,7 @@ export default function SalesBilling() {
                     : 'bg-transparent text-muted-foreground hover:bg-background/50',
                 )}
               >
-                {/* Bill number — sits where a browser favicon would */}
+                {/* Bill number -sits where a browser favicon would */}
                 <span className={cn('grid place-items-center h-4 w-4 rounded shrink-0 text-[9px] font-bold tabular-nums', isActive ? 'bg-emerald-600 text-white' : 'bg-muted-foreground/15 text-muted-foreground')}>
                   {i + 1}
                 </span>
@@ -181,7 +256,7 @@ export default function SalesBilling() {
                   </span>
                 )}
 
-                {/* Close — always shown on active, on hover otherwise (browser behaviour) */}
+                {/* Close -always shown on active, on hover otherwise (browser behaviour) */}
                 {sessions.length > 1 && (
                   <button
                     type="button"
@@ -200,7 +275,7 @@ export default function SalesBilling() {
             );
           })}
 
-          {/* New tab — matches the tab cells' height, padding, font & radius */}
+          {/* New tab -matches the tab cells' height, padding, font & radius */}
           <button
             type="button"
             onClick={handleAddTab}

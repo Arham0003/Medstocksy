@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft';
 
 interface Product {
   id: string;
@@ -106,7 +107,7 @@ export default function Sales() {
   const [filterPaymentMode, setFilterPaymentMode] = useState('all');
   const [filterDateRange, setFilterDateRange] = useState('all');
 
-  // Edit Sale dialog — full edit: customer info, payment mode, item qty/price/gst, add or remove items
+  // Edit Sale dialog -full edit: customer info, payment mode, item qty/price/gst, add or remove items
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingBillId, setEditingBillId] = useState<string | null>(null);
   const [editingCreatedAt, setEditingCreatedAt] = useState<string | null>(null);
@@ -121,7 +122,7 @@ export default function Sales() {
     sales_id?: string;       // present for existing rows
     product_id: string;
     product_name: string;
-    pcs_per_unit: number;    // strip size — fixed once product is selected
+    pcs_per_unit: number;    // strip size -fixed once product is selected
     quantity: number;        // full units
     sub_qty: number;         // loose pcs
     unit_price: number;
@@ -148,6 +149,49 @@ export default function Sales() {
   const [pcsPerUnitMap, setPcsPerUnitMap] = useState<Record<string, number>>({});
   // Loading state for recording sale
   const [isRecordingSales, setIsRecordingSales] = useState(false);
+
+  // ─── Save / restore the in-progress sale when nipping to Products to add one ───
+  const saveCurrentSaleDraft = () => {
+    saveSaleDraft({
+      selectedProducts,
+      customerName,
+      customerPhone,
+      customerAddress,
+      prescriptionMonths,
+      productPrices,
+      customGstRates,
+      discountPercentage,
+      paymentMode,
+      subQtyMap,
+      pcsPerUnitMap,
+    });
+  };
+
+  const goAddNewProduct = () => {
+    saveCurrentSaleDraft();
+    setIsDialogOpen(false);
+    navigate('/products?from=record-sale');
+  };
+
+  // Restore a saved sale after returning from adding a product.
+  useEffect(() => {
+    const d = loadSaleDraft<any>();
+    if (!d) return;
+    setSelectedProducts(d.selectedProducts ?? []);
+    setCustomerName(d.customerName ?? '');
+    setCustomerPhone(d.customerPhone ?? '');
+    setCustomerAddress(d.customerAddress ?? '');
+    setPrescriptionMonths(d.prescriptionMonths ?? '');
+    setProductPrices(d.productPrices ?? {});
+    setCustomGstRates(d.customGstRates ?? {});
+    setDiscountPercentage(d.discountPercentage ?? 0);
+    setPaymentMode(d.paymentMode ?? 'cash');
+    setSubQtyMap(d.subQtyMap ?? {});
+    setPcsPerUnitMap(d.pcsPerUnitMap ?? {});
+    setIsDialogOpen(true);
+    clearSaleDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -451,7 +495,7 @@ export default function Sales() {
     setPcsPerUnitMap(prev => { const next = { ...prev }; delete next[productId]; return next; });
   };
 
-  // Shared pricing math for a cart line — used by both the desktop card view and
+  // Shared pricing math for a cart line -used by both the desktop card view and
   // the mobile spreadsheet table so the two never diverge.
   const computeCartLine = (item: { id: string; quantity: number }) => {
     const product = products.find(p => p.id === item.id);
@@ -853,8 +897,8 @@ export default function Sales() {
     return null;
   };
   const lockReasonText = (r: LockReason): string => {
-    if (r === 'printed') return 'Locked — bill has been printed';
-    if (r === 'expired') return `Locked — older than ${EDIT_WINDOW_MINUTES} min`;
+    if (r === 'printed') return 'Locked -bill has been printed';
+    if (r === 'expired') return `Locked -older than ${EDIT_WINDOW_MINUTES} min`;
     return '';
   };
 
@@ -869,12 +913,12 @@ export default function Sales() {
         .eq('bill_id', billId)
         .is('printed_at', null);
     } catch {
-      // ignore — column may not exist yet
+      // ignore -column may not exist yet
     }
     navigate(`/print-bill/${billId}`);
   };
 
-  // Open edit dialog for a recorded sale — full edit (items + customer + payment)
+  // Open edit dialog for a recorded sale -full edit (items + customer + payment)
   const openEditSale = (group: GroupedTransaction) => {
     const reason = getLockReason(group);
     if (reason) {
@@ -1231,7 +1275,7 @@ Thank you for your purchase!
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSale} className="space-y-4 sm:space-y-6">
-              {/* Top: persistent product search — adds to cart on click (no separate "Add Product" form) */}
+              {/* Top: persistent product search -adds to cart on click (no separate "Add Product" form) */}
               <div className="space-y-2">
                 <Label className="text-sm font-semibold flex items-center gap-2">
                   <Search className="h-3.5 w-3.5" />
@@ -1265,7 +1309,7 @@ Thank you for your purchase!
                             onClick={() => {
                               if (outOfStock) return;
                               if (alreadyInCart) {
-                                // Already in cart — just clear search and let user edit it inline
+                                // Already in cart -just clear search and let user edit it inline
                                 setProductSearchTerm('');
                                 return;
                               }
@@ -1293,15 +1337,24 @@ Thank you for your purchase!
                         );
                       })
                     ) : (
-                      <div className="py-4 text-center text-muted-foreground text-sm">
+                      <div className="py-3 text-center text-muted-foreground text-sm">
                         No products found
                       </div>
                     )}
+                    {/* Add a brand-new product without losing this sale */}
+                    <button
+                      type="button"
+                      onClick={goAddNewProduct}
+                      className="w-full text-left py-2 px-3 flex items-center gap-2 border-t bg-slate-50 hover:bg-blue-50 text-blue-600 font-medium text-sm sticky bottom-0"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add “{productSearchTerm}” as a new product
+                    </button>
                   </div>
                 )}
               </div>
 
-              {/* Cart Items — each item is fully inline-editable (Qty, Pcs, Rate, GST%) */}
+              {/* Cart Items -each item is fully inline-editable (Qty, Pcs, Rate, GST%) */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <Label className="text-sm font-semibold">
@@ -1386,7 +1439,7 @@ Thank you for your purchase!
                           )}
                         >
                           <div className="flex flex-wrap items-end gap-x-2 gap-y-1.5 px-2.5 py-2">
-                            {/* Identity block — full width on mobile, ~36% on tablet+ */}
+                            {/* Identity block -full width on mobile, ~36% on tablet+ */}
                             <div className="flex items-start gap-2 min-w-0 basis-full md:basis-auto md:flex-1 md:min-w-[180px] md:max-w-[40%]">
                               <div className="min-w-0 flex-1">
                                 <div className="text-sm font-medium text-gray-900 truncate leading-tight">{product.name}</div>
@@ -1413,7 +1466,7 @@ Thank you for your purchase!
                               </button>
                             </div>
 
-                            {/* Editable inputs — labelled stacks, fit in one line on tablet+, wrap below name on mobile */}
+                            {/* Editable inputs -labelled stacks, fit in one line on tablet+, wrap below name on mobile */}
                             <div className="flex flex-col">
                               <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Qty</span>
                               <Input
@@ -1511,7 +1564,7 @@ Thank you for your purchase!
                               </div>
                             )}
 
-                            {/* Total + (optional) GST sub-line + desktop remove — pushed to the far right */}
+                            {/* Total + (optional) GST sub-line + desktop remove -pushed to the far right */}
                             <div className="ml-auto flex items-center gap-2">
                               <div className="text-right leading-tight">
                                 <div className="text-sm sm:text-base font-bold text-emerald-700">₹{itemTotal.toFixed(2)}</div>
@@ -1670,7 +1723,7 @@ Thank you for your purchase!
                 )}
               </div>
 
-              {/* Customer & Payment — exactly 2 rows: Name, then Phone | Payment */}
+              {/* Customer & Payment -exactly 2 rows: Name, then Phone | Payment */}
               <div className="space-y-3 p-3 sm:p-4 bg-gray-50 rounded-lg">
                 <h3 className="text-sm font-semibold">Customer & Payment</h3>
 
@@ -2300,7 +2353,7 @@ Thank you for your purchase!
         </CardContent>
       </Card>
 
-      {/* ── Edit Sale Dialog — full edit (cart + customer + payment) ── */}
+      {/* ── Edit Sale Dialog -full edit (cart + customer + payment) ── */}
       <Dialog
         open={isEditOpen}
         onOpenChange={(open) => {
@@ -2643,7 +2696,7 @@ Thank you for your purchase!
                 </DialogHeader>
 
                 <div className="space-y-4 mt-3">
-                  {/* Identity strip — customer + payment + total */}
+                  {/* Identity strip -customer + payment + total */}
                   <div className="rounded-md border bg-muted/30 p-4">
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div className="min-w-0 flex-1">
@@ -2673,7 +2726,7 @@ Thank you for your purchase!
                     </div>
                   </div>
 
-                  {/* Info grid — 3 cells */}
+                  {/* Info grid -3 cells */}
                   <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     <div className="rounded-md border p-3">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Date</p>

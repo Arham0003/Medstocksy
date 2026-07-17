@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { cn, formatINR, formatExpiry } from "@/lib/utils";
-import CSVUpload from '@/components/CSVUpload';
 import MultiProductForm from '@/components/MultiProductForm';
 import { TableSkeleton } from '@/components/TableSkeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,7 +27,11 @@ import {
   Upload,
   Wallet,
   Clock,
+  FileText,
+  Loader2,
 } from 'lucide-react';
+import { parseInvoicePdf } from '@/lib/parseInvoicePdf';
+import { saveBulkDraft, loadBulkDraft, clearBulkDraft, loadMultiDraft } from '@/lib/productDraft';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
@@ -123,6 +126,9 @@ export default function Products() {
   const [products, setProducts] = useState<Product[]>([]);
   const [uploadedData, setUploadedData] = useState<string[][]>([]);
   const [parsedProducts, setParsedProducts] = useState<Product[]>([]);
+  const [pdfImporting, setPdfImporting] = useState(false);
+  const [bulkDragActive, setBulkDragActive] = useState(false);
+  const bulkInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') ?? '');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -713,19 +719,197 @@ export default function Products() {
     }
   }, [uploadedData, toast, allSuppliers]);
 
+  // Restore in-progress work saved before a trip to the Suppliers page.
+  useEffect(() => {
+    const bulk = loadBulkDraft<Product[]>();
+    if (bulk && bulk.length > 0) {
+      setParsedProducts(bulk);
+      setBulkImportOpen(true);
+      clearBulkDraft();
+    }
+    // A manual "Add Products" draft just needs the dialog reopened — it restores itself.
+    if (loadMultiDraft<unknown[]>()) {
+      setIsMultiAddOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When suppliers refresh (e.g. one was just registered), link any preview rows
+  // whose supplier name now matches a registered supplier.
+  useEffect(() => {
+    setParsedProducts(prev => {
+      let changed = false;
+      const next = prev.map(p => {
+        if (!p.supplier_id && p.supplier) {
+          const m = allSuppliers.find(s => s.name.toLowerCase() === (p.supplier as string).toLowerCase());
+          if (m) { changed = true; return { ...p, supplier_id: m.id }; }
+        }
+        return p;
+      });
+      return changed ? next : prev;
+    });
+  }, [allSuppliers]);
+
+  // Save the current bulk preview, then go register a supplier — restored on return.
+  const goAddSupplierFromBulk = () => {
+    saveBulkDraft(parsedProducts);
+    navigate('/suppliers?from=bulk-import');
+  };
+
+  // Route a dropped/selected file to the right parser by type.
+  const handleBulkFile = (file: File | undefined | null) => {
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.pdf') || file.type === 'application/pdf') {
+      importPdf(file);
+    } else if (name.endsWith('.csv') || file.type === 'text/csv') {
+      importCsv(file);
+    } else {
+      toast({ variant: 'destructive', title: 'Unsupported file', description: 'Please upload a CSV or PDF file.' });
+    }
+  };
+
+  // CSV → string[][] (the existing parse effect turns it into products)
+  const importCsv = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string) || '';
+        const parseLine = (line: string): string[] => {
+          const out: string[] = [];
+          let cur = '', q = false;
+          for (let i = 0; i < line.length; i++) {
+            const c = line[i];
+            if (c === '"') {
+              if (q && line[i + 1] === '"') { cur += '"'; i++; } else { q = !q; }
+            } else if (c === ',' && !q) { out.push(cur.trim()); cur = ''; }
+            else { cur += c; }
+          }
+          out.push(cur.trim());
+          return out;
+        };
+        const rows = text.split(/\r?\n/).filter(l => l.trim()).map(parseLine);
+        if (rows.length === 0) {
+          toast({ variant: 'destructive', title: 'Empty file', description: 'This CSV has no rows.' });
+          return;
+        }
+        setUploadedData(rows);
+      } catch {
+        toast({ variant: 'destructive', title: 'Error parsing CSV', description: 'Please check the file format.' });
+      }
+    };
+    reader.onerror = () => toast({ variant: 'destructive', title: 'Error reading file' });
+    reader.readAsText(file);
+  };
+
+  // Import products from a supplier invoice PDF → feeds the same parsed-products / Save All flow as CSV
+  const importPdf = async (file: File) => {
+    setPdfImporting(true);
+    try {
+      const { supplierName, items } = await parseInvoicePdf(file);
+      if (items.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'No products found',
+          description: 'Could not read products from this PDF. It may be a scanned image or an unsupported layout.',
+        });
+        return;
+      }
+      const matched = supplierName
+        ? allSuppliers.find(s => s.name.toLowerCase() === supplierName.toLowerCase())
+        : undefined;
+      const genId = () =>
+        (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : Math.random().toString(36).slice(2);
+
+      const products: Product[] = items
+        .map(it => ({
+          id: genId(),
+          name: it.name,
+          sku: '',
+          hsn_code: it.hsn_code || '',
+          category: '',
+          batch_number: it.batch_number || '',
+          manufacturer: it.manufacturer || '',
+          expiry_date: it.expiry_date || null,
+          quantity: parseInt(it.quantity) || 0,
+          purchase_price: parseFloat(it.purchase_price) || 0,
+          selling_price: parseFloat(it.selling_price) || 0,
+          gst: parseFloat(it.gst) || 0,
+          supplier: matched ? matched.name : supplierName,
+          supplier_id: matched ? matched.id : null,
+          low_stock_threshold: 10,
+          pcs_per_unit: null,
+          created_at: new Date().toISOString(),
+        }))
+        .filter(p => p.name && p.selling_price > 0);
+
+      const unmatched = Array.from(new Set(
+        products.filter(p => !p.supplier_id && p.supplier).map(p => p.supplier as string),
+      ));
+      setUnmatchedSupplierNames(unmatched);
+      setUploadedData([]); // keep the CSV effect from overriding the PDF results
+      setParsedProducts(products);
+      setBulkImportOpen(true);
+      toast({
+        title: `Parsed ${products.length} products`,
+        description: 'Review the preview below, then click Save All Products.',
+      });
+    } catch (err) {
+      console.error('PDF import failed:', err);
+      toast({
+        variant: 'destructive',
+        title: 'Import failed',
+        description: 'Could not read this PDF. Please check the file and try again.',
+      });
+    } finally {
+      setPdfImporting(false);
+    }
+  };
+
+  // Inline-edit a parsed product in the preview before saving.
+  const updateParsedProduct = (id: string, patch: Partial<Product>) => {
+    setParsedProducts(prev => prev.map(p => (p.id === id ? { ...p, ...patch } : p)));
+  };
+
+  // Re-match a hand-edited supplier name against registered suppliers.
+  const updateParsedSupplier = (id: string, name: string) => {
+    const match = allSuppliers.find(s => s.name.toLowerCase() === name.trim().toLowerCase());
+    setParsedProducts(prev =>
+      prev.map(p => (p.id === id ? { ...p, supplier: name, supplier_id: match ? match.id : null } : p)),
+    );
+  };
+
   const saveAllProducts = async () => {
     if (parsedProducts.length === 0) return;
     if (!profile?.account_id || isSavingAll) return;
 
-    // Hustle-free logic: check if ANY product is missing a supplier
+    // After inline edits, block save if any row lost its required fields.
+    const invalid = parsedProducts.find(p => !p.name.trim() || !(p.selling_price > 0));
+    if (invalid) {
+      toast({
+        variant: 'destructive',
+        title: 'Fix highlighted fields',
+        description: 'Every product needs a name and a selling price greater than 0.',
+      });
+      return;
+    }
+
+    // Hustle-free logic: check if ANY product is missing a supplier (recompute
+    // from the current, possibly hand-edited, rows).
     const needsSupplier = parsedProducts.some(p => !p.supplier_id);
+    const currentUnmatched = Array.from(new Set(
+      parsedProducts.filter(p => !p.supplier_id && p.supplier).map(p => p.supplier as string),
+    ));
     if (needsSupplier && !csvGlobalSupplierId && allSuppliers.length > 0) {
-      if (unmatchedSupplierNames.length > 1) {
+      setUnmatchedSupplierNames(currentUnmatched);
+      if (currentUnmatched.length > 1) {
         toast({
           variant: "destructive",
           title: "Too many new suppliers",
           description: `You have ${unmatchedSupplierNames.length} different unknown suppliers. Please add them in the Suppliers section first.`,
-          action: <Button variant="outline" size="sm" onClick={() => navigate('/suppliers')}>Go to Suppliers</Button>
+          action: <Button variant="outline" size="sm" onClick={goAddSupplierFromBulk}>Go to Suppliers</Button>
         });
         setUnmatchedSupplierDialogOpen(true);
         return;
@@ -799,6 +983,20 @@ export default function Products() {
 
   return (
     <div className="space-y-6">
+      {searchParams.get('from') === 'record-sale' && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <p className="text-sm text-blue-800">
+            Add the new product here, then head back — your sale in progress was saved and will be restored.
+          </p>
+          <Button
+            size="sm"
+            onClick={() => navigate('/sales')}
+            className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            ← Back to sale
+          </Button>
+        </div>
+      )}
       {/* Header: title + primary action */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
@@ -877,78 +1075,208 @@ export default function Products() {
           </div>
         </section>
 
-        {/* Bulk import — collapsible so it doesn't dominate above the fold */}
+        {/* Bulk import — unified CSV + invoice-PDF, collapsible */}
         <Collapsible open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
-          <Card className="border-slate-200">
+          <Card className="border-slate-200 overflow-hidden">
             <CollapsibleTrigger asChild>
               <button
                 type="button"
-                className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 transition-colors rounded-t-lg"
+                className="w-full flex items-center gap-3 p-3.5 text-left hover:bg-slate-50 transition-colors"
               >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-indigo-50">
-                    <Upload className="h-5 w-5 text-indigo-600" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-slate-800">Bulk Import</p>
-                    <p className="text-xs text-muted-foreground">
-                      Upload a CSV to add many products at once
-                    </p>
-                  </div>
+                <div className="grid place-items-center h-9 w-9 rounded-lg bg-indigo-50 text-indigo-600 shrink-0">
+                  <Upload className="h-[18px] w-[18px]" />
                 </div>
-                <div className="flex items-center gap-2">
-                  {parsedProducts.length > 0 && (
-                    <Badge variant="secondary" className="bg-emerald-50 text-emerald-700">
-                      {parsedProducts.length} parsed
-                    </Badge>
-                  )}
-                  {bulkImportOpen ? (
-                    <ChevronUp className="h-5 w-5 text-slate-500" />
-                  ) : (
-                    <ChevronDown className="h-5 w-5 text-slate-500" />
-                  )}
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-slate-800 text-sm leading-tight">Bulk Import</p>
+                  <p className="text-xs text-muted-foreground truncate">Add many products from a CSV or invoice PDF</p>
                 </div>
+                {parsedProducts.length > 0 && (
+                  <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 shrink-0">
+                    {parsedProducts.length} ready
+                  </Badge>
+                )}
+                <ChevronDown className={cn('h-5 w-5 text-slate-400 shrink-0 transition-transform', bulkImportOpen && 'rotate-180')} />
               </button>
             </CollapsibleTrigger>
+
             <CollapsibleContent>
-              <div className="p-4 pt-0 space-y-4 border-t border-slate-100">
-                <div className="flex flex-wrap items-center gap-3 pt-4">
+              <div className="border-t border-slate-100 p-3.5 space-y-3">
+                {/* One dropzone for both file types */}
+                <input
+                  ref={bulkInputRef}
+                  type="file"
+                  accept=".csv,application/pdf,.pdf"
+                  className="hidden"
+                  onChange={(e) => { handleBulkFile(e.target.files?.[0]); e.target.value = ''; }}
+                />
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => !pdfImporting && bulkInputRef.current?.click()}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bulkInputRef.current?.click(); } }}
+                  onDragEnter={(e) => { e.preventDefault(); setBulkDragActive(true); }}
+                  onDragOver={(e) => { e.preventDefault(); setBulkDragActive(true); }}
+                  onDragLeave={(e) => { e.preventDefault(); setBulkDragActive(false); }}
+                  onDrop={(e) => { e.preventDefault(); setBulkDragActive(false); handleBulkFile(e.dataTransfer.files?.[0]); }}
+                  className={cn(
+                    'flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-7 text-center cursor-pointer transition-colors',
+                    bulkDragActive ? 'border-indigo-400 bg-indigo-50/60' : 'border-slate-200 hover:border-indigo-300 hover:bg-slate-50/70',
+                  )}
+                >
+                  {pdfImporting ? (
+                    <>
+                      <Loader2 className="h-6 w-6 text-indigo-500 animate-spin" />
+                      <p className="text-sm font-medium text-slate-600">Reading invoice…</p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid place-items-center h-11 w-11 rounded-full bg-indigo-50 text-indigo-500">
+                        <Upload className="h-5 w-5" />
+                      </div>
+                      <p className="text-sm font-medium text-slate-700">
+                        <span className="text-indigo-600">Click to upload</span> or drag &amp; drop
+                      </p>
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">
+                          <FileText className="h-3 w-3" /> CSV
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 font-medium">
+                          <FileText className="h-3 w-3" /> Invoice PDF
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <button
                     onClick={downloadSampleCSV}
-                    className="text-sm text-blue-600 hover:text-blue-800 underline cursor-pointer bg-transparent border-none"
+                    className="text-blue-600 hover:text-blue-800 underline bg-transparent border-none cursor-pointer p-0"
                   >
-                    Download Sample CSV
+                    Download sample CSV
                   </button>
+                  <span className="text-muted-foreground">From invoices: MRP → Sell · Rate → Buy</span>
                 </div>
-                <CSVUpload onFileUpload={setUploadedData} />
 
+                {/* Preview */}
                 {parsedProducts.length > 0 && (
-                  <div className="rounded-lg border border-emerald-200 bg-gradient-to-r from-green-50 to-emerald-50 p-4">
-                    <p className="font-semibold text-slate-800">Parsed Products</p>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      Found {parsedProducts.length} products in your CSV file
-                    </p>
-                    <div className="flex gap-3">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-semibold text-slate-800">
+                        Preview · {parsedProducts.length} product{parsedProducts.length === 1 ? '' : 's'}
+                      </p>
+                      <button
+                        onClick={() => { setUploadedData([]); setParsedProducts([]); }}
+                        className="text-xs text-slate-500 hover:text-rose-600 underline bg-transparent border-none cursor-pointer p-0"
+                      >
+                        Clear
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground mb-1.5">Tap any cell to edit before saving.</p>
+                    <div className="rounded-md border border-emerald-200 bg-white overflow-x-auto max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs border-collapse min-w-[860px]">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-emerald-50 text-emerald-800 text-[10px] uppercase tracking-wide">
+                            <th className="p-1.5 text-left w-8">#</th>
+                            <th className="p-1.5 text-left">Product</th>
+                            <th className="p-1.5 text-center w-20">HSN</th>
+                            <th className="p-1.5 text-center w-24">Batch</th>
+                            <th className="p-1.5 text-center w-32">Expiry</th>
+                            <th className="p-1.5 text-center w-14">Qty</th>
+                            <th className="p-1.5 text-center w-14">GST%</th>
+                            <th className="p-1.5 text-center w-16">Buy</th>
+                            <th className="p-1.5 text-center w-16">Sell</th>
+                            <th className="p-1.5 text-left w-40">Supplier</th>
+                            <th className="p-1.5 w-8"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {parsedProducts.map((p, i) => {
+                            const cell = 'h-7 w-full text-xs px-1.5 border border-slate-200 rounded bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-100 outline-none transition-colors';
+                            return (
+                            <tr key={p.id} className="hover:bg-emerald-50/30 align-top">
+                              <td className="p-1.5 text-center text-slate-400 pt-2.5">{i + 1}</td>
+                              <td className="p-1.5">
+                                <input
+                                  value={p.name}
+                                  onChange={e => updateParsedProduct(p.id, { name: e.target.value })}
+                                  placeholder="Product name *"
+                                  className={cn(cell, 'font-medium', !p.name.trim() && 'border-rose-300')}
+                                />
+                                <input
+                                  value={p.manufacturer || ''}
+                                  onChange={e => updateParsedProduct(p.id, { manufacturer: e.target.value })}
+                                  placeholder="Manufacturer"
+                                  className={cn(cell, 'mt-1 text-[11px] text-muted-foreground')}
+                                />
+                              </td>
+                              <td className="p-1.5">
+                                <input value={p.hsn_code || ''} onChange={e => updateParsedProduct(p.id, { hsn_code: e.target.value })} className={cn(cell, 'text-center')} />
+                              </td>
+                              <td className="p-1.5">
+                                <input value={p.batch_number || ''} onChange={e => updateParsedProduct(p.id, { batch_number: e.target.value })} className={cn(cell, 'text-center')} />
+                              </td>
+                              <td className="p-1.5">
+                                <input type="date" value={p.expiry_date || ''} onChange={e => updateParsedProduct(p.id, { expiry_date: e.target.value })} className={cn(cell, 'text-center')} />
+                              </td>
+                              <td className="p-1.5">
+                                <input type="number" min="0" value={p.quantity} onChange={e => updateParsedProduct(p.id, { quantity: parseInt(e.target.value) || 0 })} className={cn(cell, 'text-center')} />
+                              </td>
+                              <td className="p-1.5">
+                                <input type="number" step="0.01" value={p.gst ?? ''} onChange={e => updateParsedProduct(p.id, { gst: parseFloat(e.target.value) || 0 })} className={cn(cell, 'text-center')} />
+                              </td>
+                              <td className="p-1.5">
+                                <input type="number" step="0.01" value={p.purchase_price ?? ''} onChange={e => updateParsedProduct(p.id, { purchase_price: parseFloat(e.target.value) || 0 })} className={cn(cell, 'text-right')} />
+                              </td>
+                              <td className="p-1.5">
+                                <input type="number" step="0.01" value={p.selling_price} onChange={e => updateParsedProduct(p.id, { selling_price: parseFloat(e.target.value) || 0 })} className={cn(cell, 'text-right font-semibold text-emerald-700', !(p.selling_price > 0) && 'border-rose-300')} />
+                              </td>
+                              <td className="p-1.5">
+                                <input
+                                  value={p.supplier || ''}
+                                  onChange={e => updateParsedSupplier(p.id, e.target.value)}
+                                  placeholder="Supplier"
+                                  className={cn(cell, !p.supplier_id && p.supplier && 'border-amber-300 text-amber-700')}
+                                  title={!p.supplier_id && p.supplier ? 'Not a registered supplier yet' : ''}
+                                />
+                              </td>
+                              <td className="p-1.5 pt-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setParsedProducts(prev => prev.filter(x => x.id !== p.id))}
+                                  className="text-slate-300 hover:text-rose-600"
+                                  title="Remove this product"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex gap-2 mt-3">
                       <Button
+                        size="sm"
                         onClick={saveAllProducts}
                         disabled={isSavingAll}
                         className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
                       >
                         {isSavingAll ? (
-                          <div className="flex items-center">
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                            Saving All...
-                          </div>
+                          <span className="flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" /> Saving…
+                          </span>
                         ) : (
-                          'Save All Products'
+                          `Save all ${parsedProducts.length} products`
                         )}
                       </Button>
                       <Button
+                        size="sm"
                         variant="outline"
-                        onClick={() => {
-                          setUploadedData([]);
-                          setParsedProducts([]);
-                        }}
+                        onClick={() => { setUploadedData([]); setParsedProducts([]); }}
                       >
                         Cancel
                       </Button>
@@ -983,10 +1311,10 @@ export default function Products() {
                     <Badge key={i} variant="outline" className="bg-white">{name}</Badge>
                   ))}
                 </div>
-                <Button 
-                  variant="link" 
+                <Button
+                  variant="link"
                   className="mt-2 h-auto p-0 text-amber-900 font-bold underline"
-                  onClick={() => navigate('/suppliers')}
+                  onClick={goAddSupplierFromBulk}
                 >
                   Click here to add them first →
                 </Button>

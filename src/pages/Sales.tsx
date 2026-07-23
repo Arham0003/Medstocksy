@@ -73,6 +73,7 @@ interface Settings {
   gst_enabled: boolean;
   default_gst_rate: number;
   gst_type?: string;
+  sales_edit_window_hours?: number | null;
 }
 
 export default function Sales() {
@@ -102,6 +103,8 @@ export default function Sales() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<GroupedTransaction | null>(null);
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
+  // Keyboard-navigation: index of the highlighted sale row in the list.
+  const [selectedRow, setSelectedRow] = useState(-1);
 
   // Sales list filtering states
   const [filterPaymentMode, setFilterPaymentMode] = useState('all');
@@ -373,17 +376,27 @@ export default function Sales() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isMobile, navigate]);
 
+
   // Add a separate effect to fetch settings when profile changes
   useEffect(() => {
     const fetchSettings = async () => {
       if (!profile?.account_id) return;
 
       try {
-        const settingsRes = await supabase
+        let settingsRes = await supabase
           .from('settings')
-          .select('gst_enabled, default_gst_rate, gst_type')
+          .select('gst_enabled, default_gst_rate, gst_type, sales_edit_window_hours')
           .eq('account_id', profile.account_id)
           .single();
+
+        // Column may not exist yet (migration pending) → retry without it.
+        if (settingsRes.error && (settingsRes.error.message?.includes('sales_edit_window_hours') || settingsRes.error.code === '42703')) {
+          settingsRes = await supabase
+            .from('settings')
+            .select('gst_enabled, default_gst_rate, gst_type')
+            .eq('account_id', profile.account_id)
+            .single();
+        }
 
         if (!settingsRes.error) {
           setSettings(settingsRes.data as any);
@@ -886,19 +899,21 @@ export default function Sales() {
   // ── Edit-lock policy ───────────────────────────────────────
   // A sale becomes locked (no further edits) when:
   //   1. It has been printed (printed_at IS NOT NULL on any of its rows), OR
-  //   2. It is older than EDIT_WINDOW_MINUTES from creation
-  const EDIT_WINDOW_MINUTES = 30;
+  //   2. It is older than the account's configurable edit window (default 24h)
+  const editWindowHours = settings?.sales_edit_window_hours && settings.sales_edit_window_hours > 0
+    ? settings.sales_edit_window_hours
+    : 24;
 
   type LockReason = null | 'printed' | 'expired';
   const getLockReason = (group: GroupedTransaction): LockReason => {
     if (group.items.some(it => !!it.printed_at) || !!group.printed_at) return 'printed';
-    const ageMin = (Date.now() - new Date(group.created_at).getTime()) / 60000;
-    if (ageMin > EDIT_WINDOW_MINUTES) return 'expired';
+    const ageHours = (Date.now() - new Date(group.created_at).getTime()) / 3600000;
+    if (ageHours > editWindowHours) return 'expired';
     return null;
   };
   const lockReasonText = (r: LockReason): string => {
-    if (r === 'printed') return 'Locked -bill has been printed';
-    if (r === 'expired') return `Locked -older than ${EDIT_WINDOW_MINUTES} min`;
+    if (r === 'printed') return 'Locked — bill has been printed';
+    if (r === 'expired') return `Locked — older than ${editWindowHours} ${editWindowHours === 1 ? 'hour' : 'hours'}`;
     return '';
   };
 
@@ -966,6 +981,62 @@ export default function Sales() {
     }));
     setIsEditOpen(true);
   };
+
+  // ─── Keyboard navigation for the sales list ───────────────────────────────
+  //  ↑/↓ move · Enter view · E edit · P print · N new · Home/End jump.
+  //  Runs in the CAPTURE phase and stops propagation for arrows/Home/End so the
+  //  global section-nav in Layout (↑/↓ switches pages) never fires on this screen.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      // Never hijack typing or steal keys while a dialog owns the screen.
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (isDialogOpen || isEditOpen || isDetailModalOpen) return;
+
+      const list = groupedSales;
+
+      // Movement keys — always intercept so the page doesn't scroll / switch sections.
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+        if (!list.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'ArrowDown') setSelectedRow(i => Math.min(i < 0 ? 0 : i + 1, list.length - 1));
+        else if (e.key === 'ArrowUp') setSelectedRow(i => Math.max(i <= 0 ? 0 : i - 1, 0));
+        else if (e.key === 'Home') setSelectedRow(0);
+        else setSelectedRow(list.length - 1);
+        return;
+      }
+
+      // Action keys — skip when focus is on a real control so we don't hijack it.
+      const onControl = !!t && (t.tagName === 'BUTTON' || t.tagName === 'A' || !!t.closest('button, a, [role="button"], [role="dialog"], [role="menu"]'));
+      if (onControl) return;
+
+      if (e.key === 'Enter') {
+        if (selectedRow >= 0 && list[selectedRow]) { e.preventDefault(); e.stopPropagation(); showSaleDetails(list[selectedRow]); }
+      } else if (e.key === 'e' || e.key === 'E') {
+        if (selectedRow >= 0 && list[selectedRow]) { e.preventDefault(); e.stopPropagation(); openEditSale(list[selectedRow]); }
+      } else if (e.key === 'p' || e.key === 'P') {
+        const bid = selectedRow >= 0 ? list[selectedRow]?.items[0]?.bill_id : undefined;
+        if (bid) { e.preventDefault(); e.stopPropagation(); handlePrintBill(bid); }
+      } else if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isMobile) setIsDialogOpen(true); else navigate('/sales/new');
+      }
+    };
+    window.addEventListener('keydown', onKey, true); // capture — beats Layout's window listener
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [groupedSales, selectedRow, isDialogOpen, isEditOpen, isDetailModalOpen, isMobile, navigate]);
+
+  // Keep the selected row valid and scroll it into view.
+  useEffect(() => {
+    if (selectedRow < 0) return;
+    if (selectedRow > groupedSales.length - 1) { setSelectedRow(groupedSales.length - 1); return; }
+    document.querySelectorAll(`[data-sale-row="${selectedRow}"]`).forEach(el => {
+      if ((el as HTMLElement).offsetParent !== null) (el as HTMLElement).scrollIntoView({ block: 'nearest' });
+    });
+  }, [selectedRow, groupedSales.length]);
 
   // ── Cart helpers ────────────────────────────────────────────
   const updateEditCartItem = (lineId: string, patch: Partial<EditCartItem>) => {
@@ -1955,6 +2026,13 @@ Thank you for your purchase!
               <CardDescription className="text-sm">
                 {loading ? 'Loading...' : `${totalSales} transaction${totalSales === 1 ? '' : 's'} found`}
               </CardDescription>
+              <div className="hidden md:flex flex-wrap items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
+                {[['↑↓', 'Move'], ['Enter', 'View'], ['E', 'Edit'], ['P', 'Print'], ['N', 'New']].map(([k, l]) => (
+                  <span key={k} className="inline-flex items-center gap-1">
+                    <kbd className="px-1 rounded border bg-muted font-semibold">{k}</kbd>{l}
+                  </span>
+                ))}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -2049,7 +2127,7 @@ Thank you for your purchase!
             <>
               {/* Mobile: card list */}
               <div className="md:hidden space-y-2">
-                {groupedSales.map((group) => {
+                {groupedSales.map((group, idx) => {
                   const paymentMode = group.items[0]?.payment_mode || 'cash';
                   const paymentClass =
                     paymentMode === 'credit' ? 'bg-orange-50 text-orange-700 border-orange-200'
@@ -2059,7 +2137,12 @@ Thank you for your purchase!
                   return (
                     <div
                       key={group.bill_id}
-                      className="rounded-md border bg-card overflow-hidden"
+                      data-sale-row={idx}
+                      onMouseEnter={() => setSelectedRow(idx)}
+                      className={cn(
+                        'rounded-md border bg-card overflow-hidden transition-shadow',
+                        selectedRow === idx && 'ring-2 ring-primary border-primary bg-primary/5'
+                      )}
                     >
                       <button
                         type="button"
@@ -2170,7 +2253,7 @@ Thank you for your purchase!
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {groupedSales.map((group) => {
+                    {groupedSales.map((group, idx) => {
                       const paymentMode = group.items[0]?.payment_mode || 'cash';
                       const paymentClass =
                         paymentMode === 'credit' ? 'bg-orange-50 text-orange-700 border-orange-200'
@@ -2180,7 +2263,12 @@ Thank you for your purchase!
                       return (
                         <React.Fragment key={group.bill_id}>
                           <TableRow
-                            className="cursor-pointer"
+                            data-sale-row={idx}
+                            onMouseEnter={() => setSelectedRow(idx)}
+                            className={cn(
+                              'cursor-pointer',
+                              selectedRow === idx && 'bg-primary/10 outline outline-2 -outline-offset-2 outline-primary'
+                            )}
                             onClick={() => toggleExpand(group.bill_id)}
                           >
                             <TableCell className="py-2.5">

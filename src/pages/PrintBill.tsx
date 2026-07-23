@@ -118,9 +118,29 @@ export default function PrintBill() {
     };
 
     // ─── Actions (shared by buttons and keyboard shortcuts) ───────────────────
-    const doEdit = useCallback(() => {
-        if (billId) navigate(`/sales/new?edit=${billId}`);
-    }, [billId, navigate]);
+    const doEdit = useCallback(async () => {
+        if (!billId || !billData) return;
+        // Respect the account's configurable sales-edit window (default 24h).
+        let windowHours = 24;
+        try {
+            const { data } = await (supabase.from('settings') as any)
+                .select('sales_edit_window_hours')
+                .eq('account_id', billData.account_id)
+                .single();
+            const v = data?.sales_edit_window_hours;
+            if (typeof v === 'number' && v > 0) windowHours = v;
+        } catch { /* column may not exist yet → default 24 */ }
+        const ageHours = (Date.now() - new Date(billData.created_at).getTime()) / 3600000;
+        if (ageHours > windowHours) {
+            toast({
+                variant: 'destructive',
+                title: 'Editing window closed',
+                description: `This bill can only be edited within ${windowHours} ${windowHours === 1 ? 'hour' : 'hours'} of creation.`,
+            });
+            return;
+        }
+        navigate(`/sales/new?edit=${billId}`);
+    }, [billId, billData, navigate, toast]);
 
     const doPrint = useCallback(async () => {
         // Stamp printed_at so the sale is locked from further edits (ignored if not migrated).

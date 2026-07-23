@@ -236,14 +236,70 @@ export default function RecordSale({
   const [searchTerm, setSearchTerm] = useState('');
   const [searchHighlight, setSearchHighlight] = useState(0);
   const [searchRect, setSearchRect] = useState<DOMRect | null>(null);
+  const searchListRef = useRef<HTMLDivElement>(null); // scroll container for product results
   const [infoProduct, setInfoProduct] = useState<Product | null>(null); // F1 → full product info
   const [infoRow, setInfoRow] = useState<number | null>(null); // which row the info was opened from
+  // Full product record + sales history, fetched when the info modal opens.
+  const [infoDetails, setInfoDetails] = useState<{ full: any | null; sales: any[]; loading: boolean }>({ full: null, sales: [], loading: false });
+  useEffect(() => {
+    if (!infoProduct) { setInfoDetails({ full: null, sales: [], loading: false }); return; }
+    let cancelled = false;
+    setInfoDetails({ full: null, sales: [], loading: true });
+    (async () => {
+      try {
+        const [prodRes, salesRes] = await Promise.all([
+          (supabase as any).from('products').select('*').eq('id', infoProduct.id).single(),
+          (supabase as any)
+            .from('sales')
+            .select('quantity, sub_qty, unit_price, total_price, sale_date, created_at, customer_name, payment_mode')
+            .eq('product_id', infoProduct.id)
+            .order('created_at', { ascending: false })
+            .limit(100),
+        ]);
+        if (cancelled) return;
+        setInfoDetails({ full: prodRes.data ?? null, sales: salesRes.data ?? [], loading: false });
+      } catch {
+        if (!cancelled) setInfoDetails({ full: null, sales: [], loading: false });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [infoProduct]);
+
+  // Info-modal button focus: land on "Add to bill", ←/→ toggle to Close, Enter selects.
+  // Uses a capture-phase window listener so these keys don't leak to the tab bar.
+  const addToBillRef = useRef<HTMLButtonElement>(null);
+  const closeInfoRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!infoProduct) return;
+    setTimeout(() => addToBillRef.current?.focus(), 60);
+    const handler = (e: KeyboardEvent) => {
+      const isArrow = e.key.startsWith('Arrow');
+      const isDigit = /^[1-5]$/.test(e.key);
+      if (!isArrow && !isDigit) return;
+      e.stopImmediatePropagation(); // keep navigation inside the modal
+      if (e.key === 'ArrowLeft') { e.preventDefault(); addToBillRef.current?.focus(); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); closeInfoRef.current?.focus(); }
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [infoProduct]);
+
   const finalizeRef = useRef<HTMLButtonElement>(null);
+  const paymentRefs = useRef<(HTMLButtonElement | null)[]>([]); // cash/upi/card/credit buttons
+  const globalDiscRef = useRef<HTMLInputElement>(null);
+  const receivedRef = useRef<HTMLInputElement>(null);
   // Live mirrors so the capture-phase Escape handler always sees current state.
   const infoProductRef = useRef<Product | null>(null);
   const activeSearchRowRef = useRef<number | null>(null);
   infoProductRef.current = infoProduct;
   activeSearchRowRef.current = activeSearchRow;
+
+  // Keep the highlighted product result scrolled into view during ↑/↓ navigation.
+  useEffect(() => {
+    searchListRef.current
+      ?.querySelector(`[data-item="${searchHighlight}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [searchHighlight, activeSearchRow, searchTerm]);
 
   // ─── UI state ───────────────────────────────────────────────────────────
   const [showShortcuts, setShowShortcuts] = useState(true);
@@ -255,6 +311,7 @@ export default function RecordSale({
   const [masterDropdownOpen, setMasterDropdownOpen] = useState(false);
 
   // ─── Refs for tabbing ──────────────────────────────────────────────────
+  const patientNameRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
   const doctorRef = useRef<HTMLInputElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
@@ -264,6 +321,16 @@ export default function RecordSale({
   const masterSearchRef = useRef<HTMLInputElement>(null);
   const masterDropdownRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, Map<string, HTMLInputElement>>>(new Map());
+
+  // When the sale opens (active tab, data ready), put the cursor in Patient Name
+  // so the pharmacist can start typing straight away. Focuses once per mount.
+  const didFocusName = useRef(false);
+  useEffect(() => {
+    if (isActive && !loading && !didFocusName.current) {
+      didFocusName.current = true;
+      setTimeout(() => patientNameRef.current?.focus(), 80);
+    }
+  }, [isActive, loading]);
 
   // Helper to set a ref for a specific row+field
   const setFieldRef = useCallback((rowUid: string, field: string, el: HTMLInputElement | null) => {
@@ -277,6 +344,17 @@ export default function RecordSale({
       rowRefs.current.get(rowUid)?.get(field)?.focus();
     }, 50);
   }, []);
+
+  // Close the product-info modal and return focus to the search cell it opened from.
+  const closeInfo = useCallback(() => {
+    const row = infoRow;
+    setInfoProduct(null);
+    setInfoRow(null);
+    if (row !== null) {
+      setActiveSearchRow(row);
+      setTimeout(() => rowRefs.current.get(rows[row]?.uid || '')?.get('product')?.focus(), 20);
+    }
+  }, [infoRow, rows]);
 
   // ─── Fetch products & settings ─────────────────────────────────────────
   useEffect(() => {
@@ -462,12 +540,14 @@ export default function RecordSale({
   }, [customerDropdownOpen, customerSuggestions, customerHighlight, selectCustomer]);
 
   // Enter in a patient-detail field → focus the next field (or the master search).
-  const enterTo = (ref: React.RefObject<HTMLElement | null>) =>
+  // Enter → next field, Shift+Enter → previous field (bidirectional chain).
+  const enterTo = (nextRef: React.RefObject<HTMLElement | null>, prevRef?: React.RefObject<HTMLElement | null>) =>
     (e: ReactKeyboardEvent<HTMLInputElement>) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
-      ref.current?.focus();
-      (ref.current as HTMLInputElement | null)?.select?.();
+      const target = e.shiftKey ? prevRef : nextRef;
+      target?.current?.focus();
+      (target?.current as HTMLInputElement | null)?.select?.();
     };
 
   // Modern boxed input used across the patient-detail block.
@@ -650,7 +730,7 @@ export default function RecordSale({
       return last && last.productId ? [...prev, EMPTY_ROW()] : prev;
     });
     // Move the cursor to the first editable field of this row (Batch → Qty → …).
-    setTimeout(() => focusField(uid || '', 'batch'), 90);
+    setTimeout(() => focusField(uid || '', 'qty'), 90);
   }, [updateRow, settings, rows, focusField]);
 
   // ─── Inline product search (inside each grid row) ─────────────────────────
@@ -665,15 +745,25 @@ export default function RecordSale({
       if (p) { setInfoProduct(p); setInfoRow(rowIndex); }
       return;
     }
+    if (e.key === 'Enter' && e.shiftKey) {
+      // Go BACK: previous filled row's last field, else up to the patient "Taken" field.
+      e.preventDefault();
+      setActiveSearchRow(null);
+      setSearchRect(null);
+      const prevRow = rows[rowIndex - 1];
+      if (prevRow && prevRow.productId) focusField(prevRow.uid, TAB_FIELDS[TAB_FIELDS.length - 1]);
+      else takenRef.current?.focus();
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       if (searchTerm.trim() && list.length) {
         selectProduct(rowIndex, list[searchHighlight] || list[0]);
       } else {
-        // Nothing typed → go straight to Finalize
+        // Nothing typed → move into the payment area (Payment → Global Disc → Received → Finalize)
         setActiveSearchRow(null);
         setSearchRect(null);
-        finalizeRef.current?.focus();
+        setTimeout(() => paymentRefs.current[0]?.focus(), 20);
       }
       return;
     }
@@ -684,7 +774,7 @@ export default function RecordSale({
       if (infoProduct) { setInfoProduct(null); setInfoRow(null); }
       else { setSearchTerm(''); setActiveSearchRow(null); setSearchRect(null); }
     }
-  }, [filteredProducts, searchTerm, searchHighlight, selectProduct, infoProduct]);
+  }, [filteredProducts, searchTerm, searchHighlight, selectProduct, infoProduct, rows, focusField]);
 
   // Focus the search cell of the first row without a product (add one if needed).
   const focusFirstEmptyProduct = useCallback(() => {
@@ -1162,11 +1252,14 @@ export default function RecordSale({
   }, []);
 
   // ─── Tab flow handler for row fields (Marg column order) ──────────────
-  const TAB_FIELDS = ['batch', 'qty', 'subQty', 'discount', 'rate'];
+  const TAB_FIELDS = ['qty', 'batch', 'rate', 'discount', 'gst'];
   // Shared column template for the Marg-style grid: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT ⋯
   // Mobile uses tighter fractions so all columns fit the full screen width with NO horizontal
   // scroll; from lg up it opens out to the spacious desktop proportions.
-  const GRID_COLS = 'grid-cols-[1.8fr_0.45fr_0.85fr_0.62fr_0.62fr_0.62fr_0.85fr_1fr_0.34fr] lg:grid-cols-[2.6fr_0.7fr_1fr_0.55fr_0.55fr_0.6fr_0.9fr_1fr_0.4fr]';
+  // Columns: Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount · ⋯
+  // All 11 columns on every screen. On phones the grid keeps a legible min-width
+  // and scrolls horizontally (swipe); on desktop it fits within max-width.
+  const GRID_COLS = 'grid-cols-[2.2fr_0.7fr_0.55fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]';
 
   const handleFieldKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number, field: string) => {
     const row = rows[rowIndex];
@@ -1205,12 +1298,33 @@ export default function RecordSale({
     // jump to the next row's product search (or open a fresh row).
     if (e.key === 'Enter') {
       e.preventDefault();
+      if (e.shiftKey) {
+        // Go BACK: previous field → previous row's last field → patient "Taken" field.
+        if (currentIdx > 0) {
+          focusField(row.uid, TAB_FIELDS[currentIdx - 1]);
+        } else {
+          const prevRow = rows[rowIndex - 1];
+          if (prevRow && prevRow.productId) focusField(prevRow.uid, TAB_FIELDS[TAB_FIELDS.length - 1]);
+          else takenRef.current?.focus();
+        }
+        return;
+      }
       if (currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
         focusField(row.uid, TAB_FIELDS[currentIdx + 1]);
       } else {
         const nextRow = rows[rowIndex + 1];
-        if (nextRow) { setActiveSearchRow(rowIndex + 1); focusField(nextRow.uid, 'product'); }
-        else { addNewRow(); }
+        if (nextRow) {
+          if (nextRow.productId) {
+            // Next row already has a medicine → jump to its first editable field (QTY).
+            focusField(nextRow.uid, TAB_FIELDS[0]);
+          } else {
+            // Next row is empty → focus its product search.
+            setActiveSearchRow(rowIndex + 1);
+            focusField(nextRow.uid, 'product');
+          }
+        } else {
+          addNewRow();
+        }
       }
     }
   }, [rows, focusField, addNewRow]);
@@ -1384,6 +1498,7 @@ export default function RecordSale({
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Patient</span>
                 <div className="relative flex-1 min-w-0">
                   <input
+                    ref={patientNameRef}
                     value={customerName}
                     onChange={e => handleNameChange(e.target.value)}
                     onKeyDown={e => {
@@ -1422,26 +1537,25 @@ export default function RecordSale({
                 </div>
               </div>
 
-              {/* Phone */}
+              {/* Phone — +91 prefix box, 10 digits only */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Phone</span>
-                <input
-                  ref={phoneRef}
-                  value={customerPhone}
-                  onChange={e => {
-                    let value = e.target.value;
-                    if (value && !value.startsWith('+')) {
-                      const cleaned = value.replace(/\D/g, '');
-                      if (cleaned.length === 10) value = '+91' + cleaned;
-                      else if (cleaned.length === 12 && cleaned.startsWith('91')) value = '+' + cleaned;
-                      else if (cleaned.length > 0) value = '+91' + cleaned;
-                    }
-                    setCustomerPhone(value);
-                  }}
-                  onKeyDown={enterTo(doctorRef)}
-                  placeholder="Mobile no."
-                  className={patientFieldCls}
-                />
+                <div className="flex items-center flex-1 min-w-0 h-8 rounded-md border border-emerald-200 bg-white overflow-hidden transition-colors focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-100">
+                  <span className="grid place-items-center h-full px-2 text-sm font-bold text-emerald-700 bg-emerald-50 border-r border-emerald-200 shrink-0">+91</span>
+                  <input
+                    ref={phoneRef}
+                    value={(customerPhone || '').replace(/^\+91/, '')}
+                    onChange={e => {
+                      const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setCustomerPhone(digits ? '+91' + digits : '');
+                    }}
+                    onKeyDown={enterTo(doctorRef, patientNameRef)}
+                    inputMode="numeric"
+                    maxLength={10}
+                    placeholder="10-digit mobile"
+                    className="flex-1 min-w-0 h-full px-2 text-sm font-medium text-emerald-900 placeholder-emerald-400/60 outline-none bg-transparent tabular-nums"
+                  />
+                </div>
               </div>
 
               {/* Doctor */}
@@ -1451,7 +1565,7 @@ export default function RecordSale({
                   ref={doctorRef}
                   value={doctorName}
                   onChange={e => setDoctorName(e.target.value)}
-                  onKeyDown={enterTo(addressRef)}
+                  onKeyDown={enterTo(addressRef, phoneRef)}
                   placeholder="Name"
                   className={patientFieldCls}
                 />
@@ -1464,7 +1578,7 @@ export default function RecordSale({
                   ref={addressRef}
                   value={customerAddress}
                   onChange={e => setCustomerAddress(e.target.value)}
-                  onKeyDown={enterTo(dateRef)}
+                  onKeyDown={enterTo(dateRef, doctorRef)}
                   placeholder="Area / street"
                   className={patientFieldCls}
                 />
@@ -1478,7 +1592,7 @@ export default function RecordSale({
                   type="date"
                   value={billDate}
                   onChange={e => setBillDate(e.target.value)}
-                  onKeyDown={enterTo(prescRef)}
+                  onKeyDown={enterTo(prescRef, addressRef)}
                   className={cn(patientFieldCls, 'appearance-none')}
                 />
               </div>
@@ -1497,10 +1611,10 @@ export default function RecordSale({
                       setPrescriptionMonths(val);
                       if (val !== '' && (monthsTaken === '' || monthsTaken === 0)) setMonthsTaken(1);
                     }}
-                    onKeyDown={enterTo(takenRef)}
+                    onKeyDown={enterTo(takenRef, dateRef)}
                     placeholder="0"
                     title="Prescribed months"
-                    className={cn(patientFieldCls, 'w-11 px-1 text-center font-bold')}
+                    className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
                   />
                   <span className="text-[9px] font-semibold text-emerald-500 uppercase">Presc</span>
                   <input
@@ -1509,10 +1623,15 @@ export default function RecordSale({
                     min="0"
                     value={monthsTaken}
                     onChange={e => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); focusFirstEmptyProduct(); } }}
+                    onKeyDown={e => {
+                      if (e.key !== 'Enter') return;
+                      e.preventDefault();
+                      if (e.shiftKey) prescRef.current?.focus();
+                      else focusFirstEmptyProduct();
+                    }}
                     placeholder="0"
                     title="Months taken"
-                    className={cn(patientFieldCls, 'w-11 px-1 text-center font-bold')}
+                    className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
                   />
                   <span className="text-[9px] font-semibold text-emerald-500 uppercase">Taken</span>
                 </div>
@@ -1529,16 +1648,18 @@ export default function RecordSale({
         {/* Marg-style dense billing grid — one responsive table for every screen.
             On phones the fluid fr columns shrink to fill the full width with no
             horizontal scroll; from lg up it opens out to the spacious desktop size. */}
-        <div className="billing-grid flex w-full lg:min-w-[1100px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
-          {/* Table header — Marg columns: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT */}
-          <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[10px] lg:text-[12px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
+        <div className="billing-grid flex w-full min-w-[900px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
+          {/* Table header — Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount */}
+          <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[11px] lg:text-[13px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
             <div className="pl-2 lg:pl-4 truncate">Product</div>
-            <div className="px-0.5 lg:px-1 text-center">Pack</div>
+            <div className="px-0.5 lg:px-1 text-center">PCS</div>
+            <div className="px-0.5 lg:px-1 text-center">QTY</div>
+            <div className="px-0.5 lg:px-1 text-center">HSN</div>
             <div className="px-0.5 lg:px-1 text-center">Batch</div>
-            <div className="px-0.5 lg:px-1 text-center">STRI</div>
-            <div className="px-0.5 lg:px-1 text-center">TAB.</div>
+            <div className="px-0.5 lg:px-1 text-center">MRP</div>
+            <div className="px-0.5 lg:px-1 text-center">Rate</div>
             <div className="px-0.5 lg:px-1 text-center">Disc%</div>
-            <div className="px-0.5 lg:px-1 text-center">M.R.P.</div>
+            <div className="px-0.5 lg:px-1 text-center">GST%</div>
             <div className="text-right pr-2 lg:pr-6 truncate">Amount</div>
             <div></div>
           </div>
@@ -1556,7 +1677,7 @@ export default function RecordSale({
                   <div className="pl-2 lg:pl-4 relative flex items-center min-w-0">
                     {row.productId ? (
                       <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 pointer-events-none">
-                        <span className="text-sm lg:text-[15px] font-semibold text-gray-800 truncate">{row.productName}</span>
+                        <span className="text-[15px] lg:text-[16px] font-semibold text-gray-800 truncate">{row.productName}</span>
                         <span className="text-[10px] font-medium text-emerald-600 shrink-0">S:{row.stock}</span>
                         {row.expiry && <span className="hidden lg:inline text-[9px] text-gray-400 shrink-0">Exp:{row.expiry}</span>}
                       </div>
@@ -1570,15 +1691,36 @@ export default function RecordSale({
                         onBlur={() => setTimeout(() => { setActiveSearchRow(cur => (cur === idx ? null : cur)); }, 150)}
                         placeholder={idx === 0 ? 'Search medicine… (F2)' : 'Next medicine…'}
                         autoComplete="off"
-                        className="w-full h-8 bg-transparent outline-none px-1 text-sm lg:text-[15px] font-medium text-gray-800 placeholder-emerald-300 rounded-md focus:bg-indigo-100 focus:text-gray-900"
+                        className="w-full h-8 bg-transparent outline-none px-1 text-[15px] lg:text-[16px] font-medium text-gray-800 placeholder-emerald-300 rounded-md focus:bg-cyan-50 focus:text-cyan-900 focus:ring-[3px] focus:ring-inset focus:ring-cyan-400 focus:rounded-lg"
                       />
                     )}
                   </div>
 
-                  {/* PACK (units per pack — read only) */}
+                  {/* PCS — pack label 1×N (read only) */}
                   <div className="px-1 text-center">
-                    <span className="text-sm font-medium text-gray-500">
-                      {row.productId ? (row.pcsPerUnit || '—') : ''}
+                    <span className="text-[15px] font-semibold text-gray-500 tabular-nums">
+                      {row.productId ? `1×${row.pcsPerUnit || 10}` : ''}
+                    </span>
+                  </div>
+
+                  {/* QTY (full strips) */}
+                  <div className="px-0.5">
+                    <Input
+                      ref={el => setFieldRef(row.uid, 'qty', el)}
+                      type="number"
+                      min="0"
+                      value={row.qty}
+                      onChange={e => updateRow(idx, { qty: parseInt(e.target.value) || 0 })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'qty')}
+                      disabled={!row.productId}
+                      className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
+                    />
+                  </div>
+
+                  {/* HSN (from product — read only) */}
+                  <div className="px-1 text-center min-w-0">
+                    <span className="block truncate text-[15px] font-medium text-gray-500">
+                      {row.productId ? (row.hsn || '—') : ''}
                     </span>
                   </div>
 
@@ -1590,40 +1732,32 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { batch: e.target.value })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
                       disabled={!row.productId}
-                      className="h-8 text-sm px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
+                      className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
                     />
                   </div>
 
-                  {/* STRI (full strips = qty) */}
+                  {/* MRP — product MRP (read only) */}
+                  <div className="px-1 text-center">
+                    <span className="text-[15px] font-medium text-gray-500 tabular-nums">
+                      {row.productId ? (row.mrp ? `₹${row.mrp.toFixed(2)}` : '—') : ''}
+                    </span>
+                  </div>
+
+                  {/* Rate (editable selling rate) */}
                   <div className="px-0.5">
                     <Input
-                      ref={el => setFieldRef(row.uid, 'qty', el)}
+                      ref={el => setFieldRef(row.uid, 'rate', el)}
                       type="number"
-                      min="0"
-                      value={row.qty}
-                      onChange={e => updateRow(idx, { qty: parseInt(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'qty')}
+                      step="0.01"
+                      value={row.rate || ''}
+                      onChange={e => updateRow(idx, { rate: parseFloat(e.target.value) || 0 })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'rate')}
                       disabled={!row.productId}
-                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
+                      className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-500 transition-all shadow-none text-gray-900"
                     />
                   </div>
 
-                  {/* TAB (loose tablets = subQty) */}
-                  <div className="px-0.5">
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'subQty', el)}
-                      type="number"
-                      min="0"
-                      value={row.subQty}
-                      onChange={e => updateRow(idx, { subQty: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
-                      disabled={!row.productId}
-                      placeholder="—"
-                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-all shadow-none text-green-700"
-                    />
-                  </div>
-
-                  {/* DISC% (always a percentage) */}
+                  {/* DISC% */}
                   <div className="px-0.5 relative">
                     <Input
                       ref={el => setFieldRef(row.uid, 'discount', el)}
@@ -1634,25 +1768,29 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'discount')}
                       disabled={!row.productId}
                       placeholder="0"
-                      className="h-8 text-[15px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-red-400 transition-all shadow-none text-red-500 text-center"
+                      className="h-8 text-[16px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-red-400 transition-all shadow-none text-red-500 text-center"
                     />
                     {row.productId && (
                       <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-red-400/70">%</span>
                     )}
                   </div>
 
-                  {/* M.R.P. (rate) */}
-                  <div className="px-0.5">
+                  {/* GST% (auto-fetched from product, editable) */}
+                  <div className="px-0.5 relative">
                     <Input
-                      ref={el => setFieldRef(row.uid, 'rate', el)}
+                      ref={el => setFieldRef(row.uid, 'gst', el)}
                       type="number"
-                      step="0.01"
-                      value={row.rate || ''}
-                      onChange={e => updateRow(idx, { rate: parseFloat(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'rate')}
+                      step="0.1"
+                      value={row.gst || ''}
+                      onChange={e => updateRow(idx, { gst: parseFloat(e.target.value) || 0 })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'gst')}
                       disabled={!row.productId}
-                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-emerald-500 transition-all shadow-none text-gray-900"
+                      placeholder="0"
+                      className="h-8 text-[16px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 transition-all shadow-none text-gray-600 text-center"
                     />
+                    {row.productId && (
+                      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-gray-400/70">%</span>
+                    )}
                   </div>
 
                   {/* AMOUNT */}
@@ -1663,15 +1801,16 @@ export default function RecordSale({
                   </div>
 
                   {/* Actions */}
-                  <div className="flex justify-center">
+                  <div className="flex items-center justify-center">
                     {row.productId && (
                       <button
                         type="button"
-                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 group-focus-within/row:opacity-100"
+                        className="grid place-items-center h-7 w-7 rounded-md text-red-400 hover:text-white hover:bg-red-500 transition-colors"
                         onClick={() => removeRow(idx)}
                         title="Remove row (Alt+Delete)"
+                        aria-label="Remove row"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     )}
                   </div>
@@ -1682,7 +1821,7 @@ export default function RecordSale({
             {/* Empty ledger lines to fill the grid (Marg look) */}
             {Array.from({ length: Math.max(0, 10 - rows.length) }).map((_, i) => (
               <div key={`filler-${i}`} className={`grid ${GRID_COLS} h-9 divide-x divide-green-50`}>
-                {Array.from({ length: 9 }).map((__, c) => <div key={c} />)}
+                {Array.from({ length: 11 }).map((__, c) => <div key={c} />)}
               </div>
             ))}
           </div>
@@ -1693,7 +1832,7 @@ export default function RecordSale({
       {activeSearchRow !== null && searchTerm.trim() !== '' && searchRect && createPortal(
         (() => {
           const list = filteredProducts.slice(0, 20);
-          const width = Math.min(Math.max(searchRect.width, 320), window.innerWidth - 16);
+          const width = Math.min(Math.max(searchRect.width, 620), window.innerWidth - 16);
           const left = Math.max(8, Math.min(searchRect.left, window.innerWidth - width - 8));
           const gap = 4;
           const maxH = 320;
@@ -1709,39 +1848,33 @@ export default function RecordSale({
               className="z-[200] bg-white rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.25)] border border-emerald-100 overflow-hidden flex flex-col"
               onMouseDown={e => e.preventDefault()} /* keep the input focused so click registers */
             >
-              <div className="flex-1 overflow-y-auto py-1">
+              <div ref={searchListRef} className="flex-1 overflow-y-auto py-1">
                 {list.length > 0 ? list.map((p, i) => (
                   <div
                     key={p.id}
+                    data-item={i}
                     onMouseEnter={() => setSearchHighlight(i)}
-                    className={`group/item w-full px-4 py-2 flex items-center justify-between border-b border-gray-50 last:border-0 transition-colors ${searchHighlight === i ? 'bg-emerald-50' : 'hover:bg-gray-50/50'}`}
+                    className={`group/item w-full pl-4 pr-2 h-9 flex items-center gap-3 border-b border-gray-50 last:border-0 transition-colors ${searchHighlight === i ? 'bg-emerald-50' : 'hover:bg-gray-50/50'}`}
                   >
                     <button
                       type="button"
                       onClick={() => selectProduct(activeSearchRow as number, p)}
-                      className="flex flex-col min-w-0 text-left flex-1"
+                      className="flex items-center gap-3 min-w-0 flex-1 text-left h-full"
                     >
-                      <p className={`font-bold text-sm truncate ${searchHighlight === i ? 'text-emerald-700' : 'text-gray-800'}`}>{p.name}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <Badge variant="outline" className="text-[10px] h-4 bg-emerald-50 text-emerald-600 border-emerald-100">Stock: {p.quantity}</Badge>
-                        {p.expiry_date && (
-                          <span className="text-[10px] font-medium text-rose-500">Exp: {p.expiry_date.substring(0, 7)}</span>
-                        )}
-                        {p.hsn_code && <span className="text-[10px] text-gray-500 font-medium">HSN: {p.hsn_code}</span>}
-                        <span className="text-[10px] text-gray-400">U: {p.pcs_per_unit || 10}</span>
-                      </div>
+                      <span className={`text-sm font-semibold truncate flex-1 min-w-0 ${searchHighlight === i ? 'text-emerald-700' : 'text-gray-800'}`}>{p.name}</span>
+                      {p.hsn_code && <span className="hidden lg:inline text-[11px] text-gray-400 shrink-0 w-[86px] text-right truncate">HSN {p.hsn_code}</span>}
+                      {p.expiry_date && <span className="hidden sm:inline text-[11px] font-medium text-rose-500 shrink-0 w-[74px] text-right tabular-nums">Exp {p.expiry_date.substring(0, 7)}</span>}
+                      <span className="text-[11px] font-medium text-emerald-600 shrink-0 w-16 text-right tabular-nums">Stk {p.quantity}</span>
+                      <span className="text-sm font-bold text-emerald-700 shrink-0 w-20 text-right tabular-nums">₹{p.selling_price.toFixed(2)}</span>
                     </button>
-                    <div className="flex items-center gap-2 shrink-0 ml-2">
-                      <span className="font-bold text-emerald-600 text-sm">₹{p.selling_price.toFixed(2)}</span>
-                      <button
-                        type="button"
-                        title="View full info (F1)"
-                        onClick={() => { setInfoProduct(p); setInfoRow(activeSearchRow); }}
-                        className="h-6 w-6 inline-flex items-center justify-center rounded-full text-indigo-500 hover:bg-indigo-50"
-                      >
-                        <HelpCircle className="h-4 w-4" />
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      title="View full info (F1)"
+                      onClick={() => { setInfoProduct(p); setInfoRow(activeSearchRow); }}
+                      className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-full text-indigo-500 hover:bg-indigo-50"
+                    >
+                      <HelpCircle className="h-4 w-4" />
+                    </button>
                   </div>
                 )) : (
                   <div className="px-4 py-6 text-center text-gray-400 text-sm font-medium">No medicines found matching "{searchTerm}"</div>
@@ -1761,45 +1894,128 @@ export default function RecordSale({
       {infoProduct && createPortal(
         <div
           className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setInfoProduct(null)}
+          onClick={closeInfo}
         >
-          <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white flex items-center justify-between gap-2">
+          <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white flex items-center justify-between gap-2 shrink-0">
               <div className="min-w-0">
-                <p className="font-bold text-base truncate">{infoProduct.name}</p>
-                <p className="text-[11px] text-emerald-50">Product details</p>
+                <p className="font-bold text-lg truncate">{infoProduct.name}</p>
+                <p className="text-[11px] text-emerald-50 truncate">
+                  {[infoProduct.category, infoProduct.manufacturer].filter(Boolean).join(' · ') || 'Product details'}
+                </p>
               </div>
-              <button type="button" onClick={() => setInfoProduct(null)} className="p-1 rounded-full hover:bg-white/20 shrink-0">
+              <button type="button" onClick={closeInfo} className="p-1 rounded-full hover:bg-white/20 shrink-0">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="p-5 grid grid-cols-2 gap-x-4 gap-y-3">
-              {([
-                ['Stock', String(infoProduct.quantity)],
-                ['M.R.P.', `₹${infoProduct.selling_price.toFixed(2)}`],
-                ['GST', infoProduct.gst != null ? `${infoProduct.gst}%` : '—'],
-                ['Pcs / Unit', String(infoProduct.pcs_per_unit || 10)],
-                ['HSN', infoProduct.hsn_code || '—'],
-                ['Batch', infoProduct.batch_number || '—'],
-                ['Expiry', infoProduct.expiry_date ? infoProduct.expiry_date.substring(0, 7) : '—'],
-                ['Category', infoProduct.category || '—'],
-                ['Manufacturer', infoProduct.manufacturer || '—'],
-              ] as [string, string][]).map(([label, value], i, arr) => (
-                <div key={label} className={i === arr.length - 1 ? 'col-span-2' : ''}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
-                  <p className="text-sm font-medium text-gray-800 break-words">{value}</p>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {infoDetails.loading ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600" />
                 </div>
-              ))}
+              ) : (() => {
+                const full = infoDetails.full || {};
+                const sales = infoDetails.sales;
+                const purchase = full.purchase_price ?? null;
+                const mrp = infoProduct.selling_price;
+                const margin = (purchase && purchase > 0) ? ((mrp - purchase) / purchase) * 100 : null;
+                const strips = sales.reduce((s: number, r: any) => s + (r.quantity || 0), 0);
+                const tabs = sales.reduce((s: number, r: any) => s + (r.sub_qty || 0), 0);
+                const revenue = sales.reduce((s: number, r: any) => s + (r.total_price || 0), 0);
+                const lastSold = sales[0];
+                const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                return (
+                  <>
+                    {/* Key stats */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <StatTile label="Current Stock" value={String(full.quantity ?? infoProduct.quantity)} />
+                      <StatTile label="M.R.P." value={`₹${mrp.toFixed(2)}`} accent />
+                      <StatTile label="Purchase" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : '—'} />
+                      <StatTile label="Margin" value={margin != null ? `${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%` : '—'} accent={margin != null && margin >= 0} />
+                    </div>
+
+                    {/* Product details */}
+                    <InfoSection title="Product Details">
+                      <DetailItem label="HSN Code" value={full.hsn_code || infoProduct.hsn_code} />
+                      <DetailItem label="Batch" value={full.batch_number || infoProduct.batch_number} />
+                      <DetailItem label="Expiry" value={(full.expiry_date || infoProduct.expiry_date) ? (full.expiry_date || infoProduct.expiry_date).substring(0, 7) : null} />
+                      <DetailItem label="GST" value={(full.gst ?? infoProduct.gst) != null ? `${full.gst ?? infoProduct.gst}%` : null} />
+                      <DetailItem label="Pcs / Unit" value={String(full.pcs_per_unit || infoProduct.pcs_per_unit || 10)} />
+                      <DetailItem label="Low-stock alert" value={full.low_stock_threshold != null ? String(full.low_stock_threshold) : null} />
+                      <DetailItem label="SKU" value={full.sku} />
+                      <DetailItem label="Category" value={full.category || infoProduct.category} />
+                      <DetailItem label="Manufacturer" value={full.manufacturer || infoProduct.manufacturer} />
+                    </InfoSection>
+
+                    {/* Purchase & supplier */}
+                    <InfoSection title="Purchase & Supplier">
+                      <DetailItem label="Supplier" value={full.supplier} />
+                      <DetailItem label="Purchase Price" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : null} />
+                      <DetailItem label="Added on" value={fmtDate(full.created_at)} />
+                      <DetailItem label="Last updated" value={fmtDate(full.updated_at)} />
+                    </InfoSection>
+
+                    {/* Sales summary */}
+                    <InfoSection title="Sales Summary">
+                      <DetailItem label="Bills" value={String(sales.length)} />
+                      <DetailItem label="Strips sold" value={String(strips)} />
+                      <DetailItem label="Tablets sold" value={String(tabs)} />
+                      <DetailItem label="Total revenue" value={`₹${revenue.toFixed(2)}`} />
+                      <DetailItem label="Last sold" value={lastSold ? fmtDate(lastSold.sale_date || lastSold.created_at) : '—'} />
+                      <DetailItem label="Last sold to" value={lastSold?.customer_name || null} />
+                    </InfoSection>
+
+                    {/* Recent sales */}
+                    <div>
+                      <h3 className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Recent Sales</h3>
+                      {sales.length > 0 ? (
+                        <div className="border border-gray-100 rounded-lg overflow-hidden">
+                          <div className="grid grid-cols-[1fr_1.4fr_0.7fr_0.9fr_1fr] bg-gray-50 text-[10px] font-bold uppercase tracking-wide text-gray-400 px-3 py-1.5">
+                            <span>Date</span><span>Customer</span><span className="text-center">Qty</span><span className="text-right">Rate</span><span className="text-right">Amount</span>
+                          </div>
+                          <div className="max-h-56 overflow-y-auto divide-y divide-gray-50">
+                            {sales.slice(0, 40).map((r: any, i: number) => (
+                              <div key={i} className="grid grid-cols-[1fr_1.4fr_0.7fr_0.9fr_1fr] px-3 py-1.5 text-xs items-center hover:bg-gray-50/60">
+                                <span className="text-gray-500 tabular-nums">{fmtDate(r.sale_date || r.created_at)}</span>
+                                <span className="text-gray-700 truncate">{r.customer_name || 'Walk-in'}</span>
+                                <span className="text-center font-medium text-gray-700 tabular-nums">{r.quantity}{r.sub_qty ? `+${r.sub_qty}` : ''}</span>
+                                <span className="text-right text-gray-600 tabular-nums">₹{Number(r.unit_price || 0).toFixed(2)}</span>
+                                <span className="text-right font-semibold text-emerald-700 tabular-nums">₹{Number(r.total_price || 0).toFixed(2)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-400 italic">No sales recorded for this medicine yet.</p>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
-            <div className="px-5 pb-5 flex gap-2">
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50/50 flex gap-2 shrink-0">
               <Button
+                ref={addToBillRef}
                 type="button"
                 onClick={() => { if (infoRow !== null) selectProduct(infoRow, infoProduct); setInfoProduct(null); setInfoRow(null); }}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white focus-visible:ring-2 focus-visible:ring-emerald-400"
               >
                 Add to bill
               </Button>
-              <Button type="button" variant="outline" onClick={() => { setInfoProduct(null); setInfoRow(null); }}>Close</Button>
+              <Button
+                ref={closeInfoRef}
+                type="button"
+                variant="outline"
+                onClick={closeInfo}
+                className="focus-visible:ring-2 focus-visible:ring-emerald-400"
+              >
+                Close
+              </Button>
             </div>
           </div>
         </div>,
@@ -1809,58 +2025,90 @@ export default function RecordSale({
 
       {/* ══════ ZONE 5: STICKY FOOTER (SLEEK) ══════ */}
       <div className="bg-white border-t border-green-100 shadow-[0_-8px_24px_rgba(0,0,0,0.04)] shrink-0 z-30">
-        <div className="px-3 sm:px-6 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3 md:gap-4 max-w-[1700px] mx-auto">
-          {/* Left: Payment & Global Info */}
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 md:gap-5">
-            <div className="flex gap-1.5 bg-white p-1 rounded-lg border border-green-100">
+        <div className="px-2 sm:px-6 py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-4 max-w-[1700px] mx-auto">
+          {/* Left: Payment & inputs — full width on mobile */}
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 md:gap-4 md:flex-1 min-w-0">
+            {/* Payment modes — 4-up grid on phones, inline from sm */}
+            <div className="grid grid-cols-4 sm:flex gap-1 sm:gap-1.5 bg-white p-1 rounded-lg border border-green-100 w-full sm:w-auto">
               {paymentModes.map((mode, i) => (
                 <button
                   key={mode.key}
                   type="button"
+                  ref={el => (paymentRefs.current[i] = el)}
                   onClick={() => setPaymentMode(mode.key)}
-                  className={`
-                    flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors relative
-                    ${paymentMode === mode.key
-                      ? 'bg-green-600 text-white shadow-sm z-10'
-                      : 'text-gray-600 hover:text-green-700 hover:bg-green-50'
+                  onKeyDown={e => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                      e.preventDefault(); e.stopPropagation();
+                      const n = (i + 1) % paymentModes.length;
+                      setPaymentMode(paymentModes[n].key);
+                      paymentRefs.current[n]?.focus();
+                    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                      e.preventDefault(); e.stopPropagation();
+                      const n = (i - 1 + paymentModes.length) % paymentModes.length;
+                      setPaymentMode(paymentModes[n].key);
+                      paymentRefs.current[n]?.focus();
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      setPaymentMode(mode.key);
+                      if (e.shiftKey) focusFirstEmptyProduct(); // back to the item rows
+                      else globalDiscRef.current?.focus();       // forward
                     }
-                  `}
+                  }}
+                  className={`flex items-center justify-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-xs font-medium transition-colors relative outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${paymentMode === mode.key ? 'bg-green-600 text-white shadow-sm z-10' : 'text-gray-600 hover:text-green-700 hover:bg-green-50'}`}
                 >
-                  <mode.icon className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">{mode.label}</span>
+                  <mode.icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{mode.label}</span>
                 </button>
               ))}
             </div>
-            
-            <div className="hidden md:block h-8 w-px bg-green-100 ml-2"></div>
 
-            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-md border border-green-100">
-              <Label className="text-xs font-medium text-green-700">Global Disc%</Label>
-              <Input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value={globalDiscount || ''}
-                onChange={e => setGlobalDiscount(parseFloat(e.target.value) || 0)}
-                className="w-14 h-8 text-sm text-center border-green-200 bg-white focus:border-green-500 focus:ring-green-100 shadow-none"
-                placeholder="0"
-              />
-            </div>
+            <div className="hidden md:block h-8 w-px bg-green-100"></div>
 
-            <div className={`flex items-center gap-2 bg-white px-3 py-1.5 rounded-md border transition-all ${paymentMode === 'credit' ? 'border-orange-200 bg-orange-50' : 'border-green-100'}`}>
-              <Label className={`text-xs font-medium ${paymentMode === 'credit' ? 'text-orange-700' : 'text-green-700'}`}>
-                {paymentMode === 'credit' ? 'Amt Paid' : 'Received'}
-              </Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={receivedAmount}
-                onChange={e => setReceivedAmount(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
-                className={`w-20 h-8 text-sm font-bold border-none shadow-none bg-transparent focus:ring-0 text-right ${paymentMode === 'credit' ? 'text-orange-900' : 'text-green-900'}`}
-                placeholder="0.00"
-              />
+            {/* Disc + Received — share one row on phones, flow inline from sm */}
+            <div className="flex gap-2 w-full sm:contents">
+              <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-green-100 flex-1 sm:flex-none min-w-0">
+                <Label className="text-[11px] font-medium text-green-700 shrink-0">Global Disc%</Label>
+                <Input
+                  ref={globalDiscRef}
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={globalDiscount || ''}
+                  onChange={e => setGlobalDiscount(parseFloat(e.target.value) || 0)}
+                  onKeyDown={e => {
+                    const empty = e.currentTarget.value === '';
+                    const toPayment = () => { const idx = Math.max(0, paymentModes.findIndex(m => m.key === paymentMode)); paymentRefs.current[idx]?.focus(); };
+                    if (e.key === 'Enter') { e.preventDefault(); if (e.shiftKey) toPayment(); else receivedRef.current?.focus(); }
+                    else if (e.key === 'ArrowRight' && empty) { e.preventDefault(); receivedRef.current?.focus(); }
+                    else if (e.key === 'ArrowLeft' && empty) { e.preventDefault(); toPayment(); }
+                  }}
+                  className="no-spinner flex-1 sm:flex-none sm:w-14 min-w-0 h-8 text-sm text-center border-green-200 bg-white focus:border-green-500 focus:ring-green-100 shadow-none"
+                  placeholder="0"
+                />
+              </div>
+
+              <div className={`flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border transition-all flex-1 sm:flex-none min-w-0 ${paymentMode === 'credit' ? 'border-orange-200 bg-orange-50' : 'border-green-100'}`}>
+                <Label className={`text-[11px] font-medium shrink-0 ${paymentMode === 'credit' ? 'text-orange-700' : 'text-green-700'}`}>
+                  {paymentMode === 'credit' ? 'Amt Paid' : 'Received'}
+                </Label>
+                <Input
+                  ref={receivedRef}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={receivedAmount}
+                  onChange={e => setReceivedAmount(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+                  onKeyDown={e => {
+                    const empty = e.currentTarget.value === '';
+                    if (e.key === 'Enter') { e.preventDefault(); if (e.shiftKey) globalDiscRef.current?.focus(); else finalizeRef.current?.focus(); }
+                    else if (e.key === 'ArrowRight' && empty) { e.preventDefault(); finalizeRef.current?.focus(); }
+                    else if (e.key === 'ArrowLeft' && empty) { e.preventDefault(); globalDiscRef.current?.focus(); }
+                  }}
+                  className={`no-spinner flex-1 min-w-0 sm:flex-none sm:w-auto sm:min-w-[3.5rem] sm:max-w-[9rem] sm:[field-sizing:content] h-8 text-sm font-bold border-none shadow-none bg-transparent focus:ring-0 text-right ${paymentMode === 'credit' ? 'text-orange-900' : 'text-green-900'}`}
+                  placeholder="0.00"
+                />
+              </div>
             </div>
 
             {/* Live due amount indicator for partial / credit payments */}
@@ -1869,8 +2117,8 @@ export default function RecordSale({
               const due = totals.grandTotal - paid;
               if (due > 0.01) {
                 return (
-                  <div className="flex flex-col items-center px-3 py-1 rounded-md bg-red-50 border border-red-200 min-w-[80px]">
-                    <span className="text-[9px] font-bold text-red-400 uppercase tracking-wider">Due</span>
+                  <div className="flex items-center justify-between sm:justify-center gap-2 px-3 py-1 rounded-md bg-red-50 border border-red-200 w-full sm:w-auto sm:min-w-[80px]">
+                    <span className="text-[10px] sm:text-[9px] font-bold text-red-400 uppercase tracking-wider">Due</span>
                     <span className="text-sm font-black text-red-600">₹{Math.round(due * 100) / 100}</span>
                   </div>
                 );
@@ -1879,9 +2127,9 @@ export default function RecordSale({
             })()}
           </div>
 
-          {/* Right: Summary & Action */}
-          <div className="flex flex-wrap items-center gap-3 sm:gap-6 md:gap-8 justify-between md:justify-end w-full md:w-auto">
-            <div className="hidden sm:flex items-center gap-5 text-sm font-medium">
+          {/* Right: Amount + Finalize — full width on mobile */}
+          <div className="flex items-stretch gap-2 sm:gap-3 w-full md:w-auto">
+            <div className="hidden lg:flex items-center gap-5 text-sm font-medium">
               <div className="flex flex-col text-right">
                 <span className="text-emerald-500 text-xs">Items</span>
                 <span className="text-emerald-900">{rows.filter(r => r.productId).length}</span>
@@ -1898,8 +2146,8 @@ export default function RecordSale({
               )}
             </div>
 
-            <div className="bg-emerald-50 text-emerald-900 px-5 py-2 rounded-md border border-emerald-200 flex flex-col items-center min-w-[170px]">
-              <span className="text-xs font-medium text-emerald-600 mb-0.5">Amount Payable</span>
+            <div className="bg-emerald-50 text-emerald-900 px-4 py-2 rounded-md border border-emerald-200 flex flex-col items-center justify-center flex-1 md:flex-none md:min-w-[170px] min-w-0">
+              <span className="text-[11px] font-medium text-emerald-600">Amount Payable</span>
               <div className="flex items-baseline gap-1">
                 <span className="text-emerald-600 text-sm font-medium">₹</span>
                 <span className="text-2xl font-semibold tabular-nums leading-none">
@@ -1913,10 +2161,10 @@ export default function RecordSale({
               type="button"
               onClick={handleSave}
               disabled={isSaving || rows.every(r => !r.productId)}
-              className="h-10 px-5 bg-green-600 hover:bg-green-700 text-white font-medium text-sm rounded-md transition-colors disabled:opacity-50 border border-green-500/20"
+              className="flex-1 md:flex-none h-auto md:h-10 px-5 bg-green-600 hover:bg-green-700 text-white font-semibold text-sm rounded-md transition-colors disabled:opacity-50 border border-green-500/20"
             >
               {isSaving ? 'Recording...' : (
-                <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center gap-2">
                   <span>Finalize</span>
                   <ChevronDown className="h-4 w-4 -rotate-90" />
                 </div>
@@ -1935,6 +2183,34 @@ export default function RecordSale({
         defaultGst={settings?.default_gst_rate}
       />
 
+    </div>
+  );
+}
+
+// ── Product-info modal helpers ──────────────────────────────────────────────
+function StatTile({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className={`rounded-xl border p-3 ${accent ? 'border-emerald-200 bg-emerald-50' : 'border-gray-100 bg-gray-50'}`}>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+      <p className={`text-lg font-bold mt-0.5 tabular-nums ${accent ? 'text-emerald-700' : 'text-gray-800'}`}>{value}</p>
+    </div>
+  );
+}
+
+function InfoSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">{title}</h3>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">{children}</div>
+    </div>
+  );
+}
+
+function DetailItem({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="text-sm font-medium text-gray-800 break-words">{value || '—'}</p>
     </div>
   );
 }

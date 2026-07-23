@@ -389,12 +389,17 @@ tr {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.3);
+  background: hsl(var(--primary) / 0.35);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground) / 0.5);
+  background: hsl(var(--primary) / 0.6);
+}
+
+/* Firefox */
+* {
+  scrollbar-color: hsl(var(--primary) / 0.4) transparent;
 }
 
 /* Mobile - hide scrollbars for cleaner look, but keep scrollable */
@@ -421,6 +426,17 @@ tr {
   margin: 0;
 }
 .billing-grid input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Reusable: hide the up/down spinner on any number input that opts in */
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.no-spinner {
   -moz-appearance: textfield;
   appearance: textfield;
 }

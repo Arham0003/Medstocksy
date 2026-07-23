@@ -21,6 +21,7 @@ import {
   Tag,
   CircleDollarSign,
   ShieldCheck,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
@@ -34,6 +35,7 @@ interface Settings {
   default_gst_rate: number;
   gst_type?: string;
   whatsapp_custom_note?: string | null;
+  sales_edit_window_hours?: number | null;
 }
 
 interface Account {
@@ -211,37 +213,35 @@ export default function Settings() {
     const gstEnabled = gstEnabledState;
     const gstType = gstTypeState;
     const whatsappCustomNote = (formData.get('whatsappCustomNote') as string) || null;
+    const rawEditWindow = parseInt(formData.get('salesEditWindowHours') as string);
+    const salesEditWindowHours = Number.isFinite(rawEditWindow) && rawEditWindow > 0 ? rawEditWindow : 24;
 
     try {
-      const updateData: any = {
+      // Core columns always exist; the optional ones need later migrations.
+      const core: any = {
         currency,
         default_gst_rate: defaultGstRate,
         gst_enabled: gstEnabled,
         whatsapp_custom_note: whatsappCustomNote,
       };
+      const withOptional = { ...core, gst_type: gstType, sales_edit_window_hours: salesEditWindowHours };
 
       const { error } = await supabase
         .from('settings')
-        .update({
-          ...updateData,
-          gst_type: gstType,
-        })
+        .update(withOptional)
         .eq('account_id', profile?.account_id);
 
-      if (error && error.message.includes('gst_type')) {
+      if (error) {
+        // A newer column (gst_type / sales_edit_window_hours) may not exist yet → save the core fields.
         const { error: retryError } = await supabase
           .from('settings')
-          .update(updateData)
+          .update(core)
           .eq('account_id', profile?.account_id);
-
         if (retryError) throw retryError;
-
         toast({
           title: 'Settings updated',
-          description: 'Settings saved. Note: GST Type field requires database migration.',
+          description: 'Saved. Some newer fields (GST type / edit window) need a database migration.',
         });
-      } else if (error) {
-        throw error;
       } else {
         toast({
           title: 'Settings updated',
@@ -464,6 +464,23 @@ export default function Settings() {
                         placeholder="18.0"
                       />
                     </div>
+                  </div>
+
+                  {/* Sales edit window */}
+                  <div className="space-y-2 max-w-xs">
+                    <FieldLabel htmlFor="salesEditWindowHours" icon={Clock}>Sales edit window (hours)</FieldLabel>
+                    <Input
+                      id="salesEditWindowHours"
+                      name="salesEditWindowHours"
+                      type="number"
+                      min="1"
+                      step="1"
+                      defaultValue={settings?.sales_edit_window_hours ?? 24}
+                      placeholder="24"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      How long after a sale is recorded it can still be edited. Default 24 hours.
+                    </p>
                   </div>
 
                   {/* GST enable — big clickable toggle card */}

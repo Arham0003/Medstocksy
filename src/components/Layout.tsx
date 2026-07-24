@@ -67,7 +67,7 @@ function getInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-const AppSidebar = memo(({ accountName, userName }: { accountName: string; userName: string }) => {
+const AppSidebar = memo(({ accountName, userName, focusedIndex }: { accountName: string; userName: string; focusedIndex: number | null }) => {
   const { signOut } = useAuth();
   const location = useLocation();
 
@@ -99,7 +99,11 @@ const AppSidebar = memo(({ accountName, userName }: { accountName: string; userN
                       asChild
                       isActive={location.pathname === item.href}
                       tooltip={`${item.title} (${shortcutKey})`}
-                      className="text-base py-3 rounded-lg hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+                      className={`text-base py-3 rounded-lg transition-all duration-300 ease-out ${
+                        focusedIndex === index
+                          ? 'bg-white/70 dark:bg-white/20 backdrop-blur-2xl border border-white/80 dark:border-white/30 shadow-[0_8px_32px_0_rgba(31,38,135,0.15)] ring-1 ring-white/60 dark:ring-white/20 scale-[1.04] py-3.5 px-3.5 my-1 rounded-xl font-bold text-foreground z-10'
+                          : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                      }`}
                     >
                       <Link to={item.href} className="flex items-center justify-between w-full">
                         <div className="flex items-center gap-2">
@@ -213,8 +217,13 @@ export default function Layout() {
   const { user, loading, profile } = useAuth();
   const [accountName, setAccountName] = useState('My Store');
   const [userName, setUserName] = useState('Manager');
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    setFocusedIndex(null);
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -236,6 +245,10 @@ export default function Layout() {
         return;
       }
 
+      // ponytail: skip sidebar nav shortcuts on sub-pages (e.g. /sales/new) — only apply to top-level routes
+      const isTopLevel = ownerNavItems.some((item) => item.href === location.pathname);
+      if (!isTopLevel) return;
+
       // Check numbers
       const key = parseInt(e.key);
       if (!isNaN(key)) {
@@ -249,35 +262,38 @@ export default function Layout() {
         if (item) {
           e.preventDefault();
           navigate(item.href);
+          setFocusedIndex(null);
         }
       }
 
-      // Check up and down arrows
-      if (e.key === 'ArrowDown') {
+      // ponytail: ArrowLeft focuses sidebar; when focused, Up/Down move highlight, Right/Enter open and enter section
+      if (e.key === 'ArrowLeft' && focusedIndex === null) {
         e.preventDefault();
-        const currentIndex = ownerNavItems.findIndex((item) => item.href === location.pathname);
-        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % ownerNavItems.length;
-        const nextItem = ownerNavItems[nextIndex];
-        if (nextItem) {
-          navigate(nextItem.href);
-        }
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        const currentIndex = ownerNavItems.findIndex((item) => item.href === location.pathname);
-        const prevIndex =
-          currentIndex === -1
-            ? ownerNavItems.length - 1
-            : (currentIndex - 1 + ownerNavItems.length) % ownerNavItems.length;
-        const prevItem = ownerNavItems[prevIndex];
-        if (prevItem) {
-          navigate(prevItem.href);
+        const current = ownerNavItems.findIndex((item) => item.href === location.pathname);
+        setFocusedIndex(current === -1 ? 0 : current);
+      } else if (focusedIndex !== null) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setFocusedIndex((prev) => (prev !== null ? (prev + 1) % ownerNavItems.length : 0));
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setFocusedIndex((prev) =>
+            prev !== null ? (prev - 1 + ownerNavItems.length) % ownerNavItems.length : ownerNavItems.length - 1
+          );
+        } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+          e.preventDefault();
+          const item = ownerNavItems[focusedIndex];
+          if (item) {
+            navigate(item.href);
+            setFocusedIndex(null);
+          }
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigate, location.pathname]);
+  }, [navigate, location.pathname, focusedIndex]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -320,7 +336,7 @@ export default function Layout() {
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <AppSidebar accountName={accountName} userName={userName} />
+        <AppSidebar accountName={accountName} userName={userName} focusedIndex={focusedIndex} />
         <main className="flex-1 flex flex-col min-w-0">
           <header className="border-b px-3 sm:px-4 py-2 bg-background sticky top-0 z-10 flex items-center gap-2 sm:gap-3">
             <SidebarTrigger className="h-9 w-9 shrink-0" />

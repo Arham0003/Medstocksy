@@ -15,6 +15,7 @@ import {
   CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Zap
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { calcGst } from '@/lib/gst';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
 import { BILL_DATA_PREFIX, clearBillData } from '@/hooks/useBillSessions';
 
@@ -114,11 +115,7 @@ function calcAmount(row: BillRow, settings: Settings | null): number {
   const net = gross - discountAmt;
 
   if (settings?.gst_enabled) {
-    if (isGstInclusive) {
-      return net; // GST already included
-    } else {
-      return net + (net * gst) / 100;
-    }
+    return calcGst(net, gst, isGstInclusive).totalPrice;
   }
   return net;
 }
@@ -637,7 +634,7 @@ export default function RecordSale({
       mrp: product.selling_price,
       rate: product.selling_price,
       gst: gstRate,
-      pcsPerUnit: product.pcs_per_unit || 10,
+      pcsPerUnit: product.pcs_per_unit ?? 0,
     });
     setActiveSearchRow(null);
     setSearchTerm('');
@@ -724,7 +721,7 @@ export default function RecordSale({
       mrp: product.selling_price,
       rate: product.selling_price,
       gst: gstRate,
-      pcsPerUnit: product.pcs_per_unit || 10,
+      pcsPerUnit: product.pcs_per_unit ?? 0,
       qty: 1,
       subQty: '',
       discount: 0,
@@ -802,11 +799,7 @@ export default function RecordSale({
       discountTotal += rowDiscAmt + globalDiscAmt;
 
       if (settings?.gst_enabled) {
-        if (isGstInclusive) {
-          gstTotal += (netAfterGlobal * row.gst) / 100;
-        } else {
-          gstTotal += (netAfterGlobal * row.gst) / 100;
-        }
+        gstTotal += calcGst(netAfterGlobal, row.gst, isGstInclusive).gstAmount;
       }
     });
 
@@ -883,7 +876,7 @@ export default function RecordSale({
       mrp: product.selling_price,
       rate: product.selling_price,
       gst: gstRate,
-      pcsPerUnit: product.pcs_per_unit || 10,
+      pcsPerUnit: product.pcs_per_unit ?? 0,
       qty,
       subQty: '',
       discount: 0,
@@ -952,10 +945,9 @@ export default function RecordSale({
         let finalTotal = netAfterAll;
 
         if (settings?.gst_enabled) {
-          finalGst = (netAfterAll * row.gst) / 100;
-          if (!isGstInclusive) {
-            finalTotal = netAfterAll + finalGst;
-          }
+          const gstResult = calcGst(netAfterAll, row.gst, isGstInclusive);
+          finalGst = gstResult.gstAmount;
+          finalTotal = gstResult.totalPrice;
         }
 
         const hasSubQty = row.subQty !== '' && Number(row.subQty) > 0;
@@ -1614,11 +1606,12 @@ export default function RecordSale({
                       ref={el => setFieldRef(row.uid, 'subQty', el)}
                       type="number"
                       min="0"
+                      max={row.pcsPerUnit > 0 ? row.pcsPerUnit - 1 : undefined}
                       value={row.subQty}
                       onChange={e => updateRow(idx, { subQty: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
-                      disabled={!row.productId}
-                      placeholder="—"
+                      disabled={!row.productId || row.pcsPerUnit === 0}
+                      placeholder={row.pcsPerUnit > 0 ? '—' : 'N/A'}
                       className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-all shadow-none text-green-700"
                     />
                   </div>

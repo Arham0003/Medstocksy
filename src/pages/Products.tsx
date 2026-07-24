@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { cn, formatINR, formatExpiry } from "@/lib/utils";
+import { cn, formatINR, formatExpiry, calcEffectivePurchasePrice } from "@/lib/utils";
 import MultiProductForm from '@/components/MultiProductForm';
 import { TableSkeleton } from '@/components/TableSkeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,14 +24,11 @@ import {
   ChevronDown,
   ChevronUp,
   ArrowUpDown,
-  Upload,
   Wallet,
   Clock,
-  FileText,
   Loader2,
 } from 'lucide-react';
-import { parseInvoicePdf } from '@/lib/parseInvoicePdf';
-import { saveBulkDraft, loadBulkDraft, clearBulkDraft, loadMultiDraft } from '@/lib/productDraft';
+import { loadMultiDraft } from '@/lib/productDraft';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
@@ -44,11 +41,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -105,12 +97,15 @@ const PRESET_CATEGORIES = [
   "Others"
 ];
 
+
+
 export default function Products() {
   const navigate = useNavigate();
   const { isOwner, profile } = useAuth();
   const { toast } = useToast();
-  // Account-wide default GST rate from Settings → drives the GST default on new-product forms
+  // Account-wide default GST rate & type from Settings → drives the GST defaults on new-product forms
   const [defaultGstRate, setDefaultGstRate] = useState<number>(18);
+  const [gstInclusive, setGstInclusive] = useState<boolean>(false);
   // URL state — initial values come from search params, changes get written back so views are shareable/bookmarkable
   const [searchParams, setSearchParams] = useSearchParams();
   const initialSort = (() => {
@@ -124,11 +119,6 @@ export default function Products() {
   })();
 
   const [products, setProducts] = useState<Product[]>([]);
-  const [uploadedData, setUploadedData] = useState<string[][]>([]);
-  const [parsedProducts, setParsedProducts] = useState<Product[]>([]);
-  const [pdfImporting, setPdfImporting] = useState(false);
-  const [bulkDragActive, setBulkDragActive] = useState(false);
-  const bulkInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') ?? '');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -150,12 +140,9 @@ export default function Products() {
   // Pagination
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(() => Math.max(1, Number(searchParams.get('page')) || 1));
-  // Bulk import collapsible
-  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   // New multi-product add dialog
   const [isMultiAddOpen, setIsMultiAddOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isSavingAll, setIsSavingAll] = useState(false);
 
   // Supplier search state
   const [allSuppliers, setAllSuppliers] = useState<SupplierOption[]>([]);
@@ -163,25 +150,6 @@ export default function Products() {
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   const [supplierDropdownOpen, setSupplierDropdownOpen] = useState(false);
   const supplierRef = useRef<HTMLDivElement>(null);
-
-  // CSV Supplier mapping state
-  const [unmatchedSupplierDialogOpen, setUnmatchedSupplierDialogOpen] = useState(false);
-  const [csvGlobalSupplierId, setCsvGlobalSupplierId] = useState<string | null>(null);
-  const [csvGlobalSupplierSearch, setCsvGlobalSupplierSearch] = useState('');
-  const [csvSupplierDropdownOpen, setCsvSupplierDropdownOpen] = useState(false);
-  const csvSupplierRef = useRef<HTMLDivElement>(null);
-  const [unmatchedSupplierNames, setUnmatchedSupplierNames] = useState<string[]>([]);
-
-  const filteredCsvSupplierOptions = useMemo(() => {
-    if (!csvGlobalSupplierSearch.trim()) return allSuppliers.slice(0, 8);
-    const q = csvGlobalSupplierSearch.toLowerCase();
-    return allSuppliers.filter(s =>
-      s.name.toLowerCase().includes(q) ||
-      (s.phone || '').includes(q) ||
-      (s.contact_person || '').toLowerCase().includes(q) ||
-      s.supplier_code.toLowerCase().includes(q)
-    ).slice(0, 8);
-  }, [allSuppliers, csvGlobalSupplierSearch]);
 
   const filteredSupplierOptions = useMemo(() => {
     if (!supplierSearch.trim()) return allSuppliers.slice(0, 8);
@@ -234,19 +202,22 @@ export default function Products() {
     fetchSuppliers();
   }, [fetchSuppliers]);
 
-  // Pull the account-wide default GST rate from Settings (Tax & Currency tab)
+  // Pull the account-wide default GST rate & mode from Settings (Tax & Currency tab)
   useEffect(() => {
     if (!profile?.account_id) return;
     let cancelled = false;
     (async () => {
       const { data } = await supabase
         .from('settings')
-        .select('default_gst_rate')
+        .select('default_gst_rate, gst_type')
         .eq('account_id', profile.account_id)
         .single();
       const raw: any = data;
-      if (!cancelled && typeof raw?.default_gst_rate === 'number') {
-        setDefaultGstRate(raw.default_gst_rate);
+      if (!cancelled) {
+        if (typeof raw?.default_gst_rate === 'number') {
+          setDefaultGstRate(raw.default_gst_rate);
+        }
+        setGstInclusive(raw?.gst_type === 'inclusive');
       }
     })();
     return () => { cancelled = true; };
@@ -258,15 +229,12 @@ export default function Products() {
       if (supplierRef.current && !supplierRef.current.contains(e.target as Node)) {
         setSupplierDropdownOpen(false);
       }
-      if (csvSupplierRef.current && !csvSupplierRef.current.contains(e.target as Node)) {
-        setCsvSupplierDropdownOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // F2 Shortcut for Add Product
+  // F2 Shortcut for Purchase Entry
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F2') {
@@ -278,64 +246,7 @@ export default function Products() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Function to download sample CSV
-  const downloadSampleCSV = () => {
-    const headers = [
-      'name',
-      'hsn_code',
-      'category',
-      'batch_number',
-      'manufacturer',
-      'expiry_date',
-      'quantity',
-      'purchase_price',
-      'selling_price',
-      'gst',
-      'supplier',
-      'low_stock_threshold'
-    ];
 
-    const sampleData = [
-      ['Paracetamol 500mg', '30049099', 'Tablets', 'BATCH001', 'ABC Pharma', '2026-12-01', '100', '5.50', '10.00', '12', 'Vaibhav', '20'],
-      ['Amoxicillin 250mg', '30042090', 'Capsules', 'BATCH002', 'XYZ Pharma', '2026-12-02', '150', '8.00', '15.00', '12', 'Vaibhav', '25'],
-      ['Cough Syrup 100ml', '30049011', 'Syrups', 'BATCH003', 'DEF Pharma', '2026-12-03', '75', '45.00', '75.00', '18', 'Vaibhav', '15'],
-      ['Antiseptic Cream 50g', '30039000', 'Ointments', 'BATCH004', 'GHI Pharma', '2026-12-04', '200', '25.00', '40.00', '18', 'Vaibhav', '30'],
-      ['Vitamin D3 Tablets', '21069000', 'Supplements', 'BATCH005', 'JKL Nutrition', '2026-12-05', '120', '15.00', '25.00', '12', 'Vaibhav', '20'],
-      ['Digital Thermometer', '90251180', 'Medical Devices', 'DEV001', 'MNO Medical', '2026-12-06', '50', '150.00', '250.00', '18', 'Vaibhav', '10'],
-      ['Insulin Injection 10ml', '30043100', 'Injections', 'BATCH006', 'PQR Pharma', '2026-12-07', '80', '200.00', '350.00', '12', 'Vaibhav', '15'],
-      ['Eye Drops 10ml', '30049031', 'Drops', 'BATCH007', 'STU Pharma', '2026-12-08', '90', '35.00', '60.00', '12', 'Vaibhav', '20'],
-      ['Baby Diaper Pack', '96190010', 'Baby Care', 'PACK001', 'VWX Baby Care', '2026-12-09', '60', '180.00', '250.00', '18', 'Sajal Srivastava', '15'],
-      ['Hand Sanitizer 500ml', '38089400', 'Personal Care', 'BATCH008', 'YZA Healthcare', '2026-12-10', '100', '45.00', '75.00', '18', 'Sajal Srivastava', '25']
-    ];
-
-    // Create CSV content
-    const csvContent = [
-      headers.join(','),
-      ...sampleData.map(row => row.map(cell => {
-        // Escape cells that contain commas or quotes
-        if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
-          return `"${cell.replace(/"/g, '""')}"`;
-        }
-        return cell;
-      }).join(','))
-    ].join('\n');
-
-    // Create blob and download
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'sample-products.csv');
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    toast({
-      title: "Sample CSV downloaded",
-      description: "Use this template to prepare your product data",
-    });
-  };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -349,16 +260,15 @@ export default function Products() {
     const pcsPerUnitVal = pcsPerUnitRaw ? parseInt(pcsPerUnitRaw) : null;
 
     const expDateRaw = formData.get('expiry_date') as string;
-    const productData = {
+    const baseProductData = {
       name: formData.get('name') as string,
       hsn_code: formData.get('hsn_code') as string,
       category: formData.get('category') as string,
       batch_number: formData.get('batch_number') as string,
       manufacturer: formData.get('manufacturer') as string,
       expiry_date: expDateRaw && expDateRaw.length === 7 ? `${expDateRaw}-01` : (expDateRaw || null),
-      quantity: parseInt(formData.get('quantity') as string),
-      purchase_price: parseFloat(formData.get('purchase_price') as string),
-      selling_price: parseFloat(formData.get('selling_price') as string),
+      purchase_price: parseFloat(formData.get('rate') as string) || 0,
+      selling_price: parseFloat(formData.get('mrp') as string) || 0,
       gst: parseFloat(formData.get('gst') as string),
       supplier: supplierSearch || (formData.get('supplier') as string) || null,
       supplier_id: selectedSupplierId || null,
@@ -373,12 +283,16 @@ export default function Products() {
       if (editingProduct) {
         ({ error } = await supabase
           .from('products')
-          .update(productData)
+          .update(baseProductData)
           .eq('id', editingProduct.id));
       } else {
+        const newProductData = {
+          ...baseProductData,
+          quantity: 0
+        };
         ({ error } = await supabase
           .from('products')
-          .insert([productData]));
+          .insert([newProductData]));
       }
 
       if (error) throw error;
@@ -406,17 +320,39 @@ export default function Products() {
   };
 
   const handleDelete = async (id: string) => {
-    // Keep a copy for the undo action before we hit the DB
     const deletedProduct = products.find(p => p.id === id);
+    if (!deletedProduct) return;
+
+    // Proactive check: If it has stock, or was ever purchased (purchase_price > 0)
+    // ponytail: purchase_items has no FK to products, so we use these fields as a proxy for purchase history
+    if (deletedProduct.quantity > 0 || (deletedProduct.purchase_price && deletedProduct.purchase_price > 0)) {
+      toast({
+        variant: "destructive",
+        title: "Cannot delete product",
+        description: "This product has stock or purchase history. It cannot be deleted."
+      });
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from('products')
         .delete()
         .eq('id', id);
 
-      if (error) throw error;
+      if (error) {
+        // 23503 is Postgres foreign_key_violation (e.g., referenced in sale_items)
+        if (error.code === '23503') {
+          toast({
+            variant: "destructive",
+            title: "Cannot delete product",
+            description: "This product is referenced in historical sales and cannot be deleted."
+          });
+          return;
+        }
+        throw error;
+      }
 
-      // Optimistically drop from local list so the user sees it disappear immediately
       setProducts(prev => prev.filter(p => p.id !== id));
 
       toast({
@@ -630,331 +566,12 @@ export default function Products() {
       : <ChevronDown className="h-3.5 w-3.5 text-blue-600" />;
   };
 
-  // Parse CSV data when uploaded
+  // Restore manual "Add Products" draft if present
   useEffect(() => {
-    if (uploadedData.length > 0) {
-      try {
-        const headers = uploadedData[0].map(h => h.toLowerCase().trim());
-        const body = uploadedData.slice(1).filter(row => row.some(cell => cell.trim()));
-
-        // Check for required columns
-        const requiredColumns = ['name', 'selling_price'];
-        const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-
-        if (missingColumns.length > 0) {
-          toast({
-            variant: "destructive",
-            title: "Invalid CSV format",
-            description: `Missing required columns: ${missingColumns.join(', ')}. Please check your CSV file.`,
-          });
-          setParsedProducts([]);
-          return;
-        }
-
-        const products: Product[] = body.map((row, index) => {
-          const getColumnValue = (columnName: string) => {
-            const colIndex = headers.indexOf(columnName);
-            return colIndex >= 0 ? row[colIndex]?.trim() : '';
-          };
-
-          const csvSupplierName = getColumnValue('supplier') || '';
-          const matchedSupplier = allSuppliers.find(s => s.name.toLowerCase() === csvSupplierName.toLowerCase());
-
-          return {
-            id: (typeof crypto !== 'undefined' && crypto.randomUUID)
-              ? crypto.randomUUID()
-              : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-              }),
-            name: getColumnValue('name') || '',
-            sku: getColumnValue('sku') || '',
-            hsn_code: getColumnValue('hsn_code') || getColumnValue('hsn code') || '',
-            category: getColumnValue('category') || '',
-            batch_number: getColumnValue('batch_number') || getColumnValue('batch number') || '',
-            manufacturer: getColumnValue('manufacturer') || '',
-            expiry_date: getColumnValue('expiry_date') || getColumnValue('expiry date') || null,
-            quantity: parseInt(getColumnValue('quantity')) || 0,
-            purchase_price: parseFloat(getColumnValue('purchase_price') || getColumnValue('purchase price')) || 0,
-            selling_price: parseFloat(getColumnValue('selling_price') || getColumnValue('selling price')) || 0,
-            gst: parseFloat(getColumnValue('gst')) || 0,
-            supplier: matchedSupplier ? matchedSupplier.name : csvSupplierName,
-            supplier_id: matchedSupplier ? matchedSupplier.id : null,
-            low_stock_threshold: parseInt(getColumnValue('low_stock_threshold') || getColumnValue('low stock threshold')) || 10,
-            pcs_per_unit: parseInt(getColumnValue('pcs_per_unit') || getColumnValue('pcs per unit') || getColumnValue('tablets_per_strip') || getColumnValue('tablets per strip')) || null,
-            created_at: new Date().toISOString()
-          };
-        }).filter(product => product.name && product.selling_price > 0);
-
-        // Identify distinct unmatched supplier names
-        const unmatched = Array.from(new Set(
-          products
-            .filter(p => !p.supplier_id && p.supplier)
-            .map(p => p.supplier as string)
-        ));
-        setUnmatchedSupplierNames(unmatched);
-
-        setParsedProducts(products);
-
-        if (products.length > 0) {
-          toast({
-            title: `Successfully parsed ${products.length} products`,
-            description: "Click 'Save All Products' to add them to your inventory",
-          });
-        } else {
-          toast({
-            variant: "destructive",
-            title: "No valid products found",
-            description: "Please ensure your CSV has valid product data with name and selling price.",
-          });
-        }
-      } catch (error) {
-        toast({
-          variant: "destructive",
-          title: "Error parsing CSV",
-          description: "There was an error processing your CSV file. Please check the format.",
-        });
-        setParsedProducts([]);
-      }
-    }
-  }, [uploadedData, toast, allSuppliers]);
-
-  // Restore in-progress work saved before a trip to the Suppliers page.
-  useEffect(() => {
-    const bulk = loadBulkDraft<Product[]>();
-    if (bulk && bulk.length > 0) {
-      setParsedProducts(bulk);
-      setBulkImportOpen(true);
-      clearBulkDraft();
-    }
-    // A manual "Add Products" draft just needs the dialog reopened — it restores itself.
     if (loadMultiDraft<unknown[]>()) {
       setIsMultiAddOpen(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // When suppliers refresh (e.g. one was just registered), link any preview rows
-  // whose supplier name now matches a registered supplier.
-  useEffect(() => {
-    setParsedProducts(prev => {
-      let changed = false;
-      const next = prev.map(p => {
-        if (!p.supplier_id && p.supplier) {
-          const m = allSuppliers.find(s => s.name.toLowerCase() === (p.supplier as string).toLowerCase());
-          if (m) { changed = true; return { ...p, supplier_id: m.id }; }
-        }
-        return p;
-      });
-      return changed ? next : prev;
-    });
-  }, [allSuppliers]);
-
-  // Save the current bulk preview, then go register a supplier — restored on return.
-  const goAddSupplierFromBulk = () => {
-    saveBulkDraft(parsedProducts);
-    navigate('/suppliers?from=bulk-import');
-  };
-
-  // Route a dropped/selected file to the right parser by type.
-  const handleBulkFile = (file: File | undefined | null) => {
-    if (!file) return;
-    const name = file.name.toLowerCase();
-    if (name.endsWith('.pdf') || file.type === 'application/pdf') {
-      importPdf(file);
-    } else if (name.endsWith('.csv') || file.type === 'text/csv') {
-      importCsv(file);
-    } else {
-      toast({ variant: 'destructive', title: 'Unsupported file', description: 'Please upload a CSV or PDF file.' });
-    }
-  };
-
-  // CSV → string[][] (the existing parse effect turns it into products)
-  const importCsv = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = (e.target?.result as string) || '';
-        const parseLine = (line: string): string[] => {
-          const out: string[] = [];
-          let cur = '', q = false;
-          for (let i = 0; i < line.length; i++) {
-            const c = line[i];
-            if (c === '"') {
-              if (q && line[i + 1] === '"') { cur += '"'; i++; } else { q = !q; }
-            } else if (c === ',' && !q) { out.push(cur.trim()); cur = ''; }
-            else { cur += c; }
-          }
-          out.push(cur.trim());
-          return out;
-        };
-        const rows = text.split(/\r?\n/).filter(l => l.trim()).map(parseLine);
-        if (rows.length === 0) {
-          toast({ variant: 'destructive', title: 'Empty file', description: 'This CSV has no rows.' });
-          return;
-        }
-        setUploadedData(rows);
-      } catch {
-        toast({ variant: 'destructive', title: 'Error parsing CSV', description: 'Please check the file format.' });
-      }
-    };
-    reader.onerror = () => toast({ variant: 'destructive', title: 'Error reading file' });
-    reader.readAsText(file);
-  };
-
-  // Import products from a supplier invoice PDF → feeds the same parsed-products / Save All flow as CSV
-  const importPdf = async (file: File) => {
-    setPdfImporting(true);
-    try {
-      const { supplierName, items } = await parseInvoicePdf(file);
-      if (items.length === 0) {
-        toast({
-          variant: 'destructive',
-          title: 'No products found',
-          description: 'Could not read products from this PDF. It may be a scanned image or an unsupported layout.',
-        });
-        return;
-      }
-      const matched = supplierName
-        ? allSuppliers.find(s => s.name.toLowerCase() === supplierName.toLowerCase())
-        : undefined;
-      const genId = () =>
-        (typeof crypto !== 'undefined' && crypto.randomUUID)
-          ? crypto.randomUUID()
-          : Math.random().toString(36).slice(2);
-
-      const products: Product[] = items
-        .map(it => ({
-          id: genId(),
-          name: it.name,
-          sku: '',
-          hsn_code: it.hsn_code || '',
-          category: '',
-          batch_number: it.batch_number || '',
-          manufacturer: it.manufacturer || '',
-          expiry_date: it.expiry_date || null,
-          quantity: parseInt(it.quantity) || 0,
-          purchase_price: parseFloat(it.purchase_price) || 0,
-          selling_price: parseFloat(it.selling_price) || 0,
-          gst: parseFloat(it.gst) || 0,
-          supplier: matched ? matched.name : supplierName,
-          supplier_id: matched ? matched.id : null,
-          low_stock_threshold: 10,
-          pcs_per_unit: null,
-          created_at: new Date().toISOString(),
-        }))
-        .filter(p => p.name && p.selling_price > 0);
-
-      const unmatched = Array.from(new Set(
-        products.filter(p => !p.supplier_id && p.supplier).map(p => p.supplier as string),
-      ));
-      setUnmatchedSupplierNames(unmatched);
-      setUploadedData([]); // keep the CSV effect from overriding the PDF results
-      setParsedProducts(products);
-      setBulkImportOpen(true);
-      toast({
-        title: `Parsed ${products.length} products`,
-        description: 'Review the preview below, then click Save All Products.',
-      });
-    } catch (err) {
-      console.error('PDF import failed:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Import failed',
-        description: 'Could not read this PDF. Please check the file and try again.',
-      });
-    } finally {
-      setPdfImporting(false);
-    }
-  };
-
-  // Inline-edit a parsed product in the preview before saving.
-  const updateParsedProduct = (id: string, patch: Partial<Product>) => {
-    setParsedProducts(prev => prev.map(p => (p.id === id ? { ...p, ...patch } : p)));
-  };
-
-  // Re-match a hand-edited supplier name against registered suppliers.
-  const updateParsedSupplier = (id: string, name: string) => {
-    const match = allSuppliers.find(s => s.name.toLowerCase() === name.trim().toLowerCase());
-    setParsedProducts(prev =>
-      prev.map(p => (p.id === id ? { ...p, supplier: name, supplier_id: match ? match.id : null } : p)),
-    );
-  };
-
-  const saveAllProducts = async () => {
-    if (parsedProducts.length === 0) return;
-    if (!profile?.account_id || isSavingAll) return;
-
-    // After inline edits, block save if any row lost its required fields.
-    const invalid = parsedProducts.find(p => !p.name.trim() || !(p.selling_price > 0));
-    if (invalid) {
-      toast({
-        variant: 'destructive',
-        title: 'Fix highlighted fields',
-        description: 'Every product needs a name and a selling price greater than 0.',
-      });
-      return;
-    }
-
-    // Hustle-free logic: check if ANY product is missing a supplier (recompute
-    // from the current, possibly hand-edited, rows).
-    const needsSupplier = parsedProducts.some(p => !p.supplier_id);
-    const currentUnmatched = Array.from(new Set(
-      parsedProducts.filter(p => !p.supplier_id && p.supplier).map(p => p.supplier as string),
-    ));
-    if (needsSupplier && !csvGlobalSupplierId && allSuppliers.length > 0) {
-      setUnmatchedSupplierNames(currentUnmatched);
-      if (currentUnmatched.length > 1) {
-        toast({
-          variant: "destructive",
-          title: "Too many new suppliers",
-          description: `You have ${unmatchedSupplierNames.length} different unknown suppliers. Please add them in the Suppliers section first.`,
-          action: <Button variant="outline" size="sm" onClick={goAddSupplierFromBulk}>Go to Suppliers</Button>
-        });
-        setUnmatchedSupplierDialogOpen(true);
-        return;
-      }
-      // Pause saving and show popup to ask for default supplier
-      setUnmatchedSupplierDialogOpen(true);
-      return;
-    }
-
-    setIsSavingAll(true);
-
-    try {
-      const productsToInsert = parsedProducts.map(product => ({
-        ...product,
-        // Override unmatched supplier ID with the user-selected global fallback
-        supplier_id: product.supplier_id || csvGlobalSupplierId || null,
-        account_id: profile?.account_id
-      }));
-
-      const { error } = await supabase
-        .from('products')
-        .insert(productsToInsert);
-
-      if (error) throw error;
-
-      toast({
-        title: `Successfully added ${parsedProducts.length} products`,
-        description: "All products have been added to your inventory",
-      });
-
-      setUploadedData([]);
-      setParsedProducts([]);
-      setCsvGlobalSupplierId(null);
-      setCsvGlobalSupplierSearch('');
-      fetchProducts();
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Error adding products",
-        description: error.message,
-      });
-    } finally {
-      setIsSavingAll(false);
-    }
-  };
 
   // Reset selected category and supplier when dialog opens/closes
   useEffect(() => {
@@ -1008,7 +625,7 @@ export default function Products() {
         <Button onClick={() => setIsMultiAddOpen(true)} className="w-full sm:w-auto gap-2">
           <div className="flex items-center gap-2">
             <Plus className="h-4 w-4" />
-            <span>Add Product</span>
+            <span>Purchase Entry</span>
           </div>
           <span className="text-[10px] bg-primary-foreground/20 px-1.5 py-0.5 rounded border border-primary-foreground/30 opacity-80 hidden sm:inline-block">F2</span>
         </Button>
@@ -1021,6 +638,7 @@ export default function Products() {
           accountId={profile?.account_id}
           onSaved={fetchProducts}
           defaultGstRate={defaultGstRate}
+          gstInclusive={gstInclusive}
         />
 
         {/* Summary strip */}
@@ -1075,312 +693,7 @@ export default function Products() {
           </div>
         </section>
 
-        {/* Bulk import — unified CSV + invoice-PDF, collapsible */}
-        <Collapsible open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
-          <Card className="border-slate-200 overflow-hidden">
-            <CollapsibleTrigger asChild>
-              <button
-                type="button"
-                className="w-full flex items-center gap-3 p-3.5 text-left hover:bg-slate-50 transition-colors"
-              >
-                <div className="grid place-items-center h-9 w-9 rounded-lg bg-indigo-50 text-indigo-600 shrink-0">
-                  <Upload className="h-[18px] w-[18px]" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-slate-800 text-sm leading-tight">Bulk Import</p>
-                  <p className="text-xs text-muted-foreground truncate">Add many products from a CSV or invoice PDF</p>
-                </div>
-                {parsedProducts.length > 0 && (
-                  <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 shrink-0">
-                    {parsedProducts.length} ready
-                  </Badge>
-                )}
-                <ChevronDown className={cn('h-5 w-5 text-slate-400 shrink-0 transition-transform', bulkImportOpen && 'rotate-180')} />
-              </button>
-            </CollapsibleTrigger>
 
-            <CollapsibleContent>
-              <div className="border-t border-slate-100 p-3.5 space-y-3">
-                {/* One dropzone for both file types */}
-                <input
-                  ref={bulkInputRef}
-                  type="file"
-                  accept=".csv,application/pdf,.pdf"
-                  className="hidden"
-                  onChange={(e) => { handleBulkFile(e.target.files?.[0]); e.target.value = ''; }}
-                />
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => !pdfImporting && bulkInputRef.current?.click()}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bulkInputRef.current?.click(); } }}
-                  onDragEnter={(e) => { e.preventDefault(); setBulkDragActive(true); }}
-                  onDragOver={(e) => { e.preventDefault(); setBulkDragActive(true); }}
-                  onDragLeave={(e) => { e.preventDefault(); setBulkDragActive(false); }}
-                  onDrop={(e) => { e.preventDefault(); setBulkDragActive(false); handleBulkFile(e.dataTransfer.files?.[0]); }}
-                  className={cn(
-                    'flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-7 text-center cursor-pointer transition-colors',
-                    bulkDragActive ? 'border-indigo-400 bg-indigo-50/60' : 'border-slate-200 hover:border-indigo-300 hover:bg-slate-50/70',
-                  )}
-                >
-                  {pdfImporting ? (
-                    <>
-                      <Loader2 className="h-6 w-6 text-indigo-500 animate-spin" />
-                      <p className="text-sm font-medium text-slate-600">Reading invoice…</p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="grid place-items-center h-11 w-11 rounded-full bg-indigo-50 text-indigo-500">
-                        <Upload className="h-5 w-5" />
-                      </div>
-                      <p className="text-sm font-medium text-slate-700">
-                        <span className="text-indigo-600">Click to upload</span> or drag &amp; drop
-                      </p>
-                      <div className="flex items-center gap-1.5 text-[11px]">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">
-                          <FileText className="h-3 w-3" /> CSV
-                        </span>
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 font-medium">
-                          <FileText className="h-3 w-3" /> Invoice PDF
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <button
-                    onClick={downloadSampleCSV}
-                    className="text-blue-600 hover:text-blue-800 underline bg-transparent border-none cursor-pointer p-0"
-                  >
-                    Download sample CSV
-                  </button>
-                  <span className="text-muted-foreground">From invoices: MRP → Sell · Rate → Buy</span>
-                </div>
-
-                {/* Preview */}
-                {parsedProducts.length > 0 && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-semibold text-slate-800">
-                        Preview · {parsedProducts.length} product{parsedProducts.length === 1 ? '' : 's'}
-                      </p>
-                      <button
-                        onClick={() => { setUploadedData([]); setParsedProducts([]); }}
-                        className="text-xs text-slate-500 hover:text-rose-600 underline bg-transparent border-none cursor-pointer p-0"
-                      >
-                        Clear
-                      </button>
-                    </div>
-
-                    <p className="text-[11px] text-muted-foreground mb-1.5">Tap any cell to edit before saving.</p>
-                    <div className="rounded-md border border-emerald-200 bg-white overflow-x-auto max-h-72 overflow-y-auto">
-                      <table className="w-full text-xs border-collapse min-w-[860px]">
-                        <thead className="sticky top-0 z-10">
-                          <tr className="bg-emerald-50 text-emerald-800 text-[10px] uppercase tracking-wide">
-                            <th className="p-1.5 text-left w-8">#</th>
-                            <th className="p-1.5 text-left">Product</th>
-                            <th className="p-1.5 text-center w-20">HSN</th>
-                            <th className="p-1.5 text-center w-24">Batch</th>
-                            <th className="p-1.5 text-center w-32">Expiry</th>
-                            <th className="p-1.5 text-center w-14">Qty</th>
-                            <th className="p-1.5 text-center w-14">GST%</th>
-                            <th className="p-1.5 text-center w-16">Buy</th>
-                            <th className="p-1.5 text-center w-16">Sell</th>
-                            <th className="p-1.5 text-left w-40">Supplier</th>
-                            <th className="p-1.5 w-8"></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {parsedProducts.map((p, i) => {
-                            const cell = 'h-7 w-full text-xs px-1.5 border border-slate-200 rounded bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-100 outline-none transition-colors';
-                            return (
-                            <tr key={p.id} className="hover:bg-emerald-50/30 align-top">
-                              <td className="p-1.5 text-center text-slate-400 pt-2.5">{i + 1}</td>
-                              <td className="p-1.5">
-                                <input
-                                  value={p.name}
-                                  onChange={e => updateParsedProduct(p.id, { name: e.target.value })}
-                                  placeholder="Product name *"
-                                  className={cn(cell, 'font-medium', !p.name.trim() && 'border-rose-300')}
-                                />
-                                <input
-                                  value={p.manufacturer || ''}
-                                  onChange={e => updateParsedProduct(p.id, { manufacturer: e.target.value })}
-                                  placeholder="Manufacturer"
-                                  className={cn(cell, 'mt-1 text-[11px] text-muted-foreground')}
-                                />
-                              </td>
-                              <td className="p-1.5">
-                                <input value={p.hsn_code || ''} onChange={e => updateParsedProduct(p.id, { hsn_code: e.target.value })} className={cn(cell, 'text-center')} />
-                              </td>
-                              <td className="p-1.5">
-                                <input value={p.batch_number || ''} onChange={e => updateParsedProduct(p.id, { batch_number: e.target.value })} className={cn(cell, 'text-center')} />
-                              </td>
-                              <td className="p-1.5">
-                                <input type="date" value={p.expiry_date || ''} onChange={e => updateParsedProduct(p.id, { expiry_date: e.target.value })} className={cn(cell, 'text-center')} />
-                              </td>
-                              <td className="p-1.5">
-                                <input type="number" min="0" value={p.quantity} onChange={e => updateParsedProduct(p.id, { quantity: parseInt(e.target.value) || 0 })} className={cn(cell, 'text-center')} />
-                              </td>
-                              <td className="p-1.5">
-                                <input type="number" step="0.01" value={p.gst ?? ''} onChange={e => updateParsedProduct(p.id, { gst: parseFloat(e.target.value) || 0 })} className={cn(cell, 'text-center')} />
-                              </td>
-                              <td className="p-1.5">
-                                <input type="number" step="0.01" value={p.purchase_price ?? ''} onChange={e => updateParsedProduct(p.id, { purchase_price: parseFloat(e.target.value) || 0 })} className={cn(cell, 'text-right')} />
-                              </td>
-                              <td className="p-1.5">
-                                <input type="number" step="0.01" value={p.selling_price} onChange={e => updateParsedProduct(p.id, { selling_price: parseFloat(e.target.value) || 0 })} className={cn(cell, 'text-right font-semibold text-emerald-700', !(p.selling_price > 0) && 'border-rose-300')} />
-                              </td>
-                              <td className="p-1.5">
-                                <input
-                                  value={p.supplier || ''}
-                                  onChange={e => updateParsedSupplier(p.id, e.target.value)}
-                                  placeholder="Supplier"
-                                  className={cn(cell, !p.supplier_id && p.supplier && 'border-amber-300 text-amber-700')}
-                                  title={!p.supplier_id && p.supplier ? 'Not a registered supplier yet' : ''}
-                                />
-                              </td>
-                              <td className="p-1.5 pt-2 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => setParsedProducts(prev => prev.filter(x => x.id !== p.id))}
-                                  className="text-slate-300 hover:text-rose-600"
-                                  title="Remove this product"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="flex gap-2 mt-3">
-                      <Button
-                        size="sm"
-                        onClick={saveAllProducts}
-                        disabled={isSavingAll}
-                        className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
-                      >
-                        {isSavingAll ? (
-                          <span className="flex items-center gap-2">
-                            <Loader2 className="h-4 w-4 animate-spin" /> Saving…
-                          </span>
-                        ) : (
-                          `Save all ${parsedProducts.length} products`
-                        )}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => { setUploadedData([]); setParsedProducts([]); }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CollapsibleContent>
-          </Card>
-        </Collapsible>
-
-        {/* Global Supplier Fallback Dialog */}
-        <Dialog open={unmatchedSupplierDialogOpen} onOpenChange={setUnmatchedSupplierDialogOpen}>
-          <DialogContent className="w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-xl text-amber-600 flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5" />
-                Unmatched Suppliers Detected!
-              </DialogTitle>
-              <DialogDescription className="text-base pt-2">
-                {unmatchedSupplierNames.length > 1 
-                  ? `There are ${unmatchedSupplierNames.length} different suppliers in your CSV that aren't registered. It's recommended to add them first, or you can assign a single fallback supplier below.`
-                  : "Some products in your CSV don't have a recognized supplier. Please assign a supplier to apply to these unmatched products, or leave empty if you want to proceed without one."
-                }
-              </DialogDescription>
-            </DialogHeader>
-            {unmatchedSupplierNames.length > 1 && (
-              <div className="bg-amber-50 p-3 rounded-md border border-amber-200 mb-4">
-                <p className="text-sm font-medium text-amber-800 mb-1">Unrecognized Suppliers found:</p>
-                <div className="flex flex-wrap gap-2">
-                  {unmatchedSupplierNames.map((name, i) => (
-                    <Badge key={i} variant="outline" className="bg-white">{name}</Badge>
-                  ))}
-                </div>
-                <Button
-                  variant="link"
-                  className="mt-2 h-auto p-0 text-amber-900 font-bold underline"
-                  onClick={goAddSupplierFromBulk}
-                >
-                  Click here to add them first →
-                </Button>
-              </div>
-            )}
-            <div className="py-2">
-              <div className="space-y-2 relative" ref={csvSupplierRef}>
-                <Label>Select Supplier for Unmatched Products</Label>
-                <Input
-                  placeholder="Search existing suppliers..."
-                  value={csvGlobalSupplierSearch}
-                  autoComplete="off"
-                  onChange={(e) => {
-                    setCsvGlobalSupplierSearch(e.target.value);
-                    setCsvSupplierDropdownOpen(true);
-                    if (csvGlobalSupplierId && !e.target.value) {
-                      setCsvGlobalSupplierId(null);
-                    }
-                  }}
-                  onFocus={() => setCsvSupplierDropdownOpen(true)}
-                  className="w-full transition-all focus-visible:ring-blue-500"
-                />
-                {csvSupplierDropdownOpen && (
-                  <div className="absolute z-50 w-full mt-1 bg-white rounded-md shadow-lg border max-h-48 overflow-auto">
-                    {filteredCsvSupplierOptions.length > 0 ? (
-                      <ul className="py-1 relative z-50 bg-white shadow-md">
-                        {filteredCsvSupplierOptions.map((supplier) => (
-                          <li
-                            key={supplier.id}
-                            className={`px-3 py-2 text-sm cursor-pointer hover:bg-slate-100 ${csvGlobalSupplierId === supplier.id ? 'bg-blue-50 font-medium' : ''}`}
-                            onClick={() => {
-                              setCsvGlobalSupplierId(supplier.id);
-                              setCsvGlobalSupplierSearch(supplier.name);
-                              setCsvSupplierDropdownOpen(false);
-                            }}
-                          >
-                            <div className="font-medium">{supplier.name}</div>
-                            {supplier.phone && <div className="text-xs text-muted-foreground">{supplier.phone}</div>}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="px-3 py-4 text-sm text-center text-muted-foreground">
-                        No suppliers found matching "{csvGlobalSupplierSearch}".
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 mt-4">
-              <Button variant="outline" onClick={() => setUnmatchedSupplierDialogOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  setUnmatchedSupplierDialogOpen(false);
-                  saveAllProducts();
-                }}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                Proceed & Save
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           setIsDialogOpen(open);
           if (!open) {
@@ -1558,18 +871,18 @@ export default function Products() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="quantity" className="text-lg font-medium">Quantity (Strips)</Label>
+                  <Label htmlFor="quantity" className="text-lg font-medium">Current Stock</Label>
                   <Input
                     id="quantity"
                     name="quantity"
                     type="number"
-                    required
-                    defaultValue={formSource?.quantity}
-                    className="text-lg py-3 px-4"
-                    placeholder="0"
+                    readOnly
+                    defaultValue={formSource?.quantity || 0}
+                    className="text-lg py-3 px-4 bg-gray-50 text-gray-500"
                   />
+                  <p className="text-xs text-muted-foreground">Stock can only be updated via transactions.</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="pcs_per_unit" className="text-lg font-medium">Pcs per Strip</Label>
@@ -1582,7 +895,7 @@ export default function Products() {
                     className="text-lg py-3 px-4"
                     placeholder="e.g. 10, 15 (leave empty if N/A)"
                   />
-                  <p className="text-xs text-muted-foreground">How many pieces in one strip? Leave empty for non-strip items.</p>
+                  <p className="text-xs text-muted-foreground">How many pieces in one strip?</p>
                 </div>
               </div>
 
@@ -1612,12 +925,12 @@ export default function Products() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="purchase_price" className="text-lg font-medium">Purchase Price (₹)</Label>
+                  <Label htmlFor="rate" className="text-lg font-medium">Rate (₹)</Label>
                   <Input
-                    id="purchase_price"
-                    name="purchase_price"
+                    id="rate"
+                    name="rate"
                     type="number"
                     step="0.01"
                     defaultValue={formSource?.purchase_price}
@@ -1626,10 +939,22 @@ export default function Products() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="selling_price" className="text-lg font-medium">Selling Price (₹)</Label>
+                  <Label htmlFor="discount" className="text-lg font-medium">Discount (%)</Label>
                   <Input
-                    id="selling_price"
-                    name="selling_price"
+                    id="discount"
+                    name="discount"
+                    type="number"
+                    step="0.01"
+                    defaultValue={0}
+                    className="text-lg py-3 px-4"
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mrp" className="text-lg font-medium">MRP (₹)</Label>
+                  <Input
+                    id="mrp"
+                    name="mrp"
                     type="number"
                     step="0.01"
                     required
@@ -1652,7 +977,7 @@ export default function Products() {
                       Saving...
                     </div>
                   ) : (
-                    editingProduct ? 'Update Product' : 'Add Product'
+                    editingProduct ? 'Update Product' : 'Purchase Entry'
                   )}
                 </Button>
                 <Button
@@ -1949,7 +1274,7 @@ export default function Products() {
                   </p>
                   <Button onClick={() => setIsMultiAddOpen(true)} size="sm">
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Product
+                    Purchase Entry
                   </Button>
                 </div>
               );
@@ -2106,7 +1431,7 @@ export default function Products() {
                           <SortIcon column="expiry_date" />
                         </button>
                       </TableHead>
-                      <TableHead className="text-center font-medium">
+                      <TableHead className="text-center font-medium" title="Total physical inventory stock (includes billed + scheme/free units)">
                         <button
                           type="button"
                           onClick={() => toggleSort('quantity')}

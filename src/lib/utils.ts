@@ -27,3 +27,7 @@ export const formatExpiry = (raw: string | null | undefined) => {
   }
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
+
+export function calcEffectivePurchasePrice(rate: number, qty: number, free: number): number {
+  return (qty + free) > 0 ? Number(((rate * qty) / (qty + free)).toFixed(2)) : rate;
+}

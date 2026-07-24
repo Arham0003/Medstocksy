@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { calcGst } from '@/lib/gst';
 import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft';
 
 interface Product {
@@ -512,8 +513,9 @@ export default function Sales() {
     let itemTotal = 0;
     const isGstInclusive = settings?.gst_type === 'inclusive';
     if (settings?.gst_enabled) {
-      itemGstAmount = (itemSubtotal * itemGstRate) / 100;
-      itemTotal = isGstInclusive ? itemSubtotal : itemSubtotal + itemGstAmount;
+      const gstResult = calcGst(itemSubtotal, itemGstRate, isGstInclusive);
+      itemGstAmount = gstResult.gstAmount;
+      itemTotal = gstResult.totalPrice;
     } else {
       itemTotal = itemSubtotal;
     }
@@ -668,13 +670,9 @@ export default function Sales() {
         let finalTotalPrice = 0;
 
         if (currentSettings?.gst_enabled) {
-          if (isGstInclusive) {
-            finalGstAmount = (netAmount * itemGstRate) / 100;
-            finalTotalPrice = netAmount;
-          } else {
-            finalGstAmount = (netAmount * itemGstRate) / 100;
-            finalTotalPrice = netAmount + finalGstAmount;
-          }
+          const gstResult = calcGst(netAmount, itemGstRate, isGstInclusive);
+          finalGstAmount = gstResult.gstAmount;
+          finalTotalPrice = gstResult.totalPrice;
         } else {
           finalTotalPrice = netAmount;
           finalGstAmount = 0;
@@ -796,15 +794,9 @@ export default function Sales() {
         let itemTotalVal = 0;
 
         if (settings?.gst_enabled) {
-          if (isGstInclusive) {
-            // Inclusive: User requested calculation is Net Amount * Rate / 100
-            itemGstVal = (netAmount * itemGstRate) / 100;
-            itemTotalVal = netAmount;
-          } else {
-            // Net Amount is Base, add GST
-            itemGstVal = (netAmount * itemGstRate) / 100;
-            itemTotalVal = netAmount + itemGstVal;
-          }
+          const gstResult = calcGst(netAmount, itemGstRate, isGstInclusive);
+          itemGstVal = gstResult.gstAmount;
+          itemTotalVal = gstResult.totalPrice;
         } else {
           itemTotalVal = netAmount;
         }
@@ -1013,15 +1005,17 @@ export default function Sales() {
 
   // Live totals for the edit cart
   const editCartTotals = useMemo(() => {
+    const isGstInclusive = settings?.gst_type === 'inclusive';
     let net = 0; let gst = 0;
     for (const it of editCart) {
       const units = effUnits(it.quantity, it.sub_qty, it.pcs_per_unit);
       const lineNet = units * it.unit_price;
       net += lineNet;
-      gst += lineNet * (it.gst_rate / 100);
+      gst += calcGst(lineNet, it.gst_rate, isGstInclusive).gstAmount;
     }
-    return { net, gst, total: net + gst };
-  }, [editCart]);
+    const total = isGstInclusive ? net : net + gst;
+    return { net, gst, total };
+  }, [editCart, settings]);
 
   // Outside-click handler for the edit-cart product search
   useEffect(() => {
@@ -1120,8 +1114,9 @@ export default function Sales() {
         }
 
         const baseTotal = newUnits * it.unit_price;
-        const gstAmount = baseTotal * (it.gst_rate / 100);
-        const totalPrice = baseTotal + gstAmount;
+        const isGstInclusiveEdit = settings?.gst_type === 'inclusive';
+        const editGst = calcGst(baseTotal, it.gst_rate, isGstInclusiveEdit);
+        const { gstAmount, totalPrice } = editGst;
         await (supabase as any).from('sales')
           .update({
             quantity: it.quantity,
@@ -1141,8 +1136,8 @@ export default function Sales() {
         if (!it.isNew) continue;
         const units = effUnits(it.quantity, it.sub_qty, it.pcs_per_unit);
         const baseTotal = units * it.unit_price;
-        const gstAmount = baseTotal * (it.gst_rate / 100);
-        const totalPrice = baseTotal + gstAmount;
+        const isGstInclusiveNew = settings?.gst_type === 'inclusive';
+        const { gstAmount, totalPrice } = calcGst(baseTotal, it.gst_rate, isGstInclusiveNew);
         const product = products.find(p => p.id === it.product_id);
         if (product) {
           const newStock = (product.quantity || 0) - units;
@@ -2437,8 +2432,8 @@ Thank you for your purchase!
                     {editCart.map(it => {
                       const units = effUnits(it.quantity, it.sub_qty, it.pcs_per_unit);
                       const lineNet = units * it.unit_price;
-                      const lineGst = lineNet * (it.gst_rate / 100);
-                      const lineTotal = lineNet + lineGst;
+                      const isGstInclusiveDisp = settings?.gst_type === 'inclusive';
+                      const { gstAmount: lineGst, totalPrice: lineTotal } = calcGst(lineNet, it.gst_rate, isGstInclusiveDisp);
                       const avail = availableStockFor(it);
                       const overStock = units > avail + 0.0001;
                       return (

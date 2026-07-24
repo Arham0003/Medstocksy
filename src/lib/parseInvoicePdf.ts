@@ -128,6 +128,44 @@ function extractSupplier(lines: Line[]): string {
 }
 
 export async function parseInvoicePdf(file: File): Promise<ParsedInvoice> {
+  // ponytail: AS 3 native text/csv parsing alongside PDF so both formats feed purchase entry & bulk import
+  if (file.name.toLowerCase().endsWith('.csv') || file.type === 'text/csv') {
+    const text = await file.text();
+    const rows = text.split(/\r?\n/).filter(l => l.trim()).map(line => {
+      const out: string[] = [];
+      let cur = '', q = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (c === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else { q = !q; } }
+        else if (c === ',' && !q) { out.push(cur.trim()); cur = ''; }
+        else { cur += c; }
+      }
+      out.push(cur.trim());
+      return out;
+    });
+    if (rows.length < 2) return { supplierName: '', items: [] };
+    const headers = rows[0].map(h => h.toLowerCase().trim());
+    const getCol = (row: string[], ...names: string[]) => {
+      for (const n of names) {
+        const idx = headers.indexOf(n);
+        if (idx >= 0 && row[idx]?.trim()) return row[idx].trim();
+      }
+      return '';
+    };
+    const items: ParsedInvoiceItem[] = rows.slice(1).filter(r => r.some(c => c.trim())).map(r => ({
+      name: getCol(r, 'name', 'product', 'item'),
+      hsn_code: getCol(r, 'hsn_code', 'hsn code', 'hsn'),
+      manufacturer: getCol(r, 'manufacturer', 'mfr'),
+      batch_number: getCol(r, 'batch_number', 'batch number', 'batch'),
+      expiry_date: toExpiry(getCol(r, 'expiry_date', 'expiry date', 'expiry', 'exp')) || getCol(r, 'expiry_date', 'expiry date', 'expiry', 'exp'),
+      quantity: String(parseInt(getCol(r, 'quantity', 'qty')) || 0),
+      gst: String(parseFloat(getCol(r, 'gst', 'gst_pct', 'tax')) || 0),
+      selling_price: String(parseFloat(getCol(r, 'selling_price', 'selling price', 'mrp', 'price')) || 0),
+      purchase_price: String(parseFloat(getCol(r, 'purchase_price', 'purchase price', 'rate', 'purchase_rate')) || 0),
+    })).filter(it => it.name && parseFloat(it.selling_price) > 0);
+    return { supplierName: getCol(rows[1] || [], 'supplier', 'supplier_name') || extractSupplier([]), items };
+  }
+
   const buf = await file.arrayBuffer();
   const doc = await pdfjsLib.getDocument({ data: buf }).promise;
 

@@ -227,15 +227,22 @@ export default function Layout() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // The full-screen POS billing page owns its own keyboard (tab switching,
-      // arrow keys, number keys). Never let global section-navigation fire there.
-      if (location.pathname === '/sales/new') return;
-
       // ponytail: ignore navigation keys if typing in standard input or interacting with lists/popups/menus
       const target = e.target as HTMLElement;
+      let isAtStart = false;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+
+      if (isInput) {
+        try {
+          const input = target as HTMLInputElement;
+          isAtStart = input.selectionStart === 0 && input.selectionEnd === 0;
+        } catch (err) {
+          isAtStart = !(target as HTMLInputElement).value;
+        }
+      }
+
       if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
+        (isInput && !(e.key === 'ArrowLeft' && isAtStart)) ||
         target.tagName === 'SELECT' ||
         target.isContentEditable ||
         target.closest('[role="listbox"]') ||
@@ -245,7 +252,39 @@ export default function Layout() {
         return;
       }
 
-      // ponytail: skip sidebar nav shortcuts on sub-pages (e.g. /sales/new) — only apply to top-level routes
+      // ponytail: ArrowLeft focuses sidebar from anywhere (if not defaultPrevented); when focused, Up/Down move highlight, Right/Enter open and enter section
+      if (!e.defaultPrevented && e.key === 'ArrowLeft' && focusedIndex === null) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const current = ownerNavItems.findIndex((item) => item.href === location.pathname);
+        setFocusedIndex(current === -1 ? 0 : current);
+      } else if (focusedIndex !== null) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setFocusedIndex((prev) => (prev !== null ? (prev + 1) % ownerNavItems.length : 0));
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setFocusedIndex((prev) =>
+            prev !== null ? (prev - 1 + ownerNavItems.length) % ownerNavItems.length : ownerNavItems.length - 1
+          );
+        } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const item = ownerNavItems[focusedIndex];
+          if (item) {
+            navigate(item.href);
+            setFocusedIndex(null);
+          }
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setFocusedIndex(null);
+        }
+      }
+
+      // ponytail: skip number nav shortcuts on sub-pages (e.g. /sales/new) — only apply to top-level routes
       const isTopLevel = ownerNavItems.some((item) => item.href === location.pathname);
       if (!isTopLevel) return;
 
@@ -265,34 +304,10 @@ export default function Layout() {
           setFocusedIndex(null);
         }
       }
-
-      // ponytail: ArrowLeft focuses sidebar; when focused, Up/Down move highlight, Right/Enter open and enter section
-      if (e.key === 'ArrowLeft' && focusedIndex === null) {
-        e.preventDefault();
-        const current = ownerNavItems.findIndex((item) => item.href === location.pathname);
-        setFocusedIndex(current === -1 ? 0 : current);
-      } else if (focusedIndex !== null) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          setFocusedIndex((prev) => (prev !== null ? (prev + 1) % ownerNavItems.length : 0));
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          setFocusedIndex((prev) =>
-            prev !== null ? (prev - 1 + ownerNavItems.length) % ownerNavItems.length : ownerNavItems.length - 1
-          );
-        } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
-          e.preventDefault();
-          const item = ownerNavItems[focusedIndex];
-          if (item) {
-            navigate(item.href);
-            setFocusedIndex(null);
-          }
-        }
-      }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [navigate, location.pathname, focusedIndex]);
 
   useEffect(() => {

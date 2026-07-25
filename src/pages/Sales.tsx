@@ -976,8 +976,9 @@ export default function Sales() {
 
   // ─── Keyboard navigation for the sales list ───────────────────────────────
   //  ↑/↓ move · Enter view · E edit · P print · N new · Home/End jump.
-  //  Runs in the CAPTURE phase and stops propagation for arrows/Home/End so the
-  //  global section-nav in Layout (↑/↓ switches pages) never fires on this screen.
+  //  ← deselects the current row and lets Layout's bubble handler focus the sidebar.
+  //  Runs in the CAPTURE phase and stops propagation for ↑/↓/Home/End so the
+  //  global section-nav in Layout never fires while the list is active.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -987,6 +988,13 @@ export default function Sales() {
       if (isDialogOpen || isEditOpen || isDetailModalOpen) return;
 
       const list = groupedSales;
+
+      // ArrowLeft — clear row selection and fall through to Layout's bubble handler
+      // so the sidebar gains focus. No stopPropagation: Layout must see this event.
+      if (e.key === 'ArrowLeft' && selectedRow >= 0) {
+        setSelectedRow(-1);
+        return;
+      }
 
       // Movement keys — always intercept so the page doesn't scroll / switch sections.
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {

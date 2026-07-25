@@ -898,7 +898,7 @@ export const MultiProductForm = ({
 
   const saveAllRef = useRef<((silent?: boolean) => Promise<void>) | null>(null);
 
-  // F2 → new invoice, Shift+Enter → save
+  // F2 → new invoice, Ctrl+Enter / Shift+Enter → save
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -906,8 +906,8 @@ export const MultiProductForm = ({
         e.preventDefault();
         setF2ConfirmOpen(true);
       }
-      // ponytail: Shift+Enter triggers exact saveAll action without duplicate save logic
-      if (e.shiftKey && e.key === 'Enter' && !isSaving) {
+      // ponytail: Ctrl+Enter / Shift+Enter triggers saveAll action
+      if ((e.ctrlKey || e.metaKey || e.shiftKey) && e.key === 'Enter' && !isSaving) {
         e.preventDefault();
         saveAllRef.current?.();
       }
@@ -1164,7 +1164,7 @@ export const MultiProductForm = ({
         }))
       };
 
-      const { error: rpcErr } = await supabase.rpc('record_purchase', { payload });
+      const { error: rpcErr } = await supabase.rpc('record_purchase' as any, { payload });
       if (rpcErr) throw rpcErr;
 
       onSaved();
@@ -1561,9 +1561,10 @@ export const MultiProductForm = ({
                         Saving…
                       </div>
                     ) : (
-                      <span>
+                      <span className="flex items-center gap-1.5">
                         Save {validRows.length > 0 ? `${validRows.length} ` : ''}
                         {validRows.length === 1 ? 'Product' : 'Products'}
+                        <kbd className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded font-mono font-normal tracking-tight">Ctrl+Enter</kbd>
                       </span>
                     )}
                   </Button>

@@ -323,16 +323,6 @@ export default function Products() {
     const deletedProduct = products.find(p => p.id === id);
     if (!deletedProduct) return;
 
-    // Proactive check: If it has stock, or was ever purchased (purchase_price > 0)
-    // ponytail: purchase_items has no FK to products, so we use these fields as a proxy for purchase history
-    if (deletedProduct.quantity > 0 || (deletedProduct.purchase_price && deletedProduct.purchase_price > 0)) {
-      toast({
-        variant: "destructive",
-        title: "Cannot delete product",
-        description: "This product has stock or purchase history. It cannot be deleted."
-      });
-      return;
-    }
 
     try {
       const { error } = await supabase

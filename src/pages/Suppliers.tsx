@@ -115,7 +115,14 @@ export default function Suppliers() {
 
   // Register dialog
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => e.key === 'F2' && (e.preventDefault(), setIsRegisterOpen(true));
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   // Detail dialog
   const [selectedSupplier, setSelectedSupplier] = useState<SupplierWithStats | null>(null);
@@ -588,11 +595,18 @@ export default function Suppliers() {
         <Dialog
           open={isRegisterOpen}
           onOpenChange={(open) => {
-            setIsRegisterOpen(open);
             if (!open) {
-              setEditingSupplierId(null);
-              setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+              const hasData = formData.name !== '' || formData.phone !== '' || formData.email !== '' || formData.address !== '' || formData.gst_number !== '' || formData.contact_person !== '';
+              if (!hasData) {
+                setIsRegisterOpen(false);
+                setEditingSupplierId(null);
+                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+                return;
+              }
+              setExitConfirmOpen(true);
+              return;
             }
+            setIsRegisterOpen(open);
           }}
         >
           <DialogTrigger asChild>
@@ -600,7 +614,7 @@ export default function Suppliers() {
               className="w-full sm:w-auto h-10 sm:h-11 gap-2 rounded-full px-5 font-medium shadow-sm shadow-primary/20 hover:shadow-md hover:shadow-primary/30 hover:-translate-y-px transition-all"
             >
               <Plus className="h-4 w-4" strokeWidth={2.5} />
-              Register Supplier
+              Register Supplier (F2)
             </Button>
           </DialogTrigger>
           <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto p-5 sm:p-7">
@@ -1598,6 +1612,47 @@ export default function Suppliers() {
               className="bg-red-600 text-white hover:bg-red-700"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={exitConfirmOpen} onOpenChange={setExitConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to exit?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your unsaved data will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="transition-none"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowRight') {
+                  e.preventDefault();
+                  (e.currentTarget.nextElementSibling as HTMLElement)?.focus();
+                }
+              }}
+            >
+              No
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 transition-none"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') {
+                  e.preventDefault();
+                  (e.currentTarget.previousElementSibling as HTMLElement)?.focus();
+                }
+              }}
+              onClick={() => {
+                setExitConfirmOpen(false);
+                setIsRegisterOpen(false);
+                setEditingSupplierId(null);
+                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+              }}
+            >
+              Yes
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
+import "lenis/dist/lenis.css";
 import "./index.css";
 
 // Dev-only: filter noisy or non-actionable console warnings/errors

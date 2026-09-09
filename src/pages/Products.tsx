@@ -625,6 +625,7 @@ export default function Products() {
           open={isMultiAddOpen}
           onOpenChange={setIsMultiAddOpen}
           allSuppliers={allSuppliers}
+          allProducts={products}
           accountId={profile?.account_id}
           onSaved={fetchProducts}
           defaultGstRate={defaultGstRate}

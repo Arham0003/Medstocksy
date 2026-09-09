@@ -165,6 +165,10 @@ export default function RecordSale({
   const [settings, setSettings] = useState<Settings | null>(injectedSettings ?? null);
   const [loading, setLoading] = useState(usingInjected ? !!dataLoading : true);
   const [isSaving, setIsSaving] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  // F3 edit-gate: only one field unlocked at a time
+  const [f3Unlocked, setF3Unlocked] = useState<string | null>(null);
+  const [f3Dialog, setF3Dialog] = useState<{ uid: string; field: string } | null>(null);
 
   // ─── Quick Add slide-over ─────────────────────────────────────────────────
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -359,7 +363,7 @@ export default function RecordSale({
     const fetch = async () => {
       try {
         const [prodRes, settingsRes] = await Promise.all([
-          supabase.from('products').select('id, name, quantity, selling_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer').gt('quantity', 0),
+          supabase.from('products').select('id, name, quantity, selling_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer'),
           profile?.account_id
             ? supabase.from('settings').select('gst_enabled, default_gst_rate, gst_type').eq('account_id', profile.account_id).single()
             : Promise.resolve({ data: null, error: null }),
@@ -1118,10 +1122,7 @@ export default function RecordSale({
         throw error;
       }
 
-      toast({
-        title: 'Sale recorded!',
-        description: `${validRows.length} item(s) billed successfully${customerName ? ' for ' + customerName : ''}`,
-      });
+
 
       // Bill is finalized → drop its locally-saved draft so it isn't restored later.
       if (persistKey) clearBillData(persistKey);
@@ -1143,8 +1144,8 @@ export default function RecordSale({
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
       if (!isActive) return; // background tabs must not hijack the keyboard
-      // F10 or Ctrl+S = Save
-      if (e.key === 'F10' || (e.ctrlKey && e.key === 's')) {
+      // Ctrl+Enter or Ctrl+S = Save
+      if ((e.ctrlKey && e.key === 'Enter') || (e.ctrlKey && e.key === 's')) {
         e.preventDefault();
         handleSave();
         return;
@@ -1160,6 +1161,8 @@ export default function RecordSale({
         if (infoProduct) { e.preventDefault(); setInfoProduct(null); setInfoRow(null); return; }
         if (activeSearchRow !== null) { e.preventDefault(); setActiveSearchRow(null); setSearchTerm(''); setSearchRect(null); return; }
         if (customerDropdownOpen) { e.preventDefault(); setCustomerDropdownOpen(false); return; }
+        const hasItems = rows.some(r => r.productId);
+        if (hasItems) { setShowLeaveConfirm(true); return; }
         navigate('/sales');
         return;
       }
@@ -1244,7 +1247,7 @@ export default function RecordSale({
   }, []);
 
   // ─── Tab flow handler for row fields (Marg column order) ──────────────
-  const TAB_FIELDS = ['qty', 'batch', 'rate', 'discount', 'gst'];
+  const TAB_FIELDS = ['expiry', 'qty', 'subQty', 'batch', 'mrp', 'rate', 'discount', 'gst'];
   // Shared column template for the Marg-style grid: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT ⋯
   // Mobile uses tighter fractions so all columns fit the full screen width with NO horizontal
   // scroll; from lg up it opens out to the spacious desktop proportions.
@@ -1253,10 +1256,31 @@ export default function RecordSale({
   // and scrolls horizontally (swipe); on desktop it fits within max-width.
   const GRID_COLS = 'grid-cols-[2.2fr_0.7fr_0.55fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]';
 
+  const isF3Unlocked = (uid: string, field: string) => f3Unlocked === `${uid}:${field}`;
+
+  const handleF3Confirm = useCallback(() => {
+    if (!f3Dialog) return;
+    const key = `${f3Dialog.uid}:${f3Dialog.field}`;
+    setF3Unlocked(key);
+    setF3Dialog(null);
+    setTimeout(() => focusField(f3Dialog.uid, f3Dialog.field), 0);
+  }, [f3Dialog, focusField]);
+
   const handleFieldKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number, field: string) => {
     const row = rows[rowIndex];
     if (!row) return;
     const currentIdx = TAB_FIELDS.indexOf(field);
+
+    // F3: toggle edit-gate for this field
+    if (e.key === 'F3') {
+      e.preventDefault();
+      if (isF3Unlocked(row.uid, field)) {
+        setF3Unlocked(null); // F3 again = done, re-lock
+      } else {
+        setF3Dialog({ uid: row.uid, field });
+      }
+      return;
+    }
 
     // ── Tab / Shift+Tab : move between fields in the same row ──
     if (e.key === 'Tab' && !e.shiftKey) {
@@ -1268,17 +1292,16 @@ export default function RecordSale({
       return;
     }
 
-    // → / ← : next / previous field, but only at the caret boundary so you can
-    // still edit within a text field normally. (↑/↓ are handled page-wide on
-    // the root — see handleVerticalArrowNav.)
-    if (e.key === 'ArrowRight') {
+    // ↑ / ↓ : next / previous field within row (at caret boundary).
+    // ← / → owed page-wide — see handleVerticalArrowNav.
+    if (e.key === 'ArrowDown') {
       if (caretAtEnd(e.currentTarget) && currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
         e.preventDefault();
         focusField(row.uid, TAB_FIELDS[currentIdx + 1]);
       }
       return;
     }
-    if (e.key === 'ArrowLeft') {
+    if (e.key === 'ArrowUp') {
       if (caretAtStart(e.currentTarget) && currentIdx > 0) {
         e.preventDefault();
         focusField(row.uid, TAB_FIELDS[currentIdx - 1]);
@@ -1321,16 +1344,19 @@ export default function RecordSale({
     }
   }, [rows, focusField, addNewRow]);
 
-  // ─── ↑ / ↓ : walk every focusable element on the page (top-to-bottom) ────
-  // Vertical keyboard navigation across the whole billing screen — customer
+  // ─── ← / → : walk every focusable element on the page (top-to-bottom) ────
+  // Horizontal keyboard navigation across the whole billing screen — customer
   // fields, every row's inputs, payment, discount, save. stopPropagation keeps
   // it from bubbling to the tab-bar's bill-switch handler.
   const handleVerticalArrowNav = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     const active = document.activeElement as HTMLElement | null;
     if (!active) return;
     // The product search owns ↑/↓ for its results dropdown — leave it alone.
     if (active === masterSearchRef.current) return;
+    // date/month inputs use ←/→ internally (mm/dd/yyyy segments) — don't intercept.
+    const inputType = (active as HTMLInputElement).type;
+    if (inputType === 'date' || inputType === 'month') return;
 
     const focusables = Array.from(
       e.currentTarget.querySelectorAll<HTMLElement>(
@@ -1343,7 +1369,7 @@ export default function RecordSale({
 
     e.preventDefault();
     e.stopPropagation();
-    const nextIdx = e.key === 'ArrowDown'
+    const nextIdx = e.key === 'ArrowRight'
       ? Math.min(idx + 1, focusables.length - 1)
       : Math.max(idx - 1, 0);
     const next = focusables[nextIdx];
@@ -1403,7 +1429,8 @@ export default function RecordSale({
                 ['Enter', 'Next / New row'],
                 ['Esc', 'Cancel & go back'],
                 ['F2', 'Jump to product search'],
-                ['F10 / Ctrl+S', 'Save bill'],
+                ['F3', 'Edit field / lock changes'],
+                ['Ctrl+Enter / Ctrl+S', 'Save bill'],
                 ['Ctrl+P', 'Save & Print'],
                 ['Alt+C', 'Clear current row'],
                 ['Alt+Delete', 'Remove current row'],
@@ -1429,7 +1456,7 @@ export default function RecordSale({
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => navigate('/sales')}
+            onClick={() => { const hasItems = rows.some(r => r.productId); if (hasItems) setShowLeaveConfirm(true); else navigate('/sales'); }}
             className="text-white/90 hover:bg-white/15 hover:text-white h-9 w-9"
             title="Back (Esc)"
           >
@@ -1450,7 +1477,7 @@ export default function RecordSale({
           <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-white/10 rounded-full border border-white/20 text-[11px] font-medium text-white/90">
             <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">F2</kbd> Search</span>
             <span className="w-1 h-1 bg-white/40 rounded-full"></span>
-            <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">F10</kbd> Save</span>
+            <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">Ctrl+↵</kbd> Save</span>
             <span className="w-1 h-1 bg-white/40 rounded-full"></span>
             <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">?</kbd> Help</span>
           </div>
@@ -1644,9 +1671,9 @@ export default function RecordSale({
           {/* Table header — Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount */}
           <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[11px] lg:text-[13px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
             <div className="pl-2 lg:pl-4 truncate">Product</div>
+            <div className="px-0.5 lg:px-1 text-center">Expiry</div>
+            <div className="px-0.5 lg:px-1 text-center">Strip</div>
             <div className="px-0.5 lg:px-1 text-center">PCS</div>
-            <div className="px-0.5 lg:px-1 text-center">QTY</div>
-            <div className="px-0.5 lg:px-1 text-center">HSN</div>
             <div className="px-0.5 lg:px-1 text-center">Batch</div>
             <div className="px-0.5 lg:px-1 text-center">MRP</div>
             <div className="px-0.5 lg:px-1 text-center">Rate</div>
@@ -1671,7 +1698,7 @@ export default function RecordSale({
                       <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 pointer-events-none">
                         <span className="text-[15px] lg:text-[16px] font-semibold text-gray-800 truncate">{row.productName}</span>
                         <span className="text-[10px] font-medium text-emerald-600 shrink-0">S:{row.stock}</span>
-                        {row.expiry && <span className="hidden lg:inline text-[9px] text-gray-400 shrink-0">Exp:{row.expiry}</span>}
+
                       </div>
                     ) : (
                       <input
@@ -1688,14 +1715,20 @@ export default function RecordSale({
                     )}
                   </div>
 
-                  {/* PCS — pack label 1×N (read only) */}
-                  <div className="px-1 text-center">
-                    <span className="text-[15px] font-semibold text-gray-500 tabular-nums">
-                      {row.productId ? `1×${row.pcsPerUnit || 10}` : ''}
-                    </span>
+                  {/* EXPIRY — editable YYYY-MM */}
+                  <div className="px-0.5">
+                    <Input
+                      ref={el => setFieldRef(row.uid, 'expiry', el)}
+                      type="month"
+                      value={row.expiry}
+                      onChange={e => updateRow(idx, { expiry: e.target.value })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'expiry')}
+                      disabled={!row.productId}
+                      className="h-8 text-[13px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg transition-all shadow-none text-rose-500 appearance-none"
+                    />
                   </div>
 
-                  {/* QTY (full strips) */}
+                  {/* STRIP — full strips qty */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'qty', el)}
@@ -1709,11 +1742,20 @@ export default function RecordSale({
                     />
                   </div>
 
-                  {/* HSN (from product — read only) */}
-                  <div className="px-1 text-center min-w-0">
-                    <span className="block truncate text-[15px] font-medium text-gray-500">
-                      {row.productId ? (row.hsn || '—') : ''}
-                    </span>
+                  {/* PCS — loose tablets (subQty) */}
+                  <div className="px-0.5">
+                    <Input
+                      ref={el => setFieldRef(row.uid, 'subQty', el)}
+                      type="number"
+                      min="0"
+                      max={row.pcsPerUnit > 0 ? row.pcsPerUnit - 1 : undefined}
+                      value={row.subQty}
+                      onChange={e => updateRow(idx, { subQty: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
+                      disabled={!row.productId || row.pcsPerUnit === 0}
+                      placeholder={row.pcsPerUnit > 0 ? '—' : 'N/A'}
+                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 transition-all shadow-none text-green-700"
+                    />
                   </div>
 
                   {/* BATCH */}
@@ -1728,11 +1770,25 @@ export default function RecordSale({
                     />
                   </div>
 
-                  {/* MRP — product MRP (read only) */}
-                  <div className="px-1 text-center">
-                    <span className="text-[15px] font-medium text-gray-500 tabular-nums">
-                      {row.productId ? (row.mrp ? `₹${row.mrp.toFixed(2)}` : '—') : ''}
-                    </span>
+                  {/* MRP — F3 to edit */}
+                  <div className="px-0.5">
+                    <Input
+                      ref={el => setFieldRef(row.uid, 'mrp', el)}
+                      type="number"
+                      step="0.01"
+                      value={row.mrp || ''}
+                      onChange={e => updateRow(idx, { mrp: parseFloat(e.target.value) || 0 })}
+                      onKeyDown={e => handleFieldKeyDown(e, idx, 'mrp')}
+                      disabled={!row.productId}
+                      readOnly={!isF3Unlocked(row.uid, 'mrp')}
+                      onBlur={() => { if (isF3Unlocked(row.uid, 'mrp')) setF3Unlocked(null); }}
+                      title={isF3Unlocked(row.uid, 'mrp') ? 'Editing MRP — press F3 to lock' : 'Press F3 to edit MRP'}
+                      className={`h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 transition-all shadow-none tabular-nums ${
+                        isF3Unlocked(row.uid, 'mrp')
+                          ? 'focus:bg-amber-50 focus:!text-amber-900 focus:!border-amber-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-amber-400 focus:!rounded-lg text-amber-700'
+                          : 'text-gray-500 cursor-default'
+                      }`}
+                    />
                   </div>
 
                   {/* Rate (editable selling rate) */}
@@ -1749,21 +1805,6 @@ export default function RecordSale({
                     />
                   </div>
 
-                  {/* TAB (loose tablets = subQty) */}
-                  <div className="px-0.5">
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'subQty', el)}
-                      type="number"
-                      min="0"
-                      max={row.pcsPerUnit > 0 ? row.pcsPerUnit - 1 : undefined}
-                      value={row.subQty}
-                      onChange={e => updateRow(idx, { subQty: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
-                      disabled={!row.productId || row.pcsPerUnit === 0}
-                      placeholder={row.pcsPerUnit > 0 ? '—' : 'N/A'}
-                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 focus:border-green-500 focus:ring-2 focus:ring-green-100 transition-all shadow-none text-green-700"
-                    />
-                  </div>
 
                   {/* DISC% (always a percentage) */}
                   <div className="px-0.5 relative">
@@ -1862,17 +1903,17 @@ export default function RecordSale({
                     key={p.id}
                     data-item={i}
                     onMouseEnter={() => setSearchHighlight(i)}
-                    className={`group/item w-full pl-4 pr-2 h-9 flex items-center gap-3 border-b border-gray-50 last:border-0 transition-colors ${searchHighlight === i ? 'bg-emerald-50' : 'hover:bg-gray-50/50'}`}
+                    className={`group/item w-full pl-4 pr-2 h-9 flex items-center gap-3 border-b border-gray-50 last:border-0 transition-colors ${searchHighlight === i ? 'bg-emerald-50' : 'hover:bg-gray-50/50'} ${p.quantity <= 0 ? 'opacity-50 grayscale' : ''}`}
                   >
                     <button
                       type="button"
                       onClick={() => selectProduct(activeSearchRow as number, p)}
                       className="flex items-center gap-3 min-w-0 flex-1 text-left h-full"
                     >
-                      <span className={`text-sm font-semibold truncate flex-1 min-w-0 ${searchHighlight === i ? 'text-emerald-700' : 'text-gray-800'}`}>{p.name}</span>
+                      <span className={`text-sm font-semibold truncate flex-1 min-w-0 ${searchHighlight === i ? 'text-emerald-700' : 'text-gray-800'} ${p.quantity <= 0 ? 'text-red-500 line-through decoration-red-300' : ''}`}>{p.name}</span>
                       {p.hsn_code && <span className="hidden lg:inline text-[11px] text-gray-400 shrink-0 w-[86px] text-right truncate">HSN {p.hsn_code}</span>}
-                      {p.expiry_date && <span className="hidden sm:inline text-[11px] font-medium text-rose-500 shrink-0 w-[74px] text-right tabular-nums">Exp {p.expiry_date.substring(0, 7)}</span>}
-                      <span className="text-[11px] font-medium text-emerald-600 shrink-0 w-16 text-right tabular-nums">Stk {p.quantity}</span>
+                      {p.pcs_per_unit && p.pcs_per_unit > 0 && <span className="hidden sm:inline text-[11px] font-medium text-indigo-500 shrink-0 w-[64px] text-right tabular-nums">1×{p.pcs_per_unit}</span>}
+                      <span className={`text-[11px] font-medium shrink-0 w-16 text-right tabular-nums ${p.quantity <= 0 ? 'text-red-600 font-bold' : 'text-emerald-600'}`}>Stk {p.quantity}</span>
                       <span className="text-sm font-bold text-emerald-700 shrink-0 w-20 text-right tabular-nums">₹{p.selling_price.toFixed(2)}</span>
                     </button>
                     <button
@@ -2190,6 +2231,100 @@ export default function RecordSale({
         onSaved={handleQuickAddSaved}
         defaultGst={settings?.default_gst_rate}
       />
+
+      {/* ══════ LEAVE CONFIRMATION ══════ */}
+      {/* ══════ F3 EDIT CONFIRMATION ══════ */}
+      {f3Dialog && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[500] flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
+          onKeyDown={e => {
+            if (e.key === 'Escape') { e.stopPropagation(); setF3Dialog(null); }
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+              e.preventDefault();
+              const btns = document.querySelectorAll<HTMLButtonElement>('[data-f3-btn]');
+              const cur = Array.from(btns).indexOf(document.activeElement as HTMLButtonElement);
+              btns[(cur + 1) % btns.length]?.focus();
+            }
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-6 pt-5 pb-2">
+              <p className="text-base font-bold text-gray-900">Edit this field?</p>
+              <p className="text-sm text-gray-500 mt-1">Press F3 again to lock in your changes.</p>
+            </div>
+            <div className="flex gap-3 px-6 py-4 justify-end">
+              <button
+                data-f3-btn
+                autoFocus
+                type="button"
+                onClick={handleF3Confirm}
+                className="px-5 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-colors"
+              >
+                Yes
+              </button>
+              <button
+                data-f3-btn
+                type="button"
+                onClick={() => setF3Dialog(null)}
+                className="px-5 py-2 rounded-lg text-sm font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300 transition-colors"
+              >
+                No
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {showLeaveConfirm && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="leave-title"
+          className="fixed inset-0 z-[500] flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
+          onKeyDown={e => {
+            if (e.key === 'Escape') { e.stopPropagation(); setShowLeaveConfirm(false); }
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+              e.preventDefault();
+              const btns = document.querySelectorAll<HTMLButtonElement>('[data-leave-btn]');
+              const cur = Array.from(btns).indexOf(document.activeElement as HTMLButtonElement);
+              btns[(cur + 1) % btns.length]?.focus();
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 pt-6 pb-2">
+              <p id="leave-title" className="text-base font-bold text-gray-900">Bill in progress — leave without saving?</p>
+              <p className="text-sm text-gray-500 mt-1">Your unsaved bill will be lost.</p>
+            </div>
+            <div className="flex gap-3 px-6 py-4 justify-end">
+              <button
+                data-leave-btn
+                autoFocus
+                type="button"
+                onClick={() => setShowLeaveConfirm(false)}
+                className="px-5 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-colors"
+              >
+                Stay
+              </button>
+              <button
+                data-leave-btn
+                type="button"
+                onClick={() => { setShowLeaveConfirm(false); if (persistKey) clearBillData(persistKey); navigate('/sales'); }}
+                className="px-5 py-2 rounded-lg text-sm font-semibold text-gray-700 bg-gray-100 hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-gray-300 transition-colors"
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
     </div>
   );

@@ -39,7 +39,8 @@ import {
   PackageX,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import SmoothScrollProvider from './SmoothScrollProvider';
 
 const ownerNavItems = [
   { title: 'Overview', icon: Home, href: '/' },
@@ -221,9 +222,19 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const mainContentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setFocusedIndex(null);
   }, [location.pathname]);
+
+  // Signal to child pages that sidebar keyboard nav is active.
+  useEffect(() => {
+    if (focusedIndex !== null) {
+      document.body.dataset.sidebarNav = 'active';
+    } else {
+      delete document.body.dataset.sidebarNav;
+    }
+  }, [focusedIndex]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -241,19 +252,23 @@ export default function Layout() {
         }
       }
 
+      // Block sidebar shortcuts if any modal dialog/alertdialog is open,
+      // or if the user is interacting with an input/menu.
       if (
         (isInput && !(e.key === 'ArrowLeft' && isAtStart)) ||
         target.tagName === 'SELECT' ||
         target.isContentEditable ||
         target.closest('[role="listbox"]') ||
-        target.closest('[role="dialog"]') ||
-        target.closest('[role="menu"]')
+        target.closest('[role="menu"]') ||
+        document.querySelector('[role="dialog"], [role="alertdialog"]')
       ) {
         return;
       }
 
       // ponytail: ArrowLeft focuses sidebar from anywhere (if not defaultPrevented); when focused, Up/Down move highlight, Right/Enter open and enter section
-      if (!e.defaultPrevented && e.key === 'ArrowLeft' && focusedIndex === null) {
+      // Guard: only activate on top-level routes — sub-pages (/sales/new etc.) own ← for their own navigation.
+      const isTopLevelForNav = ownerNavItems.some((item) => item.href === location.pathname);
+      if (!e.defaultPrevented && e.key === 'ArrowLeft' && focusedIndex === null && isTopLevelForNav) {
         e.preventDefault();
         e.stopImmediatePropagation();
         const current = ownerNavItems.findIndex((item) => item.href === location.pathname);
@@ -361,10 +376,12 @@ export default function Layout() {
             </div>
             <UserMenu userName={userName} accountName={accountName} />
           </header>
-          <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-w-0">
-            <SubscriptionGuard>
-              <Outlet />
-            </SubscriptionGuard>
+          <div ref={mainContentRef} className="flex-1 p-3 sm:p-6 overflow-y-auto min-w-0">
+            <SmoothScrollProvider scrollContainerRef={mainContentRef} pathname={location.pathname}>
+              <SubscriptionGuard>
+                <Outlet />
+              </SubscriptionGuard>
+            </SmoothScrollProvider>
           </div>
         </main>
       </div>

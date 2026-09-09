@@ -1,13 +1,29 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/db conn/supabaseClient";
-import { Check, X } from "lucide-react";
+import { Check, X, Tag, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const Pricing = () => {
     const [isAnnual, setIsAnnual] = useState(false);
+    const [couponInput, setCouponInput] = useState("");
+    const [couponCode, setCouponCode] = useState("");  // staged/applied code
+    const [isLoading, setIsLoading] = useState(false);
+    const [showCouponDialog, setShowCouponDialog] = useState(false);
+    const [pendingPlan, setPendingPlan] = useState<string | null>(null);
 
     useEffect(() => {
         // Dynamically load Razorpay script only when entering the Pricing page
@@ -47,9 +63,9 @@ const Pricing = () => {
         {
             name: "Professional",
             description: "Everything for a busy, growing medical shop.",
-            price: isAnnual ? "₹3,999" : "₹399",
-            originalPrice: isAnnual ? "₹6,000" : "₹500",
-            discount: isAnnual ? "33% OFF" : "20% OFF",
+            price: isAnnual ? "₹6,000" : "₹499",
+            originalPrice: isAnnual ? "₹7,500" : "₹625",
+            discount: isAnnual ? "20% OFF" : "20% OFF",
             period: isAnnual ? "/year" : "/month",
             features: [
                 { name: "Unlimited Products", included: true },
@@ -57,60 +73,66 @@ const Pricing = () => {
                 { name: "Inventory Forecasting", included: true },
                 { name: "Sales Analytics", included: true },
             ],
-            saving: isAnnual ? "Save ₹2,001/year" : "Save ₹101/month",
+            saving: isAnnual ? "Save ₹1,500/year" : "Save ₹126/month",
             cta: "Get Started",
             popular: true,
             variant: "default" as const,
             disabled: false,
             showInAnnual: true,
         },
-        {
-            name: "Enterprise",
-            description: "Multi-store management and advanced features.",
-            price: "₹-",
-            originalPrice: null,
-            discount: null,
-            period: isAnnual ? "/year" : "/month",
-            features: [
-                { name: "Up to 5 Stores", included: true },
-                { name: "Centralized Inventory", included: true },
-                { name: "Advanced Analytics", included: true },
-                { name: "Priority Support", included: true },
-            ],
-            saving: null,
-            cta: "Contact Sales",
-            variant: "outline" as const,
-            disabled: true,
-            showInAnnual: true,
-        },
+
     ];
 
     const filteredPlans = plans.filter(plan => !isAnnual || plan.showInAnnual);
 
 
     const handleSubscribe = async (planName: string) => {
-        if (planName === "Professional" || planName === "Testing Plan") {
+        if (!couponCode) {
+            setPendingPlan(planName);
+            setShowCouponDialog(true);
+            return;
+        }
+        await processSubscription(planName);
+    };
+
+    const processSubscription = async (planName: string) => {
             try {
+                setIsLoading(true);
                 toast.info("Initializing Checkout...");
 
-                console.log("Invoking create-razorpay-order with:", { planName, isAnnual });
+                console.log("Invoking create-razorpay-order with:", { planName, isAnnual, couponCode });
                 
                 // 1. Call Edge Function to create order
                 const { data, error } = await supabase.functions.invoke('create-razorpay-order', {
-                    body: { planName, isAnnual: !!isAnnual }
+                    body: { planName, isAnnual: !!isAnnual, couponCode: couponCode.trim() || undefined }
                 });
 
                 if (error) {
                     console.error("Supabase function invocation error:", error);
-                    throw error;
+                    // Extract real message from edge fn response body
+                    let errMessage = error.message;
+                    try {
+                        const context = (error as any)?.context;
+                        if (context) {
+                            const body = await context.json();
+                            if (body?.error) errMessage = body.error;
+                        }
+                    } catch (_) {}
+                    throw new Error(errMessage);
                 }
                 
-                if (data.error) {
+                if (data?.error) {
                     console.error("Edge function returned error:", data.error);
                     throw new Error(data.error);
                 }
                 
                 console.log("Order created successfully:", data);
+
+                // Show discount toast if coupon was applied
+                if (data.discountApplied) {
+                    const saved = (data.discountApplied.savedPaise / 100).toFixed(2);
+                    toast.success(`Coupon "${data.discountApplied.code}" applied — ₹${saved} off!`);
+                }
 
                 // 2. Open Razorpay options
                 const options = {
@@ -171,8 +193,9 @@ const Pricing = () => {
             } catch (err: any) {
                 console.error(err);
                 toast.error("Checkout Failed: " + (err.message || "Unknown error"));
+            } finally {
+                setIsLoading(false);
             }
-        }
     };
 
     return (
@@ -232,12 +255,12 @@ const Pricing = () => {
                                 <CardTitle className="text-xl font-bold text-gray-900">{plan.name}</CardTitle>
                                 <div className="mt-4 flex flex-col">
                                     {plan.originalPrice && (
-                                        <span className="text-sm font-medium text-gray-400 line-through decoration-red-500 decoration-2">
+                                        <span className="text-4xl font-extrabold tracking-tight text-gray-400 line-through decoration-red-500 decoration-2">
                                             {plan.originalPrice}
                                         </span>
                                     )}
                                     <div className="flex items-baseline text-gray-900">
-                                        <span className="text-4xl font-extrabold tracking-tight">{plan.price}</span>
+                                        <span className={plan.originalPrice ? "text-sm font-medium" : "text-4xl font-extrabold tracking-tight"}>{plan.price}</span>
                                         <span className="ml-1 text-sm font-semibold text-gray-500">{plan.period}</span>
                                     </div>
                                 </div>
@@ -288,7 +311,94 @@ const Pricing = () => {
                         </Card>
                     ))}
                 </div>
+
+                {/* Coupon Code Section */}
+                <div className="flex flex-col items-center gap-3 pt-4 pb-2">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Tag className="h-4 w-4" />
+                        <span>Have a coupon code?</span>
+                    </div>
+                    <div className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md border border-red-100 mb-2">
+                        {isAnnual ? (
+                            <>Use code <strong>INVENTORY20OFF</strong> for extra discount!</>
+                        ) : (
+                            <>Use code <strong>MEDSTOCKSY100</strong> to get ₹100 off!</>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2 w-full max-w-sm">
+                        <Input
+                            id="coupon-code-input"
+                            placeholder="Enter coupon code"
+                            value={couponInput}
+                            onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && couponInput.trim()) {
+                                    setCouponCode(couponInput.trim());
+                                    toast.info(`Coupon "${couponInput.trim()}" staged — click Subscribe to apply.`);
+                                }
+                            }}
+                            className="font-mono tracking-widest uppercase"
+                        />
+                        <Button
+                            id="apply-coupon-btn"
+                            variant="outline"
+                            onClick={() => {
+                                if (!couponInput.trim()) return;
+                                setCouponCode(couponInput.trim());
+                                toast.info(`Coupon "${couponInput.trim()}" staged — click Subscribe to apply.`);
+                            }}
+                        >
+                            Apply
+                        </Button>
+                        {couponCode && (
+                            <Button
+                                id="remove-coupon-btn"
+                                variant="ghost"
+                                size="icon"
+                                className="text-muted-foreground hover:text-destructive"
+                                onClick={() => { setCouponCode(""); setCouponInput(""); }}
+                            >
+                                <X className="h-4 w-4" />
+                            </Button>
+                        )}
+                    </div>
+                    {couponCode && (
+                        <Badge variant="secondary" className="text-emerald-600 bg-emerald-50 border border-emerald-200 gap-1">
+                            <Tag className="h-3 w-3" />
+                            {couponCode} — will be applied at checkout
+                        </Badge>
+                    )}
+                </div>
             </div>
+
+            <AlertDialog open={showCouponDialog} onOpenChange={setShowCouponDialog}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Have a coupon code?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Do you have a coupon for an extra discount before we proceed to payment?
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel onClick={() => {
+                            if (pendingPlan) {
+                                processSubscription(pendingPlan);
+                            }
+                        }}>
+                            No, proceed to checkout
+                        </AlertDialogCancel>
+                        <AlertDialogAction onClick={() => {
+                            setTimeout(() => {
+                                const input = document.getElementById('coupon-code-input');
+                                input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                input?.focus();
+                            }, 100);
+                        }}>
+                            Yes, let me enter it
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 };

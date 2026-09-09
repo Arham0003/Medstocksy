@@ -212,7 +212,7 @@ export default function Sales() {
   const fetchData = async () => {
     try {
       // Fetch products (all products with stock)
-      const productsRes = await supabase.from('products').select('id, name, quantity, selling_price, gst').gt('quantity', 0);
+      const productsRes = await supabase.from('products').select('id, name, quantity, selling_price, gst');
 
       if (productsRes.error) throw productsRes.error;
       setProducts(productsRes.data || []);
@@ -986,6 +986,8 @@ export default function Sales() {
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       if (isDialogOpen || isEditOpen || isDetailModalOpen) return;
+      // Bail when Layout's sidebar keyboard nav is active (ArrowLeft was pressed to enter sidebar mode).
+      if (document.body.dataset.sidebarNav === 'active') return;
 
       const list = groupedSales;
 

@@ -13,7 +13,7 @@ import { ShieldCheck, Eye, EyeOff, Lock, AlertTriangle } from 'lucide-react';
 // For real protection, enforce admin checks via Supabase RLS / RPC
 // using the logged-in user's identity.
 // ──────────────────────────────────────────────────────────────
-const ADMIN_USER = 'conact@medstocksy.in';
+const ADMIN_USER = 'contact@medstocksy.in';
 const ADMIN_PASS = 'Med1!stocksy2@';
 
 const STORAGE_KEY = 'medstocksy:admin_unlocked';

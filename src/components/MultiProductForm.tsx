@@ -17,6 +17,16 @@ import {
   RotateCcw,
   Receipt,
 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { cn, calcEffectivePurchasePrice } from '@/lib/utils';
@@ -68,6 +78,7 @@ export interface MultiProductFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   allSuppliers: SupplierOption[];
+  allProducts?: any[];
   accountId: string | undefined;
   onSaved: () => void;
   defaultGstRate?: number;
@@ -122,7 +133,14 @@ const expiryToDate = (input: string): string | null => {
 /** Automatically insert '/' after MM when typing digits for MM/YY */
 const formatExpiryInput = (val: string, prev: string): string => {
   if (val.length < prev.length) return val;
-  const clean = val.replace(/[^\d/]/g, '');
+  let clean = val.replace(/[^\d/]/g, '');
+  
+  if (clean.length >= 2) {
+    const mm = parseInt(clean.slice(0, 2), 10);
+    if (mm > 12) clean = '12' + clean.slice(2);
+    else if (mm === 0) clean = '01' + clean.slice(2);
+  }
+
   if (/^\d{2}$/.test(clean)) return clean + '/';
   if (/^\d{3,4}$/.test(clean) && !clean.includes('/')) {
     return clean.slice(0, 2) + '/' + clean.slice(2, 4);
@@ -398,36 +416,17 @@ const CategoryPicker = ({
 }) => {
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [rect, setRect] = useState<DOMRect | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const inRef = useRef<HTMLInputElement | null>(null);
-
-  const reposition = useCallback(() => {
-    if (inRef.current) setRect(inRef.current.getBoundingClientRect());
-  }, []);
 
   useEffect(() => {
     if (!open) return;
-    reposition();
-    const onScroll = (e: Event) => {
-      if ((e.target as HTMLElement)?.closest?.('[data-category-menu]')) return;
-      reposition();
-    };
     const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (wrapRef.current?.contains(t)) return;
-      if (t.closest?.('[data-category-menu]')) return;
+      if (wrapRef.current?.contains(e.target as Node)) return;
       setOpen(false);
     };
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
     document.addEventListener('mousedown', onDown);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-      document.removeEventListener('mousedown', onDown);
-    };
-  }, [open, reposition]);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
 
   const filtered = useMemo(() => {
     if (!value.trim()) return options;
@@ -440,30 +439,18 @@ const CategoryPicker = ({
     setOpen(false);
   };
 
-  const menuWidth = rect
-    ? Math.min(Math.max(rect.width, 220), window.innerWidth - 16)
-    : 220;
-  const menuLeft = rect
-    ? Math.min(rect.left, window.innerWidth - menuWidth - 8)
-    : 0;
-
   return (
     <div className="relative" ref={wrapRef}>
       <Input
-        ref={el => {
-          inRef.current = el;
-          inputRef?.(el);
-        }}
+        ref={inputRef}
         value={value}
         onChange={e => {
           onChange(e.target.value);
           setActiveIdx(0);
-          reposition();
           setOpen(true);
         }}
         onFocus={() => {
           setActiveIdx(0);
-          reposition();
           setOpen(true);
         }}
         onKeyDown={e => {
@@ -500,19 +487,10 @@ const CategoryPicker = ({
         autoComplete="off"
       />
       {open &&
-        rect &&
-        filtered.length > 0 &&
-        createPortal(
+        filtered.length > 0 && (
           <div
             data-category-menu
-            style={{
-              position: 'fixed',
-              top: rect.bottom + 4,
-              left: menuLeft,
-              width: menuWidth,
-              pointerEvents: 'auto',
-            }}
-            className="z-[120] bg-white border border-slate-200 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.18)] max-h-64 flex flex-col overflow-hidden"
+            className="absolute top-[calc(100%+4px)] left-0 min-w-[220px] w-full z-[120] bg-white border border-slate-200 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.18)] max-h-64 flex flex-col overflow-hidden"
           >
             <div className="overflow-y-auto flex-1 min-h-0 py-1.5">
               {filtered.map((opt, idx) => (
@@ -531,8 +509,144 @@ const CategoryPicker = ({
                 </button>
               ))}
             </div>
-          </div>,
-          document.body,
+          </div>
+        )}
+    </div>
+  );
+};
+
+// ─── Product Picker ─────────────────────────────────────────────────────────────
+
+const ProductPicker = ({
+  value,
+  onChange,
+  onKeyDown,
+  products,
+  inputRef,
+  placeholder = 'Product name *',
+  className,
+}: {
+  value: string;
+  onChange: (val: string, product?: any) => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  products?: any[];
+  inputRef?: (el: HTMLInputElement | null) => void;
+  placeholder?: string;
+  className?: string;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!products) return [];
+    if (!value.trim()) return products.slice(0, 50);
+    const q = value.toLowerCase();
+    return products.filter((p: any) => p.name.toLowerCase().includes(q) || (p.manufacturer && p.manufacturer.toLowerCase().includes(q))).slice(0, 50);
+  }, [products, value]);
+
+  const pick = (opt: any) => {
+    onChange(opt.name, opt);
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <Input
+        ref={inputRef}
+        value={value}
+        onChange={e => {
+          const val = e.target.value;
+          onChange(val);
+          setActiveIdx(0);
+          if (val.trim()) setOpen(true);
+          else setOpen(false);
+        }}
+        onFocus={() => {
+          if (value.trim()) {
+            setActiveIdx(0);
+            setOpen(true);
+          }
+        }}
+        onKeyDown={e => {
+          if (e.key === 'Escape') {
+            setOpen(false);
+            return;
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!open) setOpen(true);
+            else {
+              const next = Math.min(activeIdx + 1, filtered.length - 1);
+              setActiveIdx(next);
+              document.getElementById(`prod-opt-${next}`)?.scrollIntoView({ block: 'nearest' });
+            }
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const next = Math.max(activeIdx - 1, 0);
+            setActiveIdx(next);
+            document.getElementById(`prod-opt-${next}`)?.scrollIntoView({ block: 'nearest' });
+            return;
+          }
+          if (e.key === 'Enter' && open && filtered.length > 0 && filtered[activeIdx]) {
+            e.preventDefault();
+            pick(filtered[activeIdx]);
+            return;
+          }
+          onKeyDown?.(e);
+        }}
+        placeholder={placeholder}
+        className={className}
+        autoComplete="off"
+      />
+      {open &&
+        filtered.length > 0 && (
+          <div
+            data-product-menu
+            className="absolute top-[calc(100%+4px)] left-0 min-w-[300px] w-full z-[120] bg-white border border-slate-200 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.18)] max-h-64 flex flex-col overflow-hidden"
+          >
+            <div className="overflow-y-auto flex-1 min-h-0 py-1.5">
+              {filtered.map((opt: any, idx: number) => (
+                <button
+                  key={opt.id}
+                  id={`prod-opt-${idx}`}
+                  type="button"
+                  className={`w-full text-left px-3 py-2.5 flex flex-col gap-1 text-sm transition-all border-b border-slate-100 last:border-0 ${idx === activeIdx ? 'bg-blue-50 text-blue-900' : 'text-slate-700 hover:bg-slate-50'}`}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  onMouseDown={e => {
+                    e.preventDefault();
+                    pick(opt);
+                  }}
+                >
+                  <div className="flex justify-between items-start w-full gap-2">
+                    <div className="font-semibold truncate">{opt.name}</div>
+                    <div className="text-[10px] font-medium bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded shrink-0">Stock: {opt.quantity || 0}</div>
+                  </div>
+                  <div className="flex justify-between items-center w-full text-[11px] text-slate-500">
+                    <div className="truncate pr-2">{opt.manufacturer || 'Unknown'}</div>
+                    {opt.batch_number && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded shadow-sm font-medium text-slate-600">B: {opt.batch_number}</span>
+                        {opt.expiry_date && <span className="text-slate-400">Exp: {opt.expiry_date.substring(5, 7)}/{opt.expiry_date.substring(2, 4)}</span>}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         )}
     </div>
   );
@@ -541,22 +655,21 @@ const CategoryPicker = ({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-
-const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldRef, updateRow, handleEnterNav, formatExpiryInput }: any) => {
+const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldRef, updateRow, handleEnterNav, formatExpiryInput, onProductNameChange, allProducts }: any) => {
 
                 const hasErr = Object.keys(row.rowErrors).length > 0;
                 return (
                   <div
                     key={row.tempId}
                     className={cn(
-                      'bg-white rounded-lg shadow-sm border overflow-hidden transition-all',
+                      'bg-white rounded-lg shadow-sm border transition-all',
                       hasErr
                         ? 'border-rose-300 ring-1 ring-rose-200 bg-rose-50/20'
                         : 'border-blue-100 hover:border-blue-200',
                     )}
                   >
                     {/* Card Header Strip */}
-                    <div className="flex items-center justify-between gap-2 px-2.5 py-1 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 via-white to-white min-h-[28px]">
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-1 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 via-white to-white min-h-[28px] rounded-t-lg">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="shrink-0 h-5 w-5 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center text-[11px] font-bold shadow-sm">
                           {idx + 1}
@@ -588,16 +701,12 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                     <div className="px-2.5 py-1 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 items-end border-b border-slate-50">
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel required>Product Name</FieldLabel>
-                        <Input
-                          ref={el => setFieldRef(row.tempId, 'name', el)}
+                        <ProductPicker
+                          inputRef={(el: HTMLInputElement | null) => setFieldRef(row.tempId, 'name', el)}
                           value={row.name}
-                          onChange={e =>
-                            updateRow(row.tempId, {
-                              name: e.target.value,
-                              rowErrors: { ...row.rowErrors, name: '' },
-                            })
-                          }
-                          onKeyDown={e => handleEnterNav(e, idx, 'name')}
+                          products={allProducts}
+                          onChange={(val: string, product?: any) => onProductNameChange(row.tempId, val, row, product)}
+                          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => handleEnterNav(e, idx, 'name')}
                           placeholder="Product name *"
                           className={cn(cardInputCls, 'font-medium text-slate-900', row.rowErrors.name && cellErrCls)}
                         />
@@ -800,6 +909,7 @@ export const MultiProductForm = ({
   open,
   onOpenChange,
   allSuppliers,
+  allProducts,
   accountId,
   onSaved,
   defaultGstRate = 18,
@@ -814,6 +924,7 @@ export const MultiProductForm = ({
   const [rows, setRows] = useState<ProductRow[]>([makeRow(defaultGstRate)]);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingLockRef = useRef(false);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [f2ConfirmOpen, setF2ConfirmOpen] = useState(false);
   const f2CancelRef = useRef<HTMLButtonElement>(null);
   const f2ConfirmRef = useRef<HTMLButtonElement>(null);
@@ -941,6 +1052,32 @@ export const MultiProductForm = ({
 
   const removeRow = (tempId: string) =>
     setRows(prev => (prev.length === 1 ? prev : prev.filter(r => r.tempId !== tempId)));
+
+  const onProductNameChange = useCallback((tempId: string, val: string, row: any, selectedProduct?: any) => {
+    // ponytail: check if it perfectly matches an existing product by name (or selected via dropdown), if so, populate the rest
+    const match = selectedProduct || allProducts?.find((p: any) => p.name.toLowerCase() === val.toLowerCase());
+    if (match) {
+      updateRow(tempId, {
+        name: val,
+        manufacturer: match.manufacturer || '',
+        category: match.category || '',
+        hsn_code: match.hsn_code || '',
+        pcs_per_unit: match.pcs_per_unit ? String(match.pcs_per_unit) : '',
+        low_stock: match.low_stock_threshold ? String(match.low_stock_threshold) : '10',
+        mrp: match.selling_price ? String(match.selling_price) : '',
+        rate: match.purchase_price ? String(match.purchase_price) : '',
+        gst: match.gst ? String(match.gst) : String(defaultGstRate),
+        batch_number: match.batch_number || '',
+        expiry_date: match.expiry_date ? `${match.expiry_date.substring(5, 7)}/${match.expiry_date.substring(2, 4)}` : '',
+        rowErrors: { ...row.rowErrors, name: '' },
+      });
+    } else {
+      updateRow(tempId, {
+        name: val,
+        rowErrors: { ...row.rowErrors, name: '' },
+      });
+    }
+  }, [allProducts, defaultGstRate]);
 
   // Move focus within a row; on last field: validate → create next row or skip to existing
   const advanceFrom = (rowIndex: number, field: string) => {
@@ -1135,6 +1272,16 @@ export const MultiProductForm = ({
       return;
     }
 
+    // ponytail: block expired products from entry
+    const nowStr = new Date().toISOString().substring(0, 7); // "YYYY-MM"
+    for (const r of toSave) {
+      const expDate = expiryToDate(r.expiry_date);
+      if (expDate && expDate.substring(0, 7) < nowStr) {
+        if (!silent) toast({ variant: 'destructive', title: 'Cannot save expired product', description: `${r.name} (${r.expiry_date}) is expired.` });
+        return;
+      }
+    }
+
     isSavingLockRef.current = true;
     setIsSaving(true);
     try {
@@ -1291,7 +1438,18 @@ export const MultiProductForm = ({
       {/* ═══════════════════════════════════════════════════════════════════
           MAIN PURCHASE ENTRY DIALOG
       ════════════════════════════════════════════════════════════════════ */}
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={(newOpen) => {
+        if (!newOpen) {
+          const hasData = header.supplierId !== null || header.invoiceNumber !== '' || rows.length > 1 || rows[0].name !== '';
+          if (!hasData) {
+            onOpenChange(false);
+            return;
+          }
+          setExitConfirmOpen(true);
+          return;
+        }
+        onOpenChange(newOpen);
+      }}>
         <DialogContent
           className="purchase-entry w-[98vw] sm:w-[95vw] sm:max-w-6xl lg:max-w-[92vw] max-h-[94vh] h-[94vh] p-0 overflow-hidden flex flex-col gap-0 border-0"
           onOpenAutoFocus={e => {
@@ -1475,7 +1633,7 @@ export const MultiProductForm = ({
           {/* ── SCROLLABLE BODY: PRODUCT CARDS ── */}
           <div className="flex-1 overflow-auto bg-slate-50/60 px-2 sm:px-4 py-2">
             <div className="max-w-[1500px] mx-auto space-y-1.5">
-              {computedRows.map((row, idx) => (<MemoizedRowCard key={row.tempId} row={row} idx={idx} rowsLength={rows.length} removeRow={removeRow} setFieldRef={setFieldRef} updateRow={updateRow} handleEnterNav={handleEnterNav} formatExpiryInput={formatExpiryInput} />))}
+              {computedRows.map((row, idx) => (<MemoizedRowCard key={row.tempId} row={row} idx={idx} rowsLength={rows.length} removeRow={removeRow} setFieldRef={setFieldRef} updateRow={updateRow} handleEnterNav={handleEnterNav} formatExpiryInput={formatExpiryInput} onProductNameChange={onProductNameChange} allProducts={allProducts} />))}
 
               {/* Add Item button */}
               <button
@@ -1776,6 +1934,45 @@ export const MultiProductForm = ({
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={exitConfirmOpen} onOpenChange={setExitConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to exit?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your unsaved data will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="transition-none"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowRight') {
+                  e.preventDefault();
+                  (e.currentTarget.nextElementSibling as HTMLElement)?.focus();
+                }
+              }}
+            >
+              No
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 transition-none"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') {
+                  e.preventDefault();
+                  (e.currentTarget.previousElementSibling as HTMLElement)?.focus();
+                }
+              }}
+              onClick={() => {
+                setExitConfirmOpen(false);
+                onOpenChange(false);
+              }}
+            >
+              Yes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

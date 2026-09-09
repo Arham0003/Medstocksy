@@ -49,8 +49,7 @@ export default function SalesBilling() {
         const [prodRes, settingsRes] = await Promise.all([
           supabase
             .from('products')
-            .select('id, name, quantity, selling_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer')
-            .gt('quantity', 0),
+            .select('id, name, quantity, selling_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer'),
           profile?.account_id
             ? supabase.from('settings').select('gst_enabled, default_gst_rate, gst_type').eq('account_id', profile.account_id).single()
             : Promise.resolve({ data: null, error: null }),
@@ -181,8 +180,8 @@ export default function SalesBilling() {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
-        return; // don't steal keystrokes from form fields
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.tagName === 'BUTTON' || t.isContentEditable)) {
+        return; // don't steal keystrokes from form fields or buttons
       }
 
       // 1–5 → jump straight to that bill

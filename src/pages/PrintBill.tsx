@@ -161,14 +161,24 @@ export default function PrintBill() {
         window.print();
     }, [billId]);
 
-    // P = Print · F2 = Edit
+    // P = Print · F2 = Edit · ←/→ = Change paper size
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.ctrlKey || e.altKey || e.metaKey) return; // leave Ctrl+P etc. to the browser
             const t = e.target as HTMLElement | null;
             if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+            
             if (e.key === 'p' || e.key === 'P') { e.preventDefault(); doPrint(); }
             else if (e.key === 'F2') { e.preventDefault(); doEdit(); }
+            else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const formats: ('A5' | 'A4' | 'T80')[] = ['A5', 'A4', 'T80'];
+                setFormat(prev => {
+                    const idx = formats.indexOf(prev);
+                    const dir = e.key === 'ArrowRight' ? 1 : -1;
+                    return formats[(idx + dir + formats.length) % formats.length];
+                });
+            }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
@@ -625,12 +635,16 @@ export default function PrintBill() {
               border-collapse: collapse;
             }
             .bill-table th, .bill-table td {
-              border: 0.5px solid #444;
-              padding: 1.5px 2px;
+              border: none;
+              border-left: 0.5px solid #444;
+              border-right: 0.5px solid #444;
+              padding: 3px 2px;
               vertical-align: middle;
             }
             .bill-table th {
-              background: #f0f0f0;
+              background: transparent;
+              border-top: 1px solid #1a1a1a;
+              border-bottom: 1.5px solid #1a1a1a;
               font-weight: 700;
               font-size: 7.5pt;
               text-transform: uppercase;

@@ -22,7 +22,11 @@ import {
   Trophy,
   Receipt,
   RotateCcw,
+  AlertTriangle,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { daysToExpiry, expiryStatus, formatExpiryShort } from '@/lib/gst';
+import { db } from '@/lib/supabaseLoose';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
@@ -94,12 +98,28 @@ interface PurchaseReturnReport {
   products: { name: string; category: string | null } | null;
 }
 
+interface ExpiringBatch {
+  id: string;
+  batch_number: string;
+  expiry_date: string;
+  qty_available: number;
+  effective_cost: number;
+  mrp: number;
+  products: { name: string; category: string | null } | null;
+}
+
+/** Schedule M quarantine window — how far ahead the expiry report looks. */
+const EXPIRY_HORIZON_DAYS = 90;
+
 export default function Reports() {
   const { isOwner } = useAuth();
   const { toast } = useToast();
   const [salesData, setSalesData] = useState<SalesReport[]>([]);
   const [productSales, setProductSales] = useState<ProductSales[]>([]);
   const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturnReport[]>([]);
+  // Batches expiring inside the 90-day Schedule M window, plus any already
+  // expired stock still sitting on the shelf.
+  const [expiringBatches, setExpiringBatches] = useState<ExpiringBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('7');
   const [startDate, setStartDate] = useState('');
@@ -326,6 +346,26 @@ export default function Reports() {
         }
       } catch (err) {
         setPurchaseReturns([]);
+      }
+
+      // ── Batch expiry ────────────────────────────────────────────────
+      // Not date-range filtered: this is a "what is about to go bad right
+      // now" list, independent of the reporting period above.
+      try {
+        const horizon = new Date();
+        horizon.setDate(horizon.getDate() + EXPIRY_HORIZON_DAYS);
+
+        const { data: batchData, error: batchError } = await db
+          .from('stock_batches')
+          .select('id, batch_number, expiry_date, qty_available, effective_cost, mrp, products(name, category)')
+          .gt('qty_available', 0)
+          .lte('expiry_date', horizon.toISOString().slice(0, 10))
+          .order('expiry_date', { ascending: true });
+
+        // Table absent = migration not applied; the card just stays hidden.
+        setExpiringBatches(batchError ? [] : ((batchData ?? []) as ExpiringBatch[]));
+      } catch (err) {
+        setExpiringBatches([]);
       }
 
     } catch (error: any) {
@@ -1112,6 +1152,90 @@ export default function Reports() {
             )}
           </CardContent>
         </Card>
+
+        {/* ── Batch Expiry ─────────────────────────────────────────────
+            Hidden entirely when stock_batches is absent or nothing is
+            near expiry, so it never shows an empty card for no reason. */}
+        {expiringBatches.length > 0 && (
+          <Card className="shadow-sm border-slate-200 mt-6">
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    Batch Expiry
+                  </CardTitle>
+                  <CardDescription>
+                    {expiringBatches.length} batch(es) expired or expiring within {EXPIRY_HORIZON_DAYS} days ·
+                    {' '}₹{expiringBatches
+                      .reduce((n, b) => n + Number(b.qty_available) * Number(b.effective_cost || 0), 0)
+                      .toLocaleString('en-IN', { maximumFractionDigits: 2 })} at cost
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => exportToCSV(expiringBatches.map(b => ({
+                    Product: b.products?.name ?? '—',
+                    Category: b.products?.category ?? '—',
+                    Batch: b.batch_number,
+                    Expiry: b.expiry_date,
+                    'Days Left': daysToExpiry(b.expiry_date) ?? '—',
+                    Quantity: b.qty_available,
+                    'Cost/Unit': b.effective_cost,
+                    'Value at Cost': Number(b.qty_available) * Number(b.effective_cost || 0),
+                  })), 'batch-expiry-report')}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export Expiry
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Product</TableHead>
+                    <TableHead>Batch</TableHead>
+                    <TableHead>Expiry</TableHead>
+                    <TableHead className="text-center">Days Left</TableHead>
+                    <TableHead className="text-center">Qty</TableHead>
+                    <TableHead className="text-right">Value at Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {expiringBatches.map(b => {
+                    const days = daysToExpiry(b.expiry_date);
+                    const status = expiryStatus(b.expiry_date);
+                    return (
+                      <TableRow key={b.id}>
+                        <TableCell className="font-medium">{b.products?.name ?? '—'}</TableCell>
+                        <TableCell className="uppercase text-sm">{b.batch_number}</TableCell>
+                        <TableCell className="text-sm">{formatExpiryShort(b.expiry_date)}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              status === 'expired' && 'border-red-300 bg-red-50 text-red-700',
+                              status === 'critical' && 'border-orange-300 bg-orange-50 text-orange-700',
+                              status === 'warning' && 'border-amber-300 bg-amber-50 text-amber-700',
+                            )}
+                          >
+                            {days !== null && days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d`}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center font-medium">{b.qty_available}</TableCell>
+                        <TableCell className="text-right font-semibold">
+                          ₹{(Number(b.qty_available) * Number(b.effective_cost || 0))
+                            .toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
       </section>
     </div>
   );

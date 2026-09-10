@@ -20,6 +20,9 @@ import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { calcGst } from '@/lib/gst';
 import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft';
+import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
+import { apportionGst } from '@/lib/gst';
+import { db } from '@/lib/supabaseLoose';
 
 interface Product {
   id: string;
@@ -29,6 +32,7 @@ interface Product {
   gst: number;
   batch_number?: string | null;
   pcs_per_unit?: number | null;
+  hsn_code?: string | null;
 }
 
 interface Sale {
@@ -212,7 +216,11 @@ export default function Sales() {
   const fetchData = async () => {
     try {
       // Fetch products (all products with stock)
+
+      const productsRes = await supabase.from('products').select('id, name, quantity, selling_price, gst, hsn_code, batch_number, pcs_per_unit').gt('quantity', 0);
+=======
       const productsRes = await supabase.from('products').select('id, name, quantity, selling_price, gst');
+
 
       if (productsRes.error) throw productsRes.error;
       setProducts(productsRes.data || []);
@@ -655,6 +663,26 @@ export default function Sales() {
       // Create sales records for each item in the cart
       const isGstInclusive = currentSettings?.gst_type === 'inclusive';
 
+      // Account-level GST identity: CGST+SGST unless the store bills interstate.
+      const { data: acctRow } = await db
+        .from('accounts')
+        .select('is_interstate_billing')
+        .eq('id', profile?.account_id)
+        .single();
+      const isInterstate = Boolean(acctRow?.is_interstate_billing);
+
+      // Resolve the FEFO batch per product up front so the sale rows can carry
+      // batch_id and the batch's landed cost. This cart screen has no batch
+      // picker — nearest expiry is taken automatically, and the deduction
+      // below uses the same rule.
+      const fefoTop = new Map<string, StockBatch>();
+      if (profile?.account_id) {
+        for (const item of selectedProducts) {
+          const batches = await fetchFefoBatches(profile.account_id, item.id);
+          if (batches.length > 0) fefoTop.set(item.id, batches[0]);
+        }
+      }
+
       let salesToInsert = selectedProducts.map(item => {
         const product = products.find(p => p.id === item.id);
         if (!product) {
@@ -694,6 +722,12 @@ export default function Sales() {
         const totalPriceRounded = Math.round(finalTotalPrice);
         const isSettled = paymentMode !== 'credit';
 
+        // GSTR-1 breakup. The charged tax is apportioned, not recomputed, so
+        // CGST + SGST always adds back to gst_amount exactly.
+        const batch = fefoTop.get(item.id);
+        const taxableValue = isGstInclusive ? netAmount - finalGstAmount : netAmount;
+        const split = apportionGst(finalGstAmount, isInterstate);
+
         return {
           account_id: profile?.account_id,
           bill_id: billId,
@@ -705,6 +739,14 @@ export default function Sales() {
           unit_price: Math.round(unitPrice * 100) / 100,
           total_price: totalPriceRounded,
           gst_amount: Math.round(finalGstAmount * 100) / 100,
+          taxable_value: Math.round(taxableValue * 100) / 100,
+          gst_rate: itemGstRate,
+          cgst_amount: split.cgst,
+          sgst_amount: split.sgst,
+          igst_amount: split.igst,
+          hsn_code: batch?.hsn_code || product.hsn_code || null,
+          batch_id: batch?.id ?? null,
+          cogs_rate: batch ? Number(batch.effective_cost) : null,
           payment_mode: paymentMode,
           customer_name: customerName || "Walk-in Customer",
           customer_phone: customerPhone || null,
@@ -723,7 +765,14 @@ export default function Sales() {
       if (error && error.message && error.message.includes('column')) {
         console.log('Missing column detected, trying without optional fields');
         const fallbackSalesToInsert = salesToInsert.map(sale => {
-          const { customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit, ...rest } = sale;
+          const {
+            customer_name, customer_phone, customer_address, prescription_months,
+            months_taken, payment_mode, sub_qty, pcs_per_unit,
+            // Compliance columns land with the 2026-09-10 migrations.
+            taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
+            hsn_code, batch_id, cogs_rate,
+            ...rest
+          } = sale;
           return rest;
         });
 
@@ -738,6 +787,31 @@ export default function Sales() {
       } else if (error) {
         throw error;
       } else {
+        // Take the units off the batch ledger, nearest expiry first.
+        // products.quantity is handled by the sales trigger; a ledger failure
+        // is surfaced but never rolls back a committed bill.
+        if (profile?.account_id) {
+          const problems: string[] = [];
+          for (const item of selectedProducts) {
+            const subQ = subQtyMap[item.id] || 0;
+            const pcs = pcsPerUnitMap[item.id] || 0;
+            const units = item.quantity + (subQ && pcs > 0 ? subQ / pcs : 0);
+            const res = await consumeBatchStock({
+              accountId: profile.account_id,
+              productId: item.id,
+              batchNumber: null,
+              qty: units,
+            });
+            if (!res.ok) problems.push(res.message || 'unknown error');
+          }
+          if (problems.length > 0) {
+            toast({
+              variant: 'destructive',
+              title: 'Bill saved — batch ledger out of step',
+              description: problems.slice(0, 3).join(' · '),
+            });
+          }
+        }
         // Direct navigation to print bill instead of showing toast
         navigate(`/print-bill/${billId}`);
       }

@@ -6,6 +6,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Settings as SettingsIcon,
   Store,
@@ -27,6 +29,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { GST_STATE_CODES } from '@/lib/gst';
 
 interface Settings {
   id: string;
@@ -45,6 +48,8 @@ interface Account {
   address?: string | null;
   phone?: string | null;
   gstin?: string | null;
+  state_code?: string | null;
+  is_interstate_billing?: boolean | null;
 }
 
 // Reusable section header (icon bubble + title + description)
@@ -97,6 +102,10 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [gstTypeState, setGstTypeState] = useState<'exclusive' | 'inclusive'>('exclusive');
   const [gstEnabledState, setGstEnabledState] = useState<boolean>(false);
+  // Account-level GST identity. is_interstate_billing decides CGST+SGST vs
+  // IGST for every bill — there is no per-bill override by design.
+  const [stateCodeState, setStateCodeState] = useState<string>('');
+  const [interstateState, setInterstateState] = useState<boolean>(false);
 
   const fetchData = async () => {
     try {
@@ -124,6 +133,11 @@ export default function Settings() {
         setGstTypeState(settingsRaw.gst_type);
       }
       setGstEnabledState(Boolean(settingsRaw?.gst_enabled));
+
+      // Added by 20260910000000_create_hsn_codes.sql; absent on older databases.
+      const accountRaw: any = accountRes.data;
+      setStateCodeState(accountRaw?.state_code ?? '');
+      setInterstateState(Boolean(accountRaw?.is_interstate_billing));
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -155,7 +169,15 @@ export default function Settings() {
     try {
       const { error } = await supabase
         .from('accounts')
-        .update({ name, manager_name, address, phone, gstin } as any)
+        .update({
+          name,
+          manager_name,
+          address,
+          phone,
+          gstin,
+          state_code: stateCodeState || null,
+          is_interstate_billing: interstateState,
+        } as any)
         .eq('id', profile?.account_id);
 
       if (error) {
@@ -164,6 +186,8 @@ export default function Settings() {
           error.message?.includes('address') ||
           error.message?.includes('phone') ||
           error.message?.includes('gstin') ||
+          error.message?.includes('state_code') ||
+          error.message?.includes('is_interstate_billing') ||
           error.message?.includes('manager_name')
         ) {
           console.warn('Extended fields not found in database, falling back to basic update');
@@ -402,6 +426,41 @@ export default function Settings() {
                     <p className="text-xs text-muted-foreground">
                       Appears on invoices when GST is enabled.
                     </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <FieldLabel htmlFor="storeStateCode" icon={MapPin}>State (Place of Supply)</FieldLabel>
+                    <Select value={stateCodeState || undefined} onValueChange={setStateCodeState}>
+                      <SelectTrigger id="storeStateCode">
+                        <SelectValue placeholder="Select your state" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {GST_STATE_CODES.map((s) => (
+                          <SelectItem key={s.code} value={s.code}>
+                            {s.code} — {s.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      The two-digit GST state code of the store. Printed on GST invoices.
+                    </p>
+                  </div>
+
+                  <div className="flex items-start justify-between gap-4 rounded-lg border border-slate-200 p-3">
+                    <div className="space-y-1">
+                      <FieldLabel htmlFor="interstateBilling" icon={Receipt}>Interstate billing (IGST)</FieldLabel>
+                      <p className="text-xs text-muted-foreground">
+                        Off — every bill is taxed as CGST + SGST. Turn this on only if you
+                        invoice hospitals or institutions in another state; all bills then
+                        carry IGST instead.
+                      </p>
+                    </div>
+                    <Switch
+                      id="interstateBilling"
+                      checked={interstateState}
+                      onCheckedChange={setInterstateState}
+                    />
                   </div>
 
                   <div className="flex justify-end pt-2 border-t border-slate-100">

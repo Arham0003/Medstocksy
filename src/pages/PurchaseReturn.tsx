@@ -26,6 +26,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
+import { useHsnCodes } from '@/hooks/useHsnCodes';
+import { apportionGst } from '@/lib/gst';
+import { db } from '@/lib/supabaseLoose';
 
 const RETURN_REASONS = ['Damaged', 'Expired', 'Wrong item', 'Short shipped', 'Quality issue', 'Other'] as const;
 
@@ -74,6 +77,8 @@ interface SupplierProduct {
   expiry_date: string | null;
   supplier_id: string | null;
   supplier?: string | null;
+  gst: number | null;
+  hsn_code: string | null;
 }
 
 interface PurchaseReturnRow {
@@ -109,6 +114,7 @@ interface SupplierContext {
 // ─── Component ─────────────────────────────────────────────
 export default function PurchaseReturn() {
   const { profile } = useAuth();
+  const { rateFor: hsnRateFor } = useHsnCodes(profile?.account_id);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -158,6 +164,9 @@ export default function PurchaseReturn() {
   const [returnReason, setReturnReason] = useState('');
   const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
   const [customPrice, setCustomPrice] = useState<number | ''>('');
+  // Blank = use the product's HSN/GST rate. Typed = override for this return.
+  const [gstRateOverride, setGstRateOverride] = useState<number | ''>('');
+  const [isInterstate, setIsInterstate] = useState(false);
   const [originalInvoiceNo, setOriginalInvoiceNo] = useState('');
 
   // supplier context (shown in dialog after supplier select)
@@ -207,7 +216,7 @@ export default function PurchaseReturn() {
           .order('name'),
         (supabase as any)
           .from('products')
-          .select('id, name, category, quantity, purchase_price, batch_number, expiry_date, supplier_id, supplier')
+          .select('id, name, category, quantity, purchase_price, batch_number, expiry_date, supplier_id, supplier, gst, hsn_code')
           .eq('account_id', profile.account_id),
       ]);
 
@@ -224,6 +233,14 @@ export default function PurchaseReturn() {
         .eq('id', profile.account_id)
         .single();
       setAccountName(((acct as any)?.name ?? '') as string);
+
+      // Decides whether the reversed credit is CGST+SGST or IGST.
+      const { data: acctGst } = await db
+        .from('accounts')
+        .select('is_interstate_billing')
+        .eq('id', profile.account_id)
+        .single();
+      setIsInterstate(Boolean(acctGst?.is_interstate_billing));
 
       // Fetch active (non-voided) returns. Falls back to legacy columns if the
       // audit/invoice migration hasn't been applied yet.
@@ -281,6 +298,21 @@ export default function PurchaseReturn() {
 
   const effectivePrice = customPrice !== '' ? Number(customPrice) : (selectedProduct?.purchase_price ?? 0);
   const estimatedRefund = effectivePrice * returnQty;
+
+  // ── ITC reversal ────────────────────────────────────────────
+  // Credit taken on the original purchase has to be reversed in GSTR-3B for
+  // goods sent back. The credit note value is GST-inclusive, so the tax is
+  // backed out of it — the same formula create_purchase_return() applies.
+  const gstRateForReturn = gstRateOverride !== ''
+    ? Number(gstRateOverride)
+    : (hsnRateFor(selectedProduct?.hsn_code) ?? selectedProduct?.gst ?? 0);
+
+  const itcReversal = useMemo(() => {
+    const rate = Number(gstRateForReturn) || 0;
+    const total = Math.round((estimatedRefund * rate / (100 + rate)) * 100) / 100;
+    const { cgst, sgst, igst } = apportionGst(total, isInterstate);
+    return { rate, total, cgst, sgst, igst, taxable: Math.round((estimatedRefund - total) * 100) / 100 };
+  }, [estimatedRefund, gstRateForReturn, isInterstate]);
 
   // Available stock to return = current stock + (qty already deducted by the return being edited, if same product)
   const maxReturnable = useMemo(() => {
@@ -407,6 +439,8 @@ export default function PurchaseReturn() {
     setReturnReason('');
     setReturnDate(new Date().toISOString().split('T')[0]);
     setCustomPrice('');
+    // Blank means "use the product's own HSN/GST rate".
+    setGstRateOverride('');
     setOriginalInvoiceNo('');
     setSupplierContext(null);
     setIsOpen(true);
@@ -584,6 +618,8 @@ export default function PurchaseReturn() {
         p_return_date: today,
         p_batch_number: p.batch_number ?? null,
         p_original_invoice_no: null,
+        // ITC on these goods has to be reversed at the rate they were bought at.
+        p_gst_rate: hsnRateFor(p.hsn_code) ?? p.gst ?? 0,
       });
       if (error) fail++; else ok++;
     }
@@ -816,6 +852,7 @@ export default function PurchaseReturn() {
           p_return_date: today,
           p_batch_number: p.batch_number ?? null,
           p_original_invoice_no: null,
+          p_gst_rate: hsnRateFor(p.hsn_code) ?? p.gst ?? 0,
         });
 
         if (error) {
@@ -929,6 +966,7 @@ export default function PurchaseReturn() {
           p_return_date: returnDate,
           p_batch_number: selectedProduct?.batch_number ?? null,
           p_original_invoice_no: originalInvoiceNo.trim() || null,
+          p_gst_rate: itcReversal.rate,
         });
 
         if (error) {
@@ -1387,7 +1425,7 @@ export default function PurchaseReturn() {
                 <Label className="text-[10px] sm:text-[11px] font-semibold text-slate-700">Supplier *</Label>
                 <Select
                   value={selSupplierId}
-                  onValueChange={v => { setSelSupplierId(v); setSelProductId(''); setCustomPrice(''); }}
+                  onValueChange={v => { setSelSupplierId(v); setSelProductId(''); setCustomPrice(''); setGstRateOverride(''); }}
                   disabled={!!editingReturn}
                 >
                   <SelectTrigger className="h-8 sm:h-9 text-sm">
@@ -1622,7 +1660,46 @@ export default function PurchaseReturn() {
                     className="h-8 sm:h-9 text-sm"
                   />
                 </div>
+                <div className="space-y-1">
+                  <Label htmlFor="pr-gst-rate" className="text-[11px] sm:text-xs font-medium">
+                    GST % <span className="text-muted-foreground font-normal">(for ITC reversal)</span>
+                  </Label>
+                  <Input
+                    id="pr-gst-rate"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={gstRateOverride}
+                    onChange={e => setGstRateOverride(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder={String(gstRateForReturn)}
+                    className="h-8 sm:h-9 text-sm"
+                  />
+                </div>
               </div>
+
+              {/* ITC reversal — the credit that must be given back in GSTR-3B */}
+              {selectedProduct && itcReversal.rate > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-2.5 sm:px-3 py-2">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[9px] sm:text-[10px] uppercase tracking-wider font-semibold text-amber-800">
+                      ITC to reverse @ {itcReversal.rate}%
+                    </span>
+                    <span className="text-sm sm:text-base font-bold tabular-nums text-amber-800">
+                      ₹{itcReversal.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-amber-800/80 mt-0.5">
+                    Taxable ₹{itcReversal.taxable.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    {isInterstate
+                      ? ` · IGST ₹${itcReversal.igst.toFixed(2)}`
+                      : ` · CGST ₹${itcReversal.cgst.toFixed(2)} · SGST ₹${itcReversal.sgst.toFixed(2)}`}
+                  </p>
+                  <p className="text-[10px] text-amber-800/70 mt-1">
+                    Credit note value is treated as GST-inclusive. Report this in GSTR-3B.
+                  </p>
+                </div>
+              )}
 
               {/* Summary card — extra-compact on mobile */}
               <div

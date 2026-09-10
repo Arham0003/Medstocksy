@@ -418,14 +418,20 @@ tr {
 }
 
 /* ========================================
-   BILLING GRID — hide number spin buttons (they clutter the dense POS row)
+   BILLING & PURCHASE GRIDS — hide number spin buttons (they clutter dense rows)
    ======================================== */
 .billing-grid input[type="number"]::-webkit-outer-spin-button,
-.billing-grid input[type="number"]::-webkit-inner-spin-button {
+.billing-grid input[type="number"]::-webkit-inner-spin-button,
+.purchase-entry input[type="number"]::-webkit-outer-spin-button,
+.purchase-entry input[type="number"]::-webkit-inner-spin-button,
+input[type="number"].no-spinners::-webkit-outer-spin-button,
+input[type="number"].no-spinners::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
-.billing-grid input[type="number"] {
+.billing-grid input[type="number"],
+.purchase-entry input[type="number"],
+input[type="number"].no-spinners {
   -moz-appearance: textfield;
   appearance: textfield;
 }

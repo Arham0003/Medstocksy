@@ -10,7 +10,10 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { Loader2, ArrowLeft, Printer, Pencil, Plus, Trash2, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
 import { db } from '@/lib/supabaseLoose';
+=======
+import { calcGst } from '@/lib/gst';
 
 interface SaleItem {
     id: string;
@@ -121,6 +124,7 @@ export default function PrintBill() {
         return Array.from(buckets.values()).sort((a, b) => a.hsn.localeCompare(b.hsn));
     }, [billData]);
     const [businessDetails, setBusinessDetails] = useState<BusinessDetails | null>(null);
+    const [format, setFormat] = useState<'A5' | 'A4' | 'T80'>('A5');
     const { toast } = useToast();
     const { profile } = useAuth();
 
@@ -142,6 +146,7 @@ export default function PrintBill() {
     const [addGst, setAddGst] = useState(0);
     const [isAddingItem, setIsAddingItem] = useState(false);
     const [removingItemId, setRemovingItemId] = useState<string | null>(null);
+    const [editGlobalDiscount, setEditGlobalDiscount] = useState(0);
 
     // Account-wide tax/currency settings — drives whether new items get GST and how it's calculated
     const [taxSettings, setTaxSettings] = useState<{ gst_enabled: boolean; gst_type: 'inclusive' | 'exclusive'; default_gst_rate: number }>({
@@ -157,6 +162,8 @@ export default function PrintBill() {
         setEditAddress(billData.customer_address || '');
         setEditDoctor(billData.doctor_name || '');
         setEditPaymentMode(billData.payment_mode || 'cash');
+        // Pre-fill global discount from the bill's stored discount_percentage
+        setEditGlobalDiscount(billData.discount_percentage || 0);
         setIsEditOpen(true);
         // Load product list lazily for the add-item search
         if (availableProducts.length === 0) {
@@ -203,14 +210,24 @@ export default function PrintBill() {
         window.print();
     }, [billId]);
 
-    // P = Print · F2 = Edit
+    // P = Print · F2 = Edit · ←/→ = Change paper size
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.ctrlKey || e.altKey || e.metaKey) return; // leave Ctrl+P etc. to the browser
             const t = e.target as HTMLElement | null;
             if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+            
             if (e.key === 'p' || e.key === 'P') { e.preventDefault(); doPrint(); }
             else if (e.key === 'F2') { e.preventDefault(); doEdit(); }
+            else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const formats: ('A5' | 'A4' | 'T80')[] = ['A5', 'A4', 'T80'];
+                setFormat(prev => {
+                    const idx = formats.indexOf(prev);
+                    const dir = e.key === 'ArrowRight' ? 1 : -1;
+                    return formats[(idx + dir + formats.length) % formats.length];
+                });
+            }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
@@ -488,18 +505,16 @@ export default function PrintBill() {
         setIsAddingItem(true);
         try {
             // Compute net + GST + total — respects account-level gst_enabled / gst_type
-            const netAmount = Math.round(addRate * addQty * 100) / 100;
+            const gross = Math.round(addRate * addQty * 100) / 100;
+            // Apply global discount first
+            const discAmt = Math.round((gross * editGlobalDiscount) / 100 * 100) / 100;
+            const netAmount = gross - discAmt;
             let gstAmount = 0;
             let totalPrice = netAmount;
             if (taxSettings.gst_enabled) {
-                gstAmount = Math.round(((netAmount * addGst) / 100) * 100) / 100;
-                if (taxSettings.gst_type === 'inclusive') {
-                    // Price already includes GST; total stays = net, gst is informational
-                    totalPrice = netAmount;
-                } else {
-                    // Exclusive: GST adds on top
-                    totalPrice = Math.round((netAmount + gstAmount) * 100) / 100;
-                }
+                const gstResult = calcGst(netAmount, addGst, taxSettings.gst_type === 'inclusive');
+                gstAmount = Math.round(gstResult.gstAmount * 100) / 100;
+                totalPrice = Math.round(gstResult.totalPrice * 100) / 100;
             }
             const isSettled = billData.payment_mode !== 'credit';
 
@@ -519,7 +534,7 @@ export default function PrintBill() {
                 customer_phone: billData.customer_phone || null,
                 customer_address: billData.customer_address || null,
                 doctor_name: billData.doctor_name || null,
-                discount_percentage: billData.discount_percentage || 0,
+                discount_percentage: editGlobalDiscount,
                 received_amount: isSettled ? totalPrice : 0,
                 is_settled: isSettled,
                 sale_date: billData.date,
@@ -574,62 +589,94 @@ export default function PrintBill() {
     const totalQty = billData.items.reduce((sum, item) => sum + item.quantity, 0);
     const totalProducts = billData.items.length;
     const invoiceNumber = billData.id.slice(0, 8).toUpperCase();
-    // Use the ORIGINAL creation timestamp (frozen at first save) for both the date and the
-    // full date+time. Reprinting days later still shows the moment the bill was first recorded.
     const billCreatedAt = new Date(billData.created_at);
     const invoiceDate = billCreatedAt.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const billTimestamp = billCreatedAt.toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
+    // ponytail: single config object drives all format-dependent values
+    const FORMATS = {
+        A5:  { label: 'A5',  pageSize: 'A5 portrait',  width: '148mm', height: '210mm', minRows: 14 },
+        A4:  { label: 'A4',  pageSize: 'A4 portrait',  width: '210mm', height: '297mm', minRows: 28 },
+        T80: { label: '80mm Thermal', pageSize: '80mm auto', width: '76mm',  height: 'auto',  minRows: 0  },
+    } as const;
+    type FormatKey = keyof typeof FORMATS;
+    const fmt = FORMATS[format];
+
     return (
         <div className="min-h-screen bg-gray-100 p-4 print:p-0 print:bg-white overflow-x-auto print:overflow-visible">
             {/* No-print controls */}
-            <div className="max-w-[148mm] mx-auto mb-4 flex flex-wrap justify-between items-center gap-2 print:hidden">
+            <div className="max-w-[210mm] mx-auto mb-4 flex flex-wrap justify-between items-center gap-2 print:hidden">
                 <Button variant="outline" onClick={() => navigate('/sales')}>
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back to Sales
                 </Button>
+                {/* Format selector */}
+                <div className="flex items-center gap-1 border rounded-md p-1 bg-white">
+                    {(Object.keys(FORMATS) as FormatKey[]).map(key => (
+                        <button
+                            key={key}
+                            onClick={() => setFormat(key)}
+                            className={cn(
+                                'px-3 py-1 rounded text-sm font-medium transition-colors',
+                                format === key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted text-muted-foreground'
+                            )}
+                        >
+                            {FORMATS[key].label}
+                        </button>
+                    ))}
+                </div>
                 <div className="flex items-center gap-2">
                     <Button variant="outline" onClick={doEdit} title="Edit (F2)">
                         <Pencil className="h-4 w-4 mr-2" />
                         Edit
                         <kbd className="ml-2 hidden sm:inline px-1.5 py-0.5 rounded border text-[10px] font-semibold text-muted-foreground">F2</kbd>
                     </Button>
-                    <Button onClick={doPrint} title="Print (P)">
+                    <Button onClick={async () => {
+                        if (billId) {
+                            try {
+                                await (supabase as any)
+                                    .from('sales')
+                                    .update({ printed_at: new Date().toISOString() })
+                                    .eq('bill_id', billId)
+                                    .is('printed_at', null);
+                            } catch { /* column may not exist yet */ }
+                        }
+                        window.print();
+                    }}>
                         <Printer className="h-4 w-4 mr-2" />
-                        Print Bill
-                        <kbd className="ml-2 hidden sm:inline px-1.5 py-0.5 rounded border border-white/30 text-[10px] font-semibold">P</kbd>
+                        Print {fmt.label}
                     </Button>
                 </div>
             </div>
 
-            {/* Bill Container - A5 Portrait */}
+            {/* Bill Container */}
             <div
                 id="bill-container"
                 style={{
-                    width: '148mm',
-                    height: '210mm',
+                    width: fmt.width,
+                    height: fmt.height,
                     margin: '0 auto',
                     background: '#fff',
                     fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                    fontSize: '8.5pt',
-                    lineHeight: '1.3',
+                    fontSize: format === 'T80' ? '7pt' : '8pt',
+                    lineHeight: '1.25',
                     color: '#1a1a1a',
                     position: 'relative',
                     boxSizing: 'border-box',
-                    padding: '4mm 5mm 4mm 5mm',
+                    padding: format === 'T80' ? '2mm 2mm' : '2.5mm 4mm 2.5mm 4mm',
                     textRendering: 'optimizeLegibility',
                 }}
             >
                 <style>
                     {`
             @page {
-              size: A5 portrait;
+              size: ${fmt.pageSize};
               margin: 0;
             }
             @media print {
               body, html {
-                width: 148mm;
-                height: 210mm;
+                width: ${fmt.width};
+                height: ${fmt.height};
                 background: white;
                 margin: 0;
                 padding: 0;
@@ -656,91 +703,220 @@ export default function PrintBill() {
               border-collapse: collapse;
             }
             .bill-table th, .bill-table td {
-              border: 0.5px solid #444;
-              padding: 2px;
+              border: none;
+              border-left: 0.5px solid #444;
+              border-right: 0.5px solid #444;
+              padding: 3px 2px;
               vertical-align: middle;
             }
             .bill-table th {
-              background: #f0f0f0;
+              background: transparent;
+              border-top: 1px solid #1a1a1a;
+              border-bottom: 1.5px solid #1a1a1a;
               font-weight: 700;
-              font-size: 9pt;
+              font-size: 7.5pt;
               text-transform: uppercase;
-              letter-spacing: 0.2px;
+              letter-spacing: 0.1px;
               text-align: center;
               white-space: nowrap;
             }
             .bill-table td {
-              font-size: 8pt;
+              font-size: 7.5pt;
             }
           `}
                 </style>
 
+                {/* ===== THERMAL (80mm) LAYOUT ===== */}
+                {format === 'T80' ? (
+                    <div style={{ fontFamily: "'Courier New', Courier, monospace", fontSize: '8pt', lineHeight: '1.4', color: '#000' }}>
+                        {/* Header: centred logo + shop name */}
+                        <div style={{ textAlign: 'center', paddingBottom: '2mm' }}>
+                            <img src="/medstocksy-logo.png" alt="Logo" style={{ width: '14mm', height: '14mm', objectFit: 'contain', display: 'block', margin: '0 auto 1mm' }} />
+                            <div style={{ fontSize: '11pt', fontWeight: 900, letterSpacing: '0.5px' }}>{businessDetails?.name || 'PHARMA'}</div>
+                            {businessDetails?.address && <div style={{ fontSize: '7pt', color: '#333' }}>{businessDetails.address}</div>}
+                            {businessDetails?.phone && <div style={{ fontSize: '7pt' }}>📞 {businessDetails.phone}</div>}
+                            {businessDetails?.gstin && <div style={{ fontSize: '6.5pt', color: '#555' }}>GSTIN: {businessDetails.gstin}</div>}
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed #666', margin: '0 0 2mm' }} />
+
+                        {/* Bill meta */}
+                        <div style={{ fontSize: '7pt', marginBottom: '1.5mm' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span style={{ fontWeight: 700 }}>BILL OF SUPPLY</span>
+                                <span style={{ fontWeight: 700 }}>{invoiceDate}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span>Invoice: {invoiceNumber}</span>
+                                <span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span>
+                            </div>
+                        </div>
+
+                        {/* Customer */}
+                        <div style={{ fontSize: '7pt', marginBottom: '1.5mm' }}>
+                            <div><span style={{ fontWeight: 700 }}>Party: </span>{billData.customer_name || 'Walk-in Customer'}</div>
+                            {billData.customer_phone && <div><span style={{ fontWeight: 700 }}>Ph: </span>{billData.customer_phone}</div>}
+                            {billData.customer_address && <div><span style={{ fontWeight: 700 }}>Addr: </span>{billData.customer_address}</div>}
+                            {billData.doctor_name && <div><span style={{ fontWeight: 700 }}>Dr: </span>{billData.doctor_name}</div>}
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed #666', margin: '0 0 1.5mm' }} />
+
+                        {/* Items table — 5 cols only (name wraps, no HSN/Batch/Exp/GST split) */}
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '1px solid #000' }}>
+                                    <th style={{ textAlign: 'left', paddingBottom: '1px', width: '34%' }}>Product</th>
+                                    <th style={{ textAlign: 'center', width: '8%' }}>Qty</th>
+                                    <th style={{ textAlign: 'right', width: '18%' }}>MRP</th>
+                                    <th style={{ textAlign: 'right', width: '10%' }}>Dis%</th>
+                                    <th style={{ textAlign: 'right', width: '20%' }}>Amt</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {billData.items.map((item, index) => {
+                                    const effectiveQty = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
+                                        ? item.quantity + (item.sub_qty / item.pcs_per_unit)
+                                        : (item.quantity || 1);
+                                    const mrp = item.selling_price || item.unit_price;
+                                    return (
+                                        <tr key={item.id}>
+                                            <td style={{ paddingTop: '1.5px', wordBreak: 'break-word' }}>
+                                                <div style={{ fontWeight: 700 }}>{index + 1}. {item.product_name}</div>
+                                                {item.batch_number && item.batch_number !== '-' && (
+                                                    <div style={{ fontSize: '6.5pt', color: '#555' }}>
+                                                        Batch: {item.batch_number}{item.expiry && item.expiry !== '-' ? ` | Exp: ${item.expiry}` : ''}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td style={{ textAlign: 'center', verticalAlign: 'top', paddingTop: '1.5px' }}>
+                                                {item.sub_qty ? `${item.quantity}+${item.sub_qty}` : item.quantity}
+                                            </td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px' }}>₹{mrp.toFixed(2)}</td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontSize: '6.5pt' }}>
+                                                {item.discount_percentage ? item.discount_percentage + '%' : '-'}
+                                            </td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontWeight: 700 }}>₹{item.total_price.toFixed(2)}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+
+                        <div style={{ borderTop: '1px dashed #666', margin: '2mm 0 1.5mm' }} />
+
+                        {/* Totals */}
+                        <div style={{ fontSize: '7.5pt' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span>Subtotal</span><span>₹{billData.subtotal.toFixed(2)}</span>
+                            </div>
+                            {billData.total_discount > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#0d6e3a' }}>
+                                    <span>Savings</span><span>-₹{billData.total_discount.toFixed(2)}</span>
+                                </div>
+                            )}
+                            {billData.total_gst > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                                    <span>GST</span><span>₹{billData.total_gst.toFixed(2)}</span>
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ borderTop: '2px solid #000', margin: '1.5mm 0 1mm' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '10pt' }}>
+                            <span>TOTAL</span><span>₹{billData.total_amount.toFixed(2)}</span>
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed #666', margin: '2mm 0 1.5mm' }} />
+
+                        {/* Payment + T&C */}
+                        <div style={{ fontSize: '6.5pt', color: '#333', marginBottom: '2mm' }}>
+                            <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> — Received with thanks.</div>
+                            <div style={{ marginTop: '1mm', color: '#555', fontSize: '6pt' }}>
+                                T&C: Goods once sold will not be taken back. GST incl. in MRP. Subject to local jurisdiction.{' '}
+                                <span style={{ color: '#0d6e3a', fontWeight: 700 }}>Get well soon!</span>
+                            </div>
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed #666', margin: '0 0 2mm' }} />
+
+                        {/* Auth sign centred */}
+                        <div style={{ textAlign: 'center', marginBottom: '2mm' }}>
+                            <div style={{ display: 'inline-block', borderTop: '0.5px solid #888', width: '28mm', paddingTop: '1mm', fontSize: '6pt', color: '#555' }}>
+                                Authorised Signatory
+                            </div>
+                        </div>
+
+                        <div style={{ borderTop: '1px dashed #666', margin: '0 0 1.5mm' }} />
+
+                        {/* Footer */}
+                        <div style={{ textAlign: 'center', fontSize: '6pt', color: '#555' }}>
+                            <div>Items: {totalProducts} | Qty: {totalQty} | {billTimestamp}</div>
+                            <div style={{ marginTop: '1mm', fontStyle: 'italic', fontWeight: 600 }}>medstocksy.in</div>
+                            <div style={{ marginTop: '1mm', fontSize: '5.5pt' }}>Thank you for your purchase!</div>
+                        </div>
+                    </div>
+                ) : (
+                /* ===== A5 / A4 BORDERED LAYOUT ===== */
                 <div style={{ border: '1px solid #444' }}>
                 {/* ===== HEADER ZONE ===== */}
                 <div>
                     {/* Top row: Logo + Business + Invoice */}
                     <div style={{ display: 'flex', borderBottom: '1px solid #444' }}>
                         {/* Left: Logo + Business Info */}
-                        <div style={{ flex: '1.2', display: 'flex', borderRight: '1px solid #444', padding: '2mm' }}>
+                        <div style={{ flex: '1.2', display: 'flex', borderRight: '1px solid #444', padding: '1.5mm' }}>
                             {/* Logo */}
-                            <div style={{ width: '16mm', minHeight: '16mm', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '3mm' }}>
+                            <div style={{ width: '12mm', minHeight: '12mm', display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '2mm' }}>
                                 <img
                                     src="/medstocksy-logo.png"
                                     alt="Logo"
-                                    style={{ width: '14mm', height: '14mm', objectFit: 'contain' }}
+                                    style={{ width: '11mm', height: '11mm', objectFit: 'contain' }}
                                 />
                             </div>
                             {/* Business details */}
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: '6.5pt', color: '#555', fontWeight: 600, marginBottom: '1px', letterSpacing: '0.5px' }}>BILL OF SUPPLY</div>
-                                <div style={{ fontSize: '12pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
+                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>BILL OF SUPPLY</div>
+                                <div style={{ fontSize: '10pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
                                     {businessDetails?.name || 'PHARMA'}
                                 </div>
-                                <div style={{ fontSize: '7pt', marginTop: '2px', color: '#444', lineHeight: '1.4' }}>
+                                <div style={{ fontSize: '6.5pt', marginTop: '1px', color: '#444', lineHeight: '1.3' }}>
                                     {businessDetails?.address && <div>{businessDetails.address}</div>}
-                                    {businessDetails?.phone && <div>CONTACT: {businessDetails.phone}</div>}
-                                    {businessDetails?.gstin && <div>GSTIN: {businessDetails.gstin}</div>}
+                                    {businessDetails?.phone && <span>📞 {businessDetails.phone}</span>}
+                                    {businessDetails?.gstin && <span style={{ marginLeft: businessDetails?.phone ? '4px' : 0 }}>| GSTIN: {businessDetails.gstin}</span>}
                                 </div>
                             </div>
                         </div>
 
                         {/* Right: Invoice Details */}
-                        <div style={{ flex: '1', padding: '2mm' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2mm' }}>
-                                <div style={{ fontSize: '10pt', fontWeight: 700, color: '#1a3a5c' }}>
+                        <div style={{ flex: '1', padding: '1.5mm' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1mm' }}>
+                                <div style={{ fontSize: '9pt', fontWeight: 700, color: '#1a3a5c' }}>
                                     Invoice/{invoiceNumber}
                                 </div>
-                                <div style={{ fontSize: '8pt', fontWeight: 600, textAlign: 'right' }}>
+                                <div style={{ fontSize: '7.5pt', fontWeight: 600, textAlign: 'right' }}>
                                     {invoiceDate}
                                 </div>
                             </div>
-                            <div style={{ fontSize: '7pt', lineHeight: '1.6', color: '#333' }}>
+                            <div style={{ fontSize: '6.5pt', lineHeight: '1.4', color: '#333' }}>
                                 <div style={{ display: 'flex' }}>
-                                    <span style={{ width: '16mm', fontWeight: 600 }}>PARTY:</span>
+                                    <span style={{ width: '14mm', fontWeight: 600 }}>PARTY:</span>
                                     <span>{billData.customer_name || 'Walk-in'}</span>
                                 </div>
                                 {billData.customer_address && (
                                     <div style={{ display: 'flex' }}>
-                                        <span style={{ width: '16mm', fontWeight: 600 }}>ADDRESS:</span>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>ADDR:</span>
                                         <span>{billData.customer_address}</span>
                                     </div>
                                 )}
                                 {billData.customer_phone && (
                                     <div style={{ display: 'flex' }}>
-                                        <span style={{ width: '16mm', fontWeight: 600 }}>CONTACT:</span>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>PH:</span>
                                         <span>{billData.customer_phone}</span>
                                     </div>
                                 )}
-                                {!billData.customer_address && (
+                                {billData.doctor_name && (
                                     <div style={{ display: 'flex' }}>
-                                        <span style={{ width: '16mm', fontWeight: 600 }}>ADDRESS</span>
-                                        <span>-</span>
-                                    </div>
-                                )}
-                                {!billData.customer_phone && (
-                                    <div style={{ display: 'flex' }}>
-                                        <span style={{ width: '16mm', fontWeight: 600 }}>CONTACT</span>
-                                        <span>-</span>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>DR:</span>
+                                        <span>{billData.doctor_name}</span>
                                     </div>
                                 )}
                             </div>
@@ -815,9 +991,9 @@ export default function PrintBill() {
                                 );
                             })}
                             {/* Empty rows to fill minimum space */}
-                            {billData.items.length < 5 && Array.from({ length: 5 - billData.items.length }).map((_, i) => (
+                            {fmt.minRows > 0 && billData.items.length < fmt.minRows && Array.from({ length: fmt.minRows - billData.items.length }).map((_, i) => (
                                 <tr key={`empty-${i}`}>
-                                    <td style={{ height: '24px' }}>&nbsp;</td>
+                                    <td style={{ height: '14px' }}>&nbsp;</td>
                                     <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
                                 </tr>
                             ))}
@@ -878,56 +1054,52 @@ export default function PrintBill() {
                 <div style={{ borderBottom: '1px solid #444' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         {/* Left: Payment Mode + Terms */}
-                        <div style={{ flex: '1.3', borderRight: '1px solid #444', padding: '2mm', fontSize: '7pt', lineHeight: '1.5', display: 'flex', justifyContent: 'space-between' }}>
+                        <div style={{ flex: '1.3', borderRight: '1px solid #444', padding: '1.5mm', fontSize: '6.5pt', lineHeight: '1.4', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                             <div>
-                                <div style={{ marginBottom: '2mm' }}>
-                                    <span style={{ fontWeight: 700 }}>Payment Mode: </span>
-                                    <span style={{ textTransform: 'lowercase' }}>{billData.payment_mode}</span>
-                                    <br />
-                                    <span>Received with thanks.</span>
+                                <div style={{ marginBottom: '1mm' }}>
+                                    <span style={{ fontWeight: 700 }}>Payment: </span>
+                                    <span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span>
+                                    <span style={{ marginLeft: '4px', color: '#555' }}>— Received with thanks.</span>
                                 </div>
-                                <div>
-                                    <div style={{ fontWeight: 700, marginBottom: '1px' }}>Terms & Conditions:</div>
-                                    <div style={{ fontSize: '6.5pt', lineHeight: '1.4', color: '#333' }}>
-                                        Goods once sold will not be taken back.<br />
-                                        All GST Taxes are included in MRP.<br />
-                                        Subject to local jurisdiction.<br />
-                                        <span style={{ color: '#0d6e3a', fontWeight: 600 }}>Get well soon!</span>
-                                    </div>
+                                <div style={{ fontSize: '6pt', lineHeight: '1.35', color: '#444' }}>
+                                    <span style={{ fontWeight: 700 }}>T&C: </span>
+                                    Goods once sold will not be taken back. GST included in MRP. Subject to local jurisdiction.{' '}
+                                    <span style={{ color: '#0d6e3a', fontWeight: 600 }}>Get well soon!</span>
                                 </div>
                             </div>
                             {/* Authorized Signatory */}
-                            <div style={{ paddingRight: '2mm', paddingTop: '8mm' }}>
-                                <div style={{ borderTop: '0.5px solid #666', width: '28mm', textAlign: 'center', paddingTop: '1mm' }}>
+                            <div style={{ paddingRight: '1mm' }}>
+                                <div style={{ borderTop: '0.5px solid #666', width: '24mm', textAlign: 'center', paddingTop: '1mm' }}>
                                     <span style={{ fontSize: '6pt', color: '#555' }}>Auth Sign</span>
                                 </div>
                             </div>
                         </div>
 
                         {/* Right: Totals */}
-                        <div style={{ flex: '0.7', padding: '2mm', fontSize: '7.5pt' }}>
+                        <div style={{ flex: '0.7', padding: '1.5mm', fontSize: '7pt' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <tbody>
                                     <tr>
-                                        <td style={{ padding: '1.5px 0', fontWeight: 600, textAlign: 'left' }}>Subtotal</td>
-                                        <td style={{ padding: '1.5px 0', textAlign: 'right' }}>₹{billData.subtotal.toFixed(2)}</td>
+                                        <td style={{ padding: '1px 0', fontWeight: 600, textAlign: 'left' }}>Subtotal</td>
+                                        <td style={{ padding: '1px 0', textAlign: 'right' }}>₹{billData.subtotal.toFixed(2)}</td>
                                     </tr>
-                                    <tr>
-                                        <td style={{ padding: '1.5px 0', fontWeight: 600, textAlign: 'left', color: '#0d6e3a' }}>Total Savings</td>
-                                        <td style={{ padding: '1.5px 0', textAlign: 'right', color: '#0d6e3a' }}>-₹{billData.total_discount.toFixed(2)}</td>
-                                    </tr>
+                                    {billData.total_discount > 0 && (
+                                        <tr>
+                                            <td style={{ padding: '1px 0', fontWeight: 600, textAlign: 'left', color: '#0d6e3a' }}>Savings</td>
+                                            <td style={{ padding: '1px 0', textAlign: 'right', color: '#0d6e3a' }}>-₹{billData.total_discount.toFixed(2)}</td>
+                                        </tr>
+                                    )}
                                     <tr>
                                         <td colSpan={2} style={{ padding: 0 }}>
-                                            <div style={{ borderTop: '1.5px solid #1a1a1a', margin: '2px 0' }}></div>
+                                            <div style={{ borderTop: '1.5px solid #1a1a1a', margin: '1px 0' }}></div>
                                         </td>
                                     </tr>
                                     <tr>
-                                        <td style={{ padding: '2px 0', fontWeight: 800, fontSize: '9pt', textAlign: 'left' }}>TOTAL</td>
-                                        <td style={{ padding: '2px 0', fontWeight: 800, fontSize: '9pt', textAlign: 'right' }}>₹{billData.total_amount.toFixed(2)}</td>
+                                        <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'left' }}>TOTAL</td>
+                                        <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'right' }}>₹{billData.total_amount.toFixed(2)}</td>
                                     </tr>
                                 </tbody>
                             </table>
-
                         </div>
                     </div>
                 </div>
@@ -935,25 +1107,287 @@ export default function PrintBill() {
                 {/* ===== CONTROL STRIP ===== */}
                 <div style={{
                     background: '#f5f5f5',
-                    padding: '1.5mm 3mm',
+                    padding: '1mm 2.5mm',
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    fontSize: '6pt',
+                    fontSize: '5.5pt',
                     color: '#555',
                 }}>
-                    <div style={{ fontWeight: 600 }}>
-                        PRODUCTS: {totalProducts}, TOTAL QTY: {totalQty}
-                    </div>
-                    <div>
-                        Recorded on <span style={{ fontWeight: 600 }}>{billTimestamp}</span>
-                    </div>
-                    <div style={{ fontStyle: 'italic' }}>
-                        Powered by <span style={{ fontWeight: 600 }}>medstocksy.in</span>
-                    </div>
+                    <div style={{ fontWeight: 600 }}>Items: {totalProducts} | Qty: {totalQty}</div>
+                    <div>Recorded: <span style={{ fontWeight: 600 }}>{billTimestamp}</span></div>
+                    <div style={{ fontStyle: 'italic' }}>medstocksy.in</div>
                 </div>
                 </div>
+                )}
             </div>
+
+            {/* Edit Bill Dialog — never shown in print */}
+            <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+                <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 print:hidden">
+                    <DialogHeader className="pr-8 space-y-1">
+                        <DialogTitle className="text-lg">Edit Bill</DialogTitle>
+                        <DialogDescription className="text-sm">
+                            Update customer info, payment mode, or modify the medicines on this bill. Stock is adjusted automatically when you add or remove items.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {/* === Items section === */}
+                    <div className="space-y-3 mt-3">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-semibold">Medicines on this bill ({billData?.items.length ?? 0})</h3>
+                        </div>
+
+                        {/* Existing items */}
+                        {billData && billData.items.length > 0 ? (
+                            <div className="rounded-md border bg-card overflow-hidden">
+                                <div className="max-h-56 overflow-y-auto divide-y">
+                                    {billData.items.map((item) => (
+                                        <div key={item.id} className="flex items-center gap-2 px-3 py-2">
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-sm font-medium truncate">{item.product_name}</p>
+                                                <p className="text-[11px] text-muted-foreground">
+                                                    Qty {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''} · ₹{item.unit_price.toFixed(2)} each
+                                                </p>
+                                            </div>
+                                            <div className="text-sm font-semibold whitespace-nowrap">₹{item.total_price.toFixed(2)}</div>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-7 w-7 text-muted-foreground hover:text-red-600 hover:bg-red-50"
+                                                onClick={() => handleRemoveItem(item)}
+                                                disabled={removingItemId === item.id}
+                                                title="Remove from bill"
+                                                aria-label="Remove from bill"
+                                            >
+                                                {removingItemId === item.id
+                                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                    : <Trash2 className="h-3.5 w-3.5" />}
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-muted-foreground italic">No items on this bill.</p>
+                        )}
+
+                        {/* Add medicine form */}
+                        <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Add medicine</p>
+
+                            {/* Search */}
+                            <div className="relative">
+                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                                <Input
+                                    value={productSearch}
+                                    onChange={(e) => setProductSearch(e.target.value)}
+                                    placeholder="Search by name…"
+                                    className="h-9 pl-8"
+                                />
+                                {productSearch && (
+                                    <div className="mt-1 max-h-40 overflow-y-auto rounded-md border bg-card">
+                                        {availableProducts
+                                            .filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()) && p.quantity > 0)
+                                            .slice(0, 25)
+                                            .map(p => (
+                                                <button
+                                                    type="button"
+                                                    key={p.id}
+                                                    onClick={() => onPickAddProduct(p)}
+                                                    className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex items-center justify-between gap-2 border-b last:border-0"
+                                                >
+                                                    <span className="truncate">{p.name}</span>
+                                                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                                        Stk {p.quantity} · ₹{p.selling_price.toFixed(2)}
+                                                    </span>
+                                                </button>
+                                            ))}
+                                        {availableProducts.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase()) && p.quantity > 0).length === 0 && (
+                                            <p className="text-xs text-muted-foreground italic px-3 py-2">No matches in stock.</p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Selected product & inputs */}
+                            {selectedAddProductId && (() => {
+                                const p = availableProducts.find(x => x.id === selectedAddProductId);
+                                if (!p) return null;
+                                return (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between gap-2 px-2 py-1.5 bg-card rounded border">
+                                            <p className="text-sm font-medium truncate">{p.name}</p>
+                                            <button
+                                                type="button"
+                                                className="text-xs text-muted-foreground hover:text-foreground"
+                                                onClick={() => { setSelectedAddProductId(null); setProductSearch(''); }}
+                                            >
+                                                Change
+                                            </button>
+                                        </div>
+                                        <div className={cn('grid gap-2', taxSettings.gst_enabled ? 'grid-cols-4' : 'grid-cols-3')}>
+                                            <div className="space-y-0.5">
+                                                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Qty</Label>
+                                                <Input
+                                                    type="number"
+                                                    inputMode="numeric"
+                                                    min="1"
+                                                    max={p.quantity}
+                                                    value={addQty}
+                                                    onChange={(e) => setAddQty(Math.max(1, Math.min(p.quantity, parseInt(e.target.value) || 1)))}
+                                                    className="h-8 text-sm text-center"
+                                                />
+                                            </div>
+                                            <div className="space-y-0.5">
+                                                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Rate ₹</Label>
+                                                <Input
+                                                    type="number"
+                                                    inputMode="decimal"
+                                                    step="0.01"
+                                                    min="0"
+                                                    value={addRate}
+                                                    onChange={(e) => setAddRate(Math.max(0, parseFloat(e.target.value) || 0))}
+                                                    className="h-8 text-sm text-right"
+                                                />
+                                            </div>
+                                            {taxSettings.gst_enabled && (
+                                                <div className="space-y-0.5">
+                                                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                                        GST %{taxSettings.gst_type === 'inclusive' ? ' (incl.)' : ''}
+                                                    </Label>
+                                                    <Input
+                                                        type="number"
+                                                        inputMode="decimal"
+                                                        step="0.01"
+                                                        min="0"
+                                                        value={addGst}
+                                                        onChange={(e) => setAddGst(Math.max(0, parseFloat(e.target.value) || 0))}
+                                                        className="h-8 text-sm text-center"
+                                                    />
+                                                </div>
+                                            )}
+                                            <div className="space-y-0.5">
+                                                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Disc %</Label>
+                                                <Input
+                                                    type="number"
+                                                    inputMode="decimal"
+                                                    step="0.01"
+                                                    min="0"
+                                                    max="100"
+                                                    value={editGlobalDiscount}
+                                                    onChange={(e) => setEditGlobalDiscount(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                                                    className="h-8 text-sm text-center"
+                                                />
+                                            </div>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            onClick={handleAddItem}
+                                            disabled={isAddingItem}
+                                            className="w-full h-9 gap-2"
+                                        >
+                                            {isAddingItem ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                                            Add to Bill
+                                        </Button>
+                                    </div>
+                                );
+                            })()}
+                        </div>
+                    </div>
+
+                    <div className="border-t my-4" />
+
+                    {/* === Customer + payment section === */}
+                    <h3 className="text-sm font-semibold mb-2">Customer & payment</h3>
+                    <form onSubmit={handleSaveEdit} className="space-y-3">
+                        <div className="space-y-1">
+                            <Label htmlFor="editName" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Customer Name</Label>
+                            <Input
+                                id="editName"
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                placeholder="Walk-in Customer"
+                                className="h-9"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                                <Label htmlFor="editPhone" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Phone</Label>
+                                <Input
+                                    id="editPhone"
+                                    type="tel"
+                                    inputMode="tel"
+                                    value={editPhone}
+                                    onChange={(e) => {
+                                        let value = e.target.value;
+                                        if (value && !value.startsWith('+')) {
+                                            const cleaned = value.replace(/\D/g, '');
+                                            if (cleaned.length === 10) value = '+91' + cleaned;
+                                            else if (cleaned.length === 12 && cleaned.startsWith('91')) value = '+' + cleaned;
+                                            else if (cleaned.length > 0) value = '+91' + cleaned;
+                                        }
+                                        setEditPhone(value);
+                                    }}
+                                    placeholder="+91 9876543210"
+                                    className="h-9"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <Label htmlFor="editPaymentMode" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Payment</Label>
+                                <Select value={editPaymentMode} onValueChange={setEditPaymentMode}>
+                                    <SelectTrigger id="editPaymentMode" className="h-9">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="cash">💵 Cash</SelectItem>
+                                        <SelectItem value="upi">📱 UPI</SelectItem>
+                                        <SelectItem value="card">💳 Card</SelectItem>
+                                        <SelectItem value="credit">⏳ Credit / Dues</SelectItem>
+                                        <SelectItem value="net_banking">🏦 Net Banking</SelectItem>
+                                        <SelectItem value="wallet">👛 Wallet</SelectItem>
+                                        <SelectItem value="cheque">📝 Cheque</SelectItem>
+                                        <SelectItem value="other">💰 Other</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <Label htmlFor="editAddress" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Address</Label>
+                            <Input
+                                id="editAddress"
+                                value={editAddress}
+                                onChange={(e) => setEditAddress(e.target.value)}
+                                placeholder="Customer address"
+                                className="h-9"
+                            />
+                        </div>
+                        <div className="space-y-1">
+                            <Label htmlFor="editDoctor" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Doctor</Label>
+                            <Input
+                                id="editDoctor"
+                                value={editDoctor}
+                                onChange={(e) => setEditDoctor(e.target.value)}
+                                placeholder="Prescribing doctor (optional)"
+                                className="h-9"
+                            />
+                        </div>
+                        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
+                            <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)} className="sm:w-auto">
+                                Cancel
+                            </Button>
+                            <Button type="submit" disabled={isSavingEdit} className="sm:w-auto sm:min-w-[160px] gap-2">
+                                {isSavingEdit ? (
+                                    <><Loader2 className="h-4 w-4 animate-spin" />Saving...</>
+                                ) : (
+                                    <>Save Changes</>
+                                )}
+                            </Button>
+                        </div>
+                    </form>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

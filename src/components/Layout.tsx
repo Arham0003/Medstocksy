@@ -39,7 +39,8 @@ import {
   PackageX,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import SmoothScrollProvider from './SmoothScrollProvider';
 
 const ownerNavItems = [
   { title: 'Overview', icon: Home, href: '/' },
@@ -67,7 +68,7 @@ function getInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-const AppSidebar = memo(({ accountName, userName }: { accountName: string; userName: string }) => {
+const AppSidebar = memo(({ accountName, userName, focusedIndex }: { accountName: string; userName: string; focusedIndex: number | null }) => {
   const { signOut } = useAuth();
   const location = useLocation();
 
@@ -99,7 +100,11 @@ const AppSidebar = memo(({ accountName, userName }: { accountName: string; userN
                       asChild
                       isActive={location.pathname === item.href}
                       tooltip={`${item.title} (${shortcutKey})`}
-                      className="text-base py-3 rounded-lg hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+                      className={`text-base py-3 rounded-lg transition-all duration-300 ease-out ${
+                        focusedIndex === index
+                          ? 'bg-white/70 dark:bg-white/20 backdrop-blur-2xl border border-white/80 dark:border-white/30 shadow-[0_8px_32px_0_rgba(31,38,135,0.15)] ring-1 ring-white/60 dark:ring-white/20 scale-[1.04] py-3.5 px-3.5 my-1 rounded-xl font-bold text-foreground z-10'
+                          : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                      }`}
                     >
                       <Link to={item.href} className="flex items-center justify-between w-full">
                         <div className="flex items-center gap-2">
@@ -213,28 +218,90 @@ export default function Layout() {
   const { user, loading, profile } = useAuth();
   const [accountName, setAccountName] = useState('My Store');
   const [userName, setUserName] = useState('Manager');
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
+  const mainContentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setFocusedIndex(null);
+  }, [location.pathname]);
+
+  // Signal to child pages that sidebar keyboard nav is active.
+  useEffect(() => {
+    if (focusedIndex !== null) {
+      document.body.dataset.sidebarNav = 'active';
+    } else {
+      delete document.body.dataset.sidebarNav;
+    }
+  }, [focusedIndex]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // The full-screen POS billing page owns its own keyboard (tab switching,
-      // arrow keys, number keys). Never let global section-navigation fire there.
-      if (location.pathname === '/sales/new') return;
-
       // ponytail: ignore navigation keys if typing in standard input or interacting with lists/popups/menus
       const target = e.target as HTMLElement;
+      let isAtStart = false;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+
+      if (isInput) {
+        try {
+          const input = target as HTMLInputElement;
+          isAtStart = input.selectionStart === 0 && input.selectionEnd === 0;
+        } catch (err) {
+          isAtStart = !(target as HTMLInputElement).value;
+        }
+      }
+
+      // Block sidebar shortcuts if any modal dialog/alertdialog is open,
+      // or if the user is interacting with an input/menu.
       if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
+        (isInput && !(e.key === 'ArrowLeft' && isAtStart)) ||
         target.tagName === 'SELECT' ||
         target.isContentEditable ||
         target.closest('[role="listbox"]') ||
-        target.closest('[role="dialog"]') ||
-        target.closest('[role="menu"]')
+        target.closest('[role="menu"]') ||
+        document.querySelector('[role="dialog"], [role="alertdialog"]')
       ) {
         return;
       }
+
+      // ponytail: ArrowLeft focuses sidebar from anywhere (if not defaultPrevented); when focused, Up/Down move highlight, Right/Enter open and enter section
+      // Guard: only activate on top-level routes — sub-pages (/sales/new etc.) own ← for their own navigation.
+      const isTopLevelForNav = ownerNavItems.some((item) => item.href === location.pathname);
+      if (!e.defaultPrevented && e.key === 'ArrowLeft' && focusedIndex === null && isTopLevelForNav) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const current = ownerNavItems.findIndex((item) => item.href === location.pathname);
+        setFocusedIndex(current === -1 ? 0 : current);
+      } else if (focusedIndex !== null) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setFocusedIndex((prev) => (prev !== null ? (prev + 1) % ownerNavItems.length : 0));
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setFocusedIndex((prev) =>
+            prev !== null ? (prev - 1 + ownerNavItems.length) % ownerNavItems.length : ownerNavItems.length - 1
+          );
+        } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const item = ownerNavItems[focusedIndex];
+          if (item) {
+            navigate(item.href);
+            setFocusedIndex(null);
+          }
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setFocusedIndex(null);
+        }
+      }
+
+      // ponytail: skip number nav shortcuts on sub-pages (e.g. /sales/new) — only apply to top-level routes
+      const isTopLevel = ownerNavItems.some((item) => item.href === location.pathname);
+      if (!isTopLevel) return;
 
       // Check numbers
       const key = parseInt(e.key);
@@ -249,35 +316,14 @@ export default function Layout() {
         if (item) {
           e.preventDefault();
           navigate(item.href);
-        }
-      }
-
-      // Check up and down arrows
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        const currentIndex = ownerNavItems.findIndex((item) => item.href === location.pathname);
-        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % ownerNavItems.length;
-        const nextItem = ownerNavItems[nextIndex];
-        if (nextItem) {
-          navigate(nextItem.href);
-        }
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        const currentIndex = ownerNavItems.findIndex((item) => item.href === location.pathname);
-        const prevIndex =
-          currentIndex === -1
-            ? ownerNavItems.length - 1
-            : (currentIndex - 1 + ownerNavItems.length) % ownerNavItems.length;
-        const prevItem = ownerNavItems[prevIndex];
-        if (prevItem) {
-          navigate(prevItem.href);
+          setFocusedIndex(null);
         }
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigate, location.pathname]);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [navigate, location.pathname, focusedIndex]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -320,7 +366,7 @@ export default function Layout() {
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <AppSidebar accountName={accountName} userName={userName} />
+        <AppSidebar accountName={accountName} userName={userName} focusedIndex={focusedIndex} />
         <main className="flex-1 flex flex-col min-w-0">
           <header className="border-b px-3 sm:px-4 py-2 bg-background sticky top-0 z-10 flex items-center gap-2 sm:gap-3">
             <SidebarTrigger className="h-9 w-9 shrink-0" />
@@ -330,10 +376,12 @@ export default function Layout() {
             </div>
             <UserMenu userName={userName} accountName={accountName} />
           </header>
-          <div className="flex-1 p-3 sm:p-6 overflow-y-auto min-w-0">
-            <SubscriptionGuard>
-              <Outlet />
-            </SubscriptionGuard>
+          <div ref={mainContentRef} className="flex-1 p-3 sm:p-6 overflow-y-auto min-w-0">
+            <SmoothScrollProvider scrollContainerRef={mainContentRef} pathname={location.pathname}>
+              <SubscriptionGuard>
+                <Outlet />
+              </SubscriptionGuard>
+            </SmoothScrollProvider>
           </div>
         </main>
       </div>

@@ -59,6 +59,15 @@ interface SupplierPayment {
   created_at: string | null;
 }
 
+interface SupplierInvoice {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string | null;
+  created_at: string;
+  purchase_items?: { qty: number; purchase_rate: number; mrp: number; name: string }[];
+}
+
 interface SupplierProduct {
   id: string;
   name: string;
@@ -106,7 +115,14 @@ export default function Suppliers() {
 
   // Register dialog
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => e.key === 'F2' && (e.preventDefault(), setIsRegisterOpen(true));
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   // Detail dialog
   const [selectedSupplier, setSelectedSupplier] = useState<SupplierWithStats | null>(null);
@@ -120,6 +136,7 @@ export default function Suppliers() {
   const [gstCopied, setGstCopied] = useState(false);
   const [supplierProducts, setSupplierProducts] = useState<SupplierProduct[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([]);
+  const [supplierInvoices, setSupplierInvoices] = useState<SupplierInvoice[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // Payment dialog
@@ -391,12 +408,14 @@ export default function Suppliers() {
     setLoadingDetail(true);
     setShowAllProducts(false);
     try {
-      const [prodsRes, paysRes] = await Promise.all([
+      const [prodsRes, paysRes, invsRes] = await Promise.all([
         supabase.from('products').select('id, name, category, quantity, purchase_price, selling_price, created_at').eq('supplier_id', supplier.id),
         supabase.from('supplier_payments').select('*').eq('supplier_id', supplier.id).order('payment_date', { ascending: false }),
+        supabase.from('purchase_headers').select('id, invoice_number, invoice_date, due_date, created_at, purchase_items(qty, purchase_rate, mrp, name)').eq('supplier_id', supplier.id).order('invoice_date', { ascending: false }),
       ]);
       setSupplierProducts((prodsRes.data || []) as SupplierProduct[]);
       setSupplierPayments(paysRes.data || []);
+      setSupplierInvoices((invsRes.data || []) as SupplierInvoice[]);
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error loading details', description: err.message });
     } finally {
@@ -576,11 +595,18 @@ export default function Suppliers() {
         <Dialog
           open={isRegisterOpen}
           onOpenChange={(open) => {
-            setIsRegisterOpen(open);
             if (!open) {
-              setEditingSupplierId(null);
-              setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+              const hasData = formData.name !== '' || formData.phone !== '' || formData.email !== '' || formData.address !== '' || formData.gst_number !== '' || formData.contact_person !== '';
+              if (!hasData) {
+                setIsRegisterOpen(false);
+                setEditingSupplierId(null);
+                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+                return;
+              }
+              setExitConfirmOpen(true);
+              return;
             }
+            setIsRegisterOpen(open);
           }}
         >
           <DialogTrigger asChild>
@@ -588,7 +614,7 @@ export default function Suppliers() {
               className="w-full sm:w-auto h-10 sm:h-11 gap-2 rounded-full px-5 font-medium shadow-sm shadow-primary/20 hover:shadow-md hover:shadow-primary/30 hover:-translate-y-px transition-all"
             >
               <Plus className="h-4 w-4" strokeWidth={2.5} />
-              Register Supplier
+              Register Supplier (F2)
             </Button>
           </DialogTrigger>
           <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto p-5 sm:p-7">
@@ -1107,7 +1133,7 @@ export default function Suppliers() {
               ? Math.max(0, Math.floor((Date.now() - lastPaidTs) / (1000 * 60 * 60 * 24)))
               : null;
             const gstValid = isValidGSTIN(selectedSupplier.gst_number);
-            const hasAnyActivity = supplierProducts.length > 0 || supplierPayments.length > 0;
+            const hasAnyActivity = supplierProducts.length > 0 || supplierPayments.length > 0 || supplierInvoices.length > 0;
             const balanceDue = selectedSupplier.balance > 0;
             const actionCount =
               (selectedSupplier.phone ? 1 : 0) +
@@ -1297,8 +1323,13 @@ export default function Suppliers() {
                     </Button>
                   </div>
                 ) : (
-                  <Tabs defaultValue={supplierProducts.length === 0 ? 'payments' : 'products'} className="w-full">
-                    <TabsList className="grid grid-cols-2 w-full sm:w-auto sm:inline-grid">
+                  <Tabs defaultValue={supplierInvoices.length > 0 ? 'invoices' : supplierProducts.length === 0 ? 'payments' : 'products'} className="w-full">
+                    <TabsList className="grid grid-cols-3 w-full sm:w-auto sm:inline-grid">
+                      <TabsTrigger value="invoices" className="gap-2">
+                        <Receipt className="h-3.5 w-3.5" />
+                        Bills / Invoices
+                        <span className="text-muted-foreground">({supplierInvoices.length})</span>
+                      </TabsTrigger>
                       <TabsTrigger value="products" className="gap-2">
                         <Package className="h-3.5 w-3.5" />
                         Products
@@ -1310,6 +1341,51 @@ export default function Suppliers() {
                         <span className="text-muted-foreground">({supplierPayments.length})</span>
                       </TabsTrigger>
                     </TabsList>
+
+                    {/* Invoices tab */}
+                    <TabsContent value="invoices" className="mt-4 space-y-3">
+                      {supplierInvoices.length === 0 ? (
+                        <div className="text-center py-10 border border-dashed rounded-md">
+                          <Receipt className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
+                          <p className="text-sm text-muted-foreground">No purchase bills/invoices recorded for this supplier yet.</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Enter bills via Purchase Entry (F2) to see them listed here with invoice numbers and dates.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="border rounded-md overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/40">
+                                <TableHead className="font-medium text-xs">Invoice #</TableHead>
+                                <TableHead className="font-medium text-xs">Date</TableHead>
+                                <TableHead className="font-medium text-xs">Items</TableHead>
+                                <TableHead className="font-medium text-xs text-right">Total Amount</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {supplierInvoices.map(inv => {
+                                const totalAmt = inv.purchase_items?.reduce((s, it) => s + (Number(it.qty) * Number(it.purchase_rate || 0)), 0) || 0;
+                                return (
+                                  <TableRow key={inv.id}>
+                                    <TableCell className="text-sm font-semibold text-slate-900 py-2.5">{inv.invoice_number}</TableCell>
+                                    <TableCell className="text-sm py-2.5">{new Date(inv.invoice_date).toLocaleDateString('en-IN')}</TableCell>
+                                    <TableCell className="py-2.5">
+                                      <Badge variant="secondary" className="font-normal text-xs">
+                                        {inv.purchase_items?.length || 0} item{(inv.purchase_items?.length || 0) !== 1 ? 's' : ''}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="text-sm py-2.5 text-right font-semibold text-slate-900">
+                                      {formatINR(totalAmt)}
+                                    </TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
+                    </TabsContent>
 
                     {/* Products tab */}
                     <TabsContent value="products" className="mt-4 space-y-3">
@@ -1536,6 +1612,47 @@ export default function Suppliers() {
               className="bg-red-600 text-white hover:bg-red-700"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={exitConfirmOpen} onOpenChange={setExitConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to exit?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your unsaved data will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="transition-none"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowRight') {
+                  e.preventDefault();
+                  (e.currentTarget.nextElementSibling as HTMLElement)?.focus();
+                }
+              }}
+            >
+              No
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 transition-none"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') {
+                  e.preventDefault();
+                  (e.currentTarget.previousElementSibling as HTMLElement)?.focus();
+                }
+              }}
+              onClick={() => {
+                setExitConfirmOpen(false);
+                setIsRegisterOpen(false);
+                setEditingSupplierId(null);
+                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+              }}
+            >
+              Yes
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

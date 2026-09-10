@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/db conn/supabaseClient';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { Loader2, ArrowLeft, Printer, Pencil, Plus, Trash2, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { db } from '@/lib/supabaseLoose';
 
 interface SaleItem {
     id: string;
@@ -28,6 +29,14 @@ interface SaleItem {
     discount_percentage?: number;
     gst?: number;
     selling_price?: number;
+    // Stored GST breakup (added by 20260910200000). Falls back to an even
+    // split of gst_amount for bills raised before that migration.
+    taxable_value?: number | null;
+    gst_rate?: number | null;
+    cgst_amount?: number | null;
+    sgst_amount?: number | null;
+    igst_amount?: number | null;
+    hsn_code_stored?: string | null;
 }
 
 interface BillData {
@@ -73,6 +82,44 @@ export default function PrintBill() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [billData, setBillData] = useState<BillData | null>(null);
+
+    /**
+     * HSN-wise tax summary — the block a GST invoice must carry and the shape
+     * GSTR-1 wants. Taxable value and tax are summed per HSN + rate pair.
+     */
+    const hsnSummary = useMemo(() => {
+        if (!billData) return [];
+        const buckets = new Map<string, {
+            hsn: string; rate: number; taxable: number; cgst: number; sgst: number; igst: number;
+        }>();
+
+        for (const item of billData.items) {
+            const hsn = item.hsn && item.hsn !== '-' ? item.hsn : 'Unclassified';
+            const rate = Number(item.gst_rate ?? item.gst ?? 0);
+            const key = `${hsn}|${rate}`;
+
+            const hasStored =
+                item.cgst_amount != null || item.sgst_amount != null || item.igst_amount != null;
+            const gstTotal = Math.abs(item.gst_amount || 0);
+            const cgst = hasStored ? Math.abs(item.cgst_amount ?? 0) : gstTotal / 2;
+            const sgst = hasStored ? Math.abs(item.sgst_amount ?? 0) : gstTotal / 2;
+            const igst = hasStored ? Math.abs(item.igst_amount ?? 0) : 0;
+            // Pre-migration lines have no taxable_value; derive it from the
+            // line total less its tax, which is what was actually charged.
+            const taxable = item.taxable_value != null
+                ? Math.abs(item.taxable_value)
+                : Math.abs(item.total_price) - gstTotal;
+
+            const bucket = buckets.get(key) ?? { hsn, rate, taxable: 0, cgst: 0, sgst: 0, igst: 0 };
+            bucket.taxable += taxable;
+            bucket.cgst += cgst;
+            bucket.sgst += sgst;
+            bucket.igst += igst;
+            buckets.set(key, bucket);
+        }
+
+        return Array.from(buckets.values()).sort((a, b) => a.hsn.localeCompare(b.hsn));
+    }, [billData]);
     const [businessDetails, setBusinessDetails] = useState<BusinessDetails | null>(null);
     const { toast } = useToast();
     const { profile } = useAuth();
@@ -243,14 +290,27 @@ export default function PrintBill() {
 
             // Fetch sales items for this bill
             // @ts-ignore - bill_id might not exist in types yet
-            const { data: salesData, error: salesError } = await supabase
-                .from('sales')
-                .select(`
+            const BASE_COLS = `
         id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at,
         customer_name, customer_phone, customer_address, doctor_name, payment_mode, account_id, discount_percentage, sale_date, received_amount,
-        products(name, gst, hsn_code, batch_number, expiry_date, manufacturer, selling_price)
-      `)
+        products(name, gst, hsn_code, batch_number, expiry_date, manufacturer, selling_price)`;
+            // GST-split columns arrive with 20260910200000. Retry without them
+            // so a bill still prints on a database that has not been migrated.
+            const GST_SPLIT_COLS = ', taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount, hsn_code';
+
+            // db (untyped client): a column list built at runtime defeats
+            // PostgREST's generated row typing; rows are re-mapped by hand below.
+            let { data: salesData, error: salesError } = await db.from('sales')
+                .select(BASE_COLS + GST_SPLIT_COLS)
                 .eq('bill_id', billId);
+
+            if (salesError) {
+                const retry = await db.from('sales')
+                    .select(BASE_COLS)
+                    .eq('bill_id', billId);
+                salesData = retry.data;
+                salesError = retry.error;
+            }
 
                 if (salesError) throw salesError;
                 if (!salesData || salesData.length === 0) {
@@ -296,11 +356,17 @@ export default function PrintBill() {
                         product_name: item.products?.name || 'Unknown Product',
                         manufacturer: item.products?.manufacturer || '-',
                         batch_number: item.products?.batch_number || '-',
-                        hsn: item.products?.hsn_code || '-',
+                        hsn: item.hsn_code || item.products?.hsn_code || '-',
                         expiry: formattedExpiry,
                         discount_percentage: item.discount_percentage || 0,
-                        gst: item.products?.gst || 0,
+                        gst: item.gst_rate ?? item.products?.gst ?? 0,
                         selling_price: item.products?.selling_price || item.unit_price,
+                        taxable_value: item.taxable_value ?? null,
+                        gst_rate: item.gst_rate ?? null,
+                        cgst_amount: item.cgst_amount ?? null,
+                        sgst_amount: item.sgst_amount ?? null,
+                        igst_amount: item.igst_amount ?? null,
+                        hsn_code_stored: item.hsn_code ?? null,
                     };
                 });
 
@@ -318,7 +384,7 @@ export default function PrintBill() {
 
                 // Original creation moment = the EARLIEST created_at across all rows of this bill.
                 // (Later edits may add new rows with a newer created_at; we always show the first.)
-                const originalCreatedAt = (salesData ?? []).reduce<string>((earliest, row: any) => {
+                const originalCreatedAt = (salesData ?? []).reduce((earliest: string, row: any) => {
                     if (!row?.created_at) return earliest;
                     if (!earliest) return row.created_at;
                     return new Date(row.created_at).getTime() < new Date(earliest).getTime() ? row.created_at : earliest;
@@ -712,9 +778,14 @@ export default function PrintBill() {
                                 const discountAmt = (grossAmount * (item.discount_percentage || 0)) / 100;
                                 const netAmount = grossAmount - discountAmt;
 
-                                // CGST & SGST amounts
-                                const cgstAmt = (item.gst_amount || 0) / 2;
-                                const sgstAmt = (item.gst_amount || 0) / 2;
+                                // CGST & SGST: prefer the amounts frozen on the sale line.
+                                // Bills raised before the GST-split migration have none,
+                                // so an even split of gst_amount stands in.
+                                const hasStoredSplit =
+                                    item.cgst_amount != null || item.sgst_amount != null || item.igst_amount != null;
+                                const cgstAmt = hasStoredSplit ? Math.abs(item.cgst_amount ?? 0) : Math.abs(item.gst_amount || 0) / 2;
+                                const sgstAmt = hasStoredSplit ? Math.abs(item.sgst_amount ?? 0) : Math.abs(item.gst_amount || 0) / 2;
+                                const igstAmt = hasStoredSplit ? Math.abs(item.igst_amount ?? 0) : 0;
 
                                 const mrp = item.selling_price || item.unit_price;
                                 const gstPerUnit = (item.gst_amount || 0) / effectiveQty;
@@ -737,8 +808,8 @@ export default function PrintBill() {
                                         <td style={{ textAlign: 'right' }}>{mrp.toFixed(2)}</td>
                                         <td style={{ textAlign: 'right' }}>{rate.toFixed(2)}</td>
                                         <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>{item.discount_percentage ? item.discount_percentage + '%' : '-'}</td>
-                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{cgstAmt > 0 ? cgstAmt.toFixed(2) : '-'}</td>
-                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{sgstAmt > 0 ? sgstAmt.toFixed(2) : '-'}</td>
+                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? igstAmt.toFixed(2) : (cgstAmt > 0 ? cgstAmt.toFixed(2) : '-')}</td>
+                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? '-' : (sgstAmt > 0 ? sgstAmt.toFixed(2) : '-')}</td>
                                         <td style={{ textAlign: 'right', fontWeight: 700 }}>{item.total_price.toFixed(2)}</td>
                                     </tr>
                                 );
@@ -753,6 +824,55 @@ export default function PrintBill() {
                         </tbody>
                     </table>
                 </div>
+
+                {/* ===== HSN-WISE TAX SUMMARY (GST invoice requirement) ===== */}
+                {hsnSummary.length > 0 && (
+                    <div style={{ borderBottom: '1px solid #444', padding: '1.5mm 2mm' }}>
+                        <div style={{ fontWeight: 700, fontSize: '7pt', marginBottom: '1mm' }}>
+                            HSN-wise Tax Summary
+                        </div>
+                        <table className="bill-table" style={{ fontSize: '6.5pt' }}>
+                            <thead>
+                                <tr>
+                                    <th style={{ textAlign: 'left', width: '20%' }}>HSN</th>
+                                    <th style={{ width: '10%' }}>Rate</th>
+                                    <th style={{ width: '20%' }}>Taxable Value</th>
+                                    <th style={{ width: '17%' }}>CGST</th>
+                                    <th style={{ width: '17%' }}>SGST</th>
+                                    <th style={{ width: '16%' }}>IGST</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {hsnSummary.map(row => (
+                                    <tr key={`${row.hsn}-${row.rate}`}>
+                                        <td style={{ textAlign: 'left' }}>{row.hsn}</td>
+                                        <td style={{ textAlign: 'center' }}>{row.rate}%</td>
+                                        <td style={{ textAlign: 'right' }}>{row.taxable.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'right' }}>{row.cgst.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'right' }}>{row.sgst.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'right' }}>{row.igst.toFixed(2)}</td>
+                                    </tr>
+                                ))}
+                                <tr style={{ fontWeight: 700 }}>
+                                    <td style={{ textAlign: 'left' }}>Total</td>
+                                    <td></td>
+                                    <td style={{ textAlign: 'right' }}>
+                                        {hsnSummary.reduce((n, r) => n + r.taxable, 0).toFixed(2)}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                        {hsnSummary.reduce((n, r) => n + r.cgst, 0).toFixed(2)}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                        {hsnSummary.reduce((n, r) => n + r.sgst, 0).toFixed(2)}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                        {hsnSummary.reduce((n, r) => n + r.igst, 0).toFixed(2)}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                )}
 
                 {/* ===== FOOTER ZONE - PAYMENT & AUDIT ===== */}
                 <div style={{ borderBottom: '1px solid #444' }}>

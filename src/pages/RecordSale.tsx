@@ -17,6 +17,9 @@ import {
 import { cn } from '@/lib/utils';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
 import { BILL_DATA_PREFIX, clearBillData } from '@/hooks/useBillSessions';
+import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
+import { apportionGst, expiryStatus, formatExpiryShort } from '@/lib/gst';
+import { db } from '@/lib/supabaseLoose';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 export interface Product {
@@ -76,6 +79,12 @@ interface BillRow {
   gst: number;
   discount: number;
   amount: number;
+  // FEFO batch tracking. batchOptions is what the counter can pick from,
+  // nearest expiry first; batchId is the one actually being sold.
+  batchId: string | null;
+  batchExpiryIso: string;
+  cogsRate: number;
+  batchOptions: StockBatch[];
 }
 
 const EMPTY_ROW = (): BillRow => ({
@@ -94,6 +103,10 @@ const EMPTY_ROW = (): BillRow => ({
   gst: 0,
   discount: 0,
   amount: 0,
+  batchId: null,
+  batchExpiryIso: '',
+  cogsRate: 0,
+  batchOptions: [],
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -123,12 +136,18 @@ function calcAmount(row: BillRow, settings: Settings | null): number {
   return net;
 }
 
+// A grid cell is either a text/number input or the batch <select>.
+type GridField = HTMLInputElement | HTMLSelectElement;
+
 // Caret helpers for arrow-key grid nav. number/date inputs throw on
-// selectionStart access, so we treat those as "at boundary" → arrows navigate.
-function caretAtStart(el: HTMLInputElement): boolean {
+// selectionStart access, and a <select> has no caret at all, so both are
+// treated as "at boundary" → arrows navigate between fields.
+function caretAtStart(el: GridField): boolean {
+  if (!(el instanceof HTMLInputElement)) return true;
   try { return el.selectionStart === 0 && el.selectionEnd === 0; } catch { return true; }
 }
-function caretAtEnd(el: HTMLInputElement): boolean {
+function caretAtEnd(el: GridField): boolean {
+  if (!(el instanceof HTMLInputElement)) return true;
   try { return el.selectionStart === el.value.length && el.selectionEnd === el.value.length; } catch { return true; }
 }
 
@@ -166,6 +185,7 @@ export default function RecordSale({
   // ─── Data ───────────────────────────────────────────────────────────────
   const [products, setProducts] = useState<Product[]>(injectedProducts ?? []);
   const [settings, setSettings] = useState<Settings | null>(injectedSettings ?? null);
+  const [isInterstate, setIsInterstate] = useState(false);
   const [loading, setLoading] = useState(usingInjected ? !!dataLoading : true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -320,7 +340,7 @@ export default function RecordSale({
   const takenRef = useRef<HTMLInputElement>(null);
   const masterSearchRef = useRef<HTMLInputElement>(null);
   const masterDropdownRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef<Map<string, Map<string, HTMLInputElement>>>(new Map());
+  const rowRefs = useRef<Map<string, Map<string, GridField>>>(new Map());
 
   // When the sale opens (active tab, data ready), put the cursor in Patient Name
   // so the pharmacist can start typing straight away. Focuses once per mount.
@@ -333,7 +353,7 @@ export default function RecordSale({
   }, [isActive, loading]);
 
   // Helper to set a ref for a specific row+field
-  const setFieldRef = useCallback((rowUid: string, field: string, el: HTMLInputElement | null) => {
+  const setFieldRef = useCallback((rowUid: string, field: string, el: GridField | null) => {
     if (!el) return;
     if (!rowRefs.current.has(rowUid)) rowRefs.current.set(rowUid, new Map());
     rowRefs.current.get(rowUid)!.set(field, el);
@@ -370,6 +390,16 @@ export default function RecordSale({
         if (prodRes.error) throw prodRes.error;
         setProducts((prodRes.data as any) || []);
         if (settingsRes.data) setSettings(settingsRes.data as any);
+
+        // Account-level GST identity decides CGST+SGST vs IGST on every line.
+        if (profile?.account_id) {
+          const { data: acct } = await db
+            .from('accounts')
+            .select('is_interstate_billing')
+            .eq('id', profile.account_id)
+            .single();
+          setIsInterstate(Boolean(acct?.is_interstate_billing));
+        }
       } catch (err: any) {
         toast({ variant: 'destructive', title: 'Error loading data', description: err.message });
       } finally {
@@ -555,6 +585,39 @@ export default function RecordSale({
     'w-full h-8 rounded-md border border-emerald-200 bg-white px-2 text-sm font-medium text-emerald-900 placeholder-emerald-400/60 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-colors';
 
   // ─── Apply selected CRM fields ──────────────────────────────────────────
+  /**
+   * Attach the product's sellable batches to a row and default to the
+   * nearest expiry (FEFO). Addressed by uid rather than index because the
+   * fetch is async and rows can shift while it is in flight.
+   *
+   * Silent when the product has no batches — the row keeps the
+   * product-level batch/expiry, so an account still on aggregate stock
+   * bills exactly as it did before.
+   */
+  const loadBatchesForRow = useCallback(async (uid: string, productId: string) => {
+    if (!profile?.account_id) return;
+    const batches = await fetchFefoBatches(profile.account_id, productId);
+    if (batches.length === 0) return;
+    const first = batches[0];
+    setRows(prev => prev.map(r => {
+      if (r.uid !== uid) return r;
+      const next: BillRow = {
+        ...r,
+        batchOptions: batches,
+        batchId: first.id,
+        batch: first.batch_number,
+        batchExpiryIso: first.expiry_date,
+        expiry: first.expiry_date.substring(0, 7),
+        cogsRate: Number(first.effective_cost) || 0,
+        // The batch's own rate wins: it is what the goods were taxed at.
+        gst: Number(first.gst_rate) || r.gst,
+        hsn: first.hsn_code || r.hsn,
+      };
+      next.amount = calcAmount(next, settings);
+      return next;
+    }));
+  }, [profile?.account_id, settings]);
+
   const applyCrmFields = useCallback(() => {
     if (!crmFoundData) return;
 
@@ -607,6 +670,10 @@ export default function RecordSale({
           gst: item.gst,
           discount: item.discount,
           amount: 0,
+          batchId: null,
+          batchExpiryIso: '',
+          cogsRate: 0,
+          batchOptions: [],
         };
         row.amount = calcAmount(row, settings);
         return row;
@@ -615,6 +682,9 @@ export default function RecordSale({
         const filledRows = prev.filter(r => r.productId);
         return [...filledRows, ...newRows];
       });
+      // Repeat-prescription rows come from history; resolve each one's
+      // current FEFO batch so they sell from live stock like any other row.
+      newRows.forEach(r => void loadBatchesForRow(r.uid, r.productId));
     }
 
     setCrmDialogOpen(false);
@@ -624,7 +694,7 @@ export default function RecordSale({
       description: `${itemCount} medicine(s) added to bill${isSameAslastBill ? ' · months count auto-updated' : ''
         }.`,
     });
-  }, [crmFoundData, crmSelectedFields, crmSelectedItems, products, settings, toast]);
+  }, [crmFoundData, crmSelectedFields, crmSelectedItems, products, settings, toast, loadBatchesForRow]);
 
   const toggleCrmField = useCallback((field: CrmField) => {
     setCrmSelectedFields(prev => {
@@ -679,6 +749,7 @@ export default function RecordSale({
     });
   }, [settings]);
 
+
   const addNewRow = useCallback(() => {
     const newRow = EMPTY_ROW();
     setRows(prev => [...prev, newRow]);
@@ -718,7 +789,15 @@ export default function RecordSale({
       rate: product.selling_price,
       gst: gstRate,
       pcsPerUnit: product.pcs_per_unit || 10,
+      batchId: null,
+      batchExpiryIso: '',
+      cogsRate: 0,
+      batchOptions: [],
     });
+
+    const rowUid = rows[rowIndex]?.uid;
+    if (rowUid) void loadBatchesForRow(rowUid, product.id);
+
     setActiveSearchRow(null);
     setSearchTerm('');
     setSearchRect(null);
@@ -731,7 +810,7 @@ export default function RecordSale({
     });
     // Move the cursor to the first editable field of this row (Batch → Qty → …).
     setTimeout(() => focusField(uid || '', 'qty'), 90);
-  }, [updateRow, settings, rows, focusField]);
+  }, [updateRow, settings, rows, focusField, loadBatchesForRow]);
 
   // ─── Inline product search (inside each grid row) ─────────────────────────
   const handleProductSearchKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number) => {
@@ -819,6 +898,10 @@ export default function RecordSale({
       subQty: '',
       discount: 0,
       amount: 0,
+      batchId: null,
+      batchExpiryIso: '',
+      cogsRate: 0,
+      batchOptions: [],
     };
     newRow.amount = calcAmount(newRow, settings);
     setRows(prev => {
@@ -826,11 +909,12 @@ export default function RecordSale({
       const base = (last && !last.productId) ? prev.slice(0, -1) : prev;
       return [...base, newRow];
     });
+    void loadBatchesForRow(newRow.uid, product.id);
     setMasterSearch('');
     setMasterDropdownOpen(false);
     setMasterHighlight(0);
     setTimeout(() => focusField(newRow.uid, 'qty'), 80);
-  }, [settings, focusField]);
+  }, [settings, focusField, loadBatchesForRow]);
 
   // ─── Master search keyboard handler ─────────────────────────────────────
   const handleMasterSearchKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -978,6 +1062,10 @@ export default function RecordSale({
       subQty: '',
       discount: 0,
       amount: 0,
+      batchId: null,
+      batchExpiryIso: '',
+      cogsRate: 0,
+      batchOptions: [],
     };
     newRow.amount = calcAmount(newRow, settings);
     setRows(prev => {
@@ -985,8 +1073,9 @@ export default function RecordSale({
       const base = (last && !last.productId) ? prev.slice(0, -1) : prev;
       return [...base, newRow];
     });
+    void loadBatchesForRow(newRow.uid, product.id);
     setTimeout(() => focusField(newRow.uid, 'qty'), 80);
-  }, [settings, onProductCreated, focusField]);
+  }, [settings, onProductCreated, focusField, loadBatchesForRow]);
 
   // ─── Handle Save ──────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
@@ -1064,6 +1153,12 @@ export default function RecordSale({
         }
         // else receivedNum === 0 → rowReceivedAmount stays 0 (pure credit, nothing paid)
 
+        // GST breakup for GSTR-1. finalGst is the tax actually charged on
+        // this line after both discounts, so it is apportioned rather than
+        // recomputed — recomputing taxable x rate would drift by paise.
+        const taxableValue = isGstInclusive ? netAfterAll - finalGst : netAfterAll;
+        const split = apportionGst(finalGst, isInterstate);
+
         return {
           account_id: profile?.account_id,
           bill_id: billId,
@@ -1075,6 +1170,14 @@ export default function RecordSale({
           unit_price: Math.round(row.rate * 100) / 100,
           total_price: totalPriceRounded,
           gst_amount: Math.round(finalGst * 100) / 100,
+          taxable_value: Math.round(taxableValue * 100) / 100,
+          gst_rate: row.gst,
+          cgst_amount: split.cgst,
+          sgst_amount: split.sgst,
+          igst_amount: split.igst,
+          hsn_code: row.hsn || null,
+          batch_id: row.batchId,
+          cogs_rate: row.cogsRate || null,
           payment_mode: paymentMode,
           customer_name: customerName || 'Walk-in Customer',
           customer_phone: customerPhone || null,
@@ -1116,7 +1219,15 @@ export default function RecordSale({
       if (error && error.message?.includes('column')) {
         // Fallback without optional fields
         const fallback = salesToInsert.map(s => {
-          const { customer_name, customer_phone, customer_address, doctor_name, prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit, ...rest } = s as any;
+          const {
+            customer_name, customer_phone, customer_address, doctor_name,
+            prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit,
+            // GST-split and batch columns arrive with the compliance
+            // migrations; drop them too so an un-migrated database still bills.
+            taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
+            hsn_code, batch_id, cogs_rate,
+            ...rest
+          } = s as any;
           return rest;
         });
         const res2 = await supabase.from('sales').insert(fallback);
@@ -1126,10 +1237,38 @@ export default function RecordSale({
         throw error;
       }
 
-      toast({
-        title: 'Sale recorded!',
-        description: `${validRows.length} item(s) billed successfully${customerName ? ' for ' + customerName : ''}`,
-      });
+      // Batch ledger. products.quantity was already moved by the sales
+      // trigger; this takes the same units off the batches so FEFO and
+      // expiry tracking stay truthful. A failure here is reported but never
+      // fails the bill — the sale is already committed.
+      const batchProblems: string[] = [];
+      if (profile?.account_id) {
+        for (const row of validRows) {
+          const hasSub = row.subQty !== '' && Number(row.subQty) > 0;
+          const units = row.qty + (hasSub ? Number(row.subQty) / (row.pcsPerUnit || 1) : 0);
+          if (units <= 0) continue;
+          const res = await consumeBatchStock({
+            accountId: profile.account_id,
+            productId: row.productId,
+            batchNumber: row.batchId ? row.batch : null,
+            qty: units,
+          });
+          if (!res.ok) batchProblems.push(`${row.productName}: ${res.message}`);
+        }
+      }
+
+      if (batchProblems.length > 0) {
+        toast({
+          variant: 'destructive',
+          title: 'Bill saved — batch ledger out of step',
+          description: batchProblems.slice(0, 3).join(' · '),
+        });
+      } else {
+        toast({
+          title: 'Sale recorded!',
+          description: `${validRows.length} item(s) billed successfully${customerName ? ' for ' + customerName : ''}`,
+        });
+      }
 
       // Bill is finalized → drop its locally-saved draft so it isn't restored later.
       if (persistKey) clearBillData(persistKey);
@@ -1145,7 +1284,7 @@ export default function RecordSale({
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId]);
+  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, isInterstate]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
   useEffect(() => {
@@ -1261,7 +1400,7 @@ export default function RecordSale({
   // and scrolls horizontally (swipe); on desktop it fits within max-width.
   const GRID_COLS = 'grid-cols-[2.2fr_0.7fr_0.55fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]';
 
-  const handleFieldKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number, field: string) => {
+  const handleFieldKeyDown = useCallback((e: ReactKeyboardEvent<GridField>, rowIndex: number, field: string) => {
     const row = rows[rowIndex];
     if (!row) return;
     const currentIdx = TAB_FIELDS.indexOf(field);
@@ -1724,16 +1863,54 @@ export default function RecordSale({
                     </span>
                   </div>
 
-                  {/* BATCH */}
+                  {/* BATCH — FEFO picker when the product has batches, free
+                      text otherwise (accounts not yet on the batch ledger). */}
                   <div className="px-0.5">
-                    <Input
-                      ref={el => setFieldRef(row.uid, 'batch', el)}
-                      value={row.batch}
-                      onChange={e => updateRow(idx, { batch: e.target.value })}
-                      onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
-                      disabled={!row.productId}
-                      className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
-                    />
+                    {row.batchOptions.length > 0 ? (
+                      <select
+                        ref={el => setFieldRef(row.uid, 'batch', el)}
+                        value={row.batchId ?? ''}
+                        onChange={e => {
+                          const picked = row.batchOptions.find(b => b.id === e.target.value);
+                          if (!picked) return;
+                          updateRow(idx, {
+                            batchId: picked.id,
+                            batch: picked.batch_number,
+                            batchExpiryIso: picked.expiry_date,
+                            expiry: picked.expiry_date.substring(0, 7),
+                            cogsRate: Number(picked.effective_cost) || 0,
+                            gst: Number(picked.gst_rate) || row.gst,
+                          });
+                        }}
+                        onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
+                        disabled={!row.productId}
+                        title={
+                          row.batchExpiryIso
+                            ? `Expires ${formatExpiryShort(row.batchExpiryIso)}`
+                            : undefined
+                        }
+                        className={cn(
+                          'h-8 w-full text-[15px] px-1 text-center font-medium bg-transparent border border-transparent rounded-md hover:bg-emerald-50 focus:bg-cyan-50 focus:border-cyan-400 focus:outline-none transition-all',
+                          expiryStatus(row.batchExpiryIso) === 'critical' && 'text-red-600',
+                          expiryStatus(row.batchExpiryIso) === 'warning' && 'text-amber-600',
+                        )}
+                      >
+                        {row.batchOptions.map(b => (
+                          <option key={b.id} value={b.id}>
+                            {b.batch_number} · {formatExpiryShort(b.expiry_date)} · {b.qty_available}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Input
+                        ref={el => setFieldRef(row.uid, 'batch', el)}
+                        value={row.batch}
+                        onChange={e => updateRow(idx, { batch: e.target.value })}
+                        onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
+                        disabled={!row.productId}
+                        className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
+                      />
+                    )}
                   </div>
 
                   {/* MRP — product MRP (read only) */}

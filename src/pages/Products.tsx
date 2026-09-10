@@ -35,6 +35,10 @@ import { saveBulkDraft, loadBulkDraft, clearBulkDraft, loadMultiDraft } from '@/
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
+import { useHsnCodes } from '@/hooks/useHsnCodes';
+import { HsnPicker } from '@/components/HsnPicker';
+import { computeEffectiveCost } from '@/lib/gst';
+import { db } from '@/lib/supabaseLoose';
 import { ToastAction } from '@/components/ui/toast';
 import {
   Select,
@@ -108,9 +112,19 @@ const PRESET_CATEGORIES = [
 export default function Products() {
   const navigate = useNavigate();
   const { isOwner, profile } = useAuth();
+  const { codes: hsnCodes, available: hsnAvailable, rateFor: hsnRateFor } = useHsnCodes(profile?.account_id);
   const { toast } = useToast();
   // Account-wide default GST rate from Settings → drives the GST default on new-product forms
   const [defaultGstRate, setDefaultGstRate] = useState<number>(18);
+  // HSN master drives the GST rate; the manual rate below stays as a fallback
+  // for products whose HSN is not in the master yet.
+  const [hsnState, setHsnState] = useState<string>('');
+  const [gstState, setGstState] = useState<string>('');
+  // Purchase terms, needed to land the true per-unit cost into the batch.
+  const [qtyState, setQtyState] = useState<string>('');
+  const [freeQtyState, setFreeQtyState] = useState<string>('');
+  const [discPctState, setDiscPctState] = useState<string>('');
+  const [purchasePriceState, setPurchasePriceState] = useState<string>('');
   // URL state — initial values come from search params, changes get written back so views are shareable/bookmarkable
   const [searchParams, setSearchParams] = useSearchParams();
   const initialSort = (() => {
@@ -349,17 +363,32 @@ export default function Products() {
     const pcsPerUnitVal = pcsPerUnitRaw ? parseInt(pcsPerUnitRaw) : null;
 
     const expDateRaw = formData.get('expiry_date') as string;
+    const expiryIso = expDateRaw && expDateRaw.length === 7 ? `${expDateRaw}-01` : (expDateRaw || null);
+    const enteredQty = parseInt(formData.get('quantity') as string);
+    const batchNumber = (formData.get('batch_number') as string) || '';
+    const invoiceRate = parseFloat(formData.get('purchase_price') as string) || 0;
+    const freeQty = parseFloat(formData.get('free_qty') as string) || 0;
+    const discPct = parseFloat(formData.get('disc_pct') as string) || 0;
+    const gstRate = parseFloat(formData.get('gst') as string);
+
+    // The units arriving now: on a new product that is the whole quantity, on
+    // an edit only the increase. A batch can only be created when we know
+    // which batch and when it expires.
+    const priorQty = editingProduct?.quantity ?? 0;
+    const inwardQty = editingProduct ? enteredQty - priorQty : enteredQty;
+    const canCreateBatch = Boolean(expiryIso) && inwardQty > 0;
+
     const productData = {
       name: formData.get('name') as string,
-      hsn_code: formData.get('hsn_code') as string,
+      hsn_code: hsnState || null,
       category: formData.get('category') as string,
-      batch_number: formData.get('batch_number') as string,
+      batch_number: batchNumber,
       manufacturer: formData.get('manufacturer') as string,
-      expiry_date: expDateRaw && expDateRaw.length === 7 ? `${expDateRaw}-01` : (expDateRaw || null),
-      quantity: parseInt(formData.get('quantity') as string),
-      purchase_price: parseFloat(formData.get('purchase_price') as string),
+      expiry_date: expiryIso,
+      quantity: enteredQty,
+      purchase_price: invoiceRate,
       selling_price: parseFloat(formData.get('selling_price') as string),
-      gst: parseFloat(formData.get('gst') as string),
+      gst: gstRate,
       supplier: supplierSearch || (formData.get('supplier') as string) || null,
       supplier_id: selectedSupplierId || null,
       low_stock_threshold: parseInt(formData.get('low_stock_threshold') as string),
@@ -369,6 +398,7 @@ export default function Products() {
 
     try {
       let error;
+      let productId = editingProduct?.id;
 
       if (editingProduct) {
         ({ error } = await supabase
@@ -376,17 +406,75 @@ export default function Products() {
           .update(productData)
           .eq('id', editingProduct.id));
       } else {
-        ({ error } = await supabase
+        const inserted = await supabase
           .from('products')
-          .insert([productData]));
+          .insert([productData])
+          .select('id')
+          .single();
+        error = inserted.error;
+        productId = inserted.data?.id;
       }
 
       if (error) throw error;
 
-      toast({
-        title: editingProduct ? "Product updated" : "Product added",
-        description: editingProduct ? "Product has been updated successfully." : "Product has been added successfully.",
-      });
+      // Batch ledger. products.quantity has already been written above, so
+      // the RPC is told not to touch it (p_sync_product_qty: false) — it only
+      // records the batch, its expiry and its landed cost.
+      let batchWarning: string | null = null;
+      if (productId && canCreateBatch) {
+        const { error: batchError } = await db.rpc('add_stock_batch', {
+          p_product_id: productId,
+          p_batch_number: batchNumber || 'NA',
+          p_expiry_date: expiryIso,
+          p_qty: inwardQty,
+          p_free_qty: freeQty,
+          p_invoice_rate: invoiceRate,
+          p_disc_pct: discPct,
+          p_mrp: productData.selling_price,
+          p_hsn_code: hsnState || null,
+          p_gst_rate: Number.isFinite(gstRate) ? gstRate : null,
+          p_manufacturer: productData.manufacturer || null,
+          p_supplier_id: selectedSupplierId || null,
+          p_source: 'purchase',
+          p_sync_product_qty: false,
+        });
+        if (batchError) batchWarning = batchError.message;
+      } else if (productId && editingProduct && inwardQty < 0) {
+        // Stock reduced by hand — take it off the batches too, nearest expiry
+        // first, so the ledger does not drift above products.quantity.
+        const { error: adjError } = await db.rpc('adjust_batch_stock', {
+          p_account_id: profile?.account_id,
+          p_product_id: productId,
+          p_batch_number: batchNumber || null,
+          p_delta: inwardQty,
+        });
+        if (adjError) batchWarning = adjError.message;
+      }
+
+      // Before the compliance migrations the RPC simply does not exist. That
+      // is not a fault worth alarming the user about — the product saved and
+      // stock is correct, batch tracking just is not installed yet.
+      const batchRpcMissing =
+        !!batchWarning &&
+        (batchWarning.includes('does not exist') ||
+          batchWarning.includes('Could not find the function') ||
+          batchWarning.includes('schema cache'));
+
+      if (batchWarning && !batchRpcMissing) {
+        toast({
+          variant: 'destructive',
+          title: 'Saved, but the batch was not recorded',
+          description: `${batchWarning}. Stock count is correct; FEFO and expiry tracking will miss this consignment.`,
+        });
+      } else {
+        toast({
+          title: editingProduct ? "Product updated" : "Product added",
+          // Only claim a batch when one was actually written.
+          description: canCreateBatch && !batchWarning
+            ? `Batch ${batchNumber || 'NA'} recorded at ${formatINR(previewEffectiveCost)}/unit effective cost.`
+            : (editingProduct ? "Product has been updated successfully." : "Product has been added successfully."),
+        });
+      }
 
       setIsDialogOpen(false);
       setEditingProduct(null);
@@ -969,6 +1057,28 @@ export default function Products() {
     }
   }, [isDialogOpen, editingProduct]);
 
+  // Seed the controlled HSN / purchase-terms fields whenever the dialog opens.
+  // Free qty and discount are per-consignment, so they always start blank
+  // rather than carrying over from the product record.
+  useEffect(() => {
+    if (!isDialogOpen) return;
+    setHsnState(formSource?.hsn_code ?? '');
+    setGstState(formSource?.gst != null ? String(formSource.gst) : String(defaultGstRate));
+    setQtyState(formSource?.quantity != null ? String(formSource.quantity) : '');
+    setPurchasePriceState(formSource?.purchase_price != null ? String(formSource.purchase_price) : '');
+    setFreeQtyState('');
+    setDiscPctState('');
+  }, [isDialogOpen, formSource, defaultGstRate]);
+
+  // Landed cost preview — the figure that will be stored on the batch and
+  // used as COGS. Mirrors computeEffectiveCost() in add_stock_batch().
+  const previewEffectiveCost = computeEffectiveCost(
+    parseFloat(qtyState) || 0,
+    parseFloat(purchasePriceState) || 0,
+    parseFloat(discPctState) || 0,
+    parseFloat(freeQtyState) || 0,
+  );
+
   if (!isOwner) {
     return (
       <div className="text-center py-12">
@@ -1417,12 +1527,14 @@ export default function Products() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="hsn_code" className="text-lg font-medium">HSN Code</Label>
-                  <Input
-                    id="hsn_code"
-                    name="hsn_code"
-                    defaultValue={formSource?.hsn_code}
+                  <HsnPicker
+                    codes={hsnCodes}
+                    value={hsnState}
+                    onChange={setHsnState}
+                    // Picking a listed HSN sets the GST rate from the master.
+                    onRateResolved={(rate) => setGstState(String(rate))}
                     className="text-lg py-3 px-4"
-                    placeholder="Enter HSN Code"
+                    placeholder={hsnAvailable ? 'Search HSN or description' : 'Enter HSN Code'}
                   />
                 </div>
               </div>
@@ -1566,7 +1678,8 @@ export default function Products() {
                     name="quantity"
                     type="number"
                     required
-                    defaultValue={formSource?.quantity}
+                    value={qtyState}
+                    onChange={(e) => setQtyState(e.target.value)}
                     className="text-lg py-3 px-4"
                     placeholder="0"
                   />
@@ -1605,25 +1718,33 @@ export default function Products() {
                     name="gst"
                     type="number"
                     step="0.01"
-                    defaultValue={formSource?.gst ?? defaultGstRate}
+                    value={gstState}
+                    onChange={(e) => setGstState(e.target.value)}
                     className="text-lg py-3 px-4"
                     placeholder="18"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    {hsnRateFor(hsnState) != null
+                      ? `Filled from HSN ${hsnState}. Override only if this item is rated differently.`
+                      : 'No HSN match — this manually entered rate will be used.'}
+                  </p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="purchase_price" className="text-lg font-medium">Purchase Price (₹)</Label>
+                  <Label htmlFor="purchase_price" className="text-lg font-medium">Purchase Rate (₹)</Label>
                   <Input
                     id="purchase_price"
                     name="purchase_price"
                     type="number"
                     step="0.01"
-                    defaultValue={formSource?.purchase_price}
+                    value={purchasePriceState}
+                    onChange={(e) => setPurchasePriceState(e.target.value)}
                     className="text-lg py-3 px-4"
                     placeholder="0.00"
                   />
+                  <p className="text-xs text-muted-foreground">Rate on the supplier invoice, before discount.</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="selling_price" className="text-lg font-medium">Selling Price (₹)</Label>
@@ -1637,6 +1758,53 @@ export default function Products() {
                     className="text-lg py-3 px-4"
                     placeholder="0.00"
                   />
+                </div>
+              </div>
+
+              {/* Purchase terms -> landed cost. Free goods and trade discount
+                  both move the real per-unit cost, so they are captured here
+                  and stored on the batch as effective_cost. */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="free_qty" className="text-lg font-medium">Free Qty</Label>
+                  <Input
+                    id="free_qty"
+                    name="free_qty"
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={freeQtyState}
+                    onChange={(e) => setFreeQtyState(e.target.value)}
+                    className="text-lg py-3 px-4"
+                    placeholder="0"
+                  />
+                  <p className="text-xs text-muted-foreground">Scheme goods received free (10+1 → enter 1).</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="disc_pct" className="text-lg font-medium">Trade Discount %</Label>
+                  <Input
+                    id="disc_pct"
+                    name="disc_pct"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={discPctState}
+                    onChange={(e) => setDiscPctState(e.target.value)}
+                    className="text-lg py-3 px-4"
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-lg font-medium">Effective Cost / Unit</Label>
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3">
+                    <div className="text-xl font-semibold text-emerald-700">
+                      {formatINR(previewEffectiveCost)}
+                    </div>
+                    <p className="text-xs text-emerald-700/80 mt-0.5">
+                      Landed cost after discount and free goods. This is the COGS figure.
+                    </p>
+                  </div>
                 </div>
               </div>
 

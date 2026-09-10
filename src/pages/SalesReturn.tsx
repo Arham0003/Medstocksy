@@ -13,6 +13,9 @@ import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { cn, formatINR } from '@/lib/utils';
 import { TableSkeleton } from '@/components/TableSkeleton';
+import { db } from '@/lib/supabaseLoose';
+
+type ReturnType = 'salable' | 'expired' | 'damaged';
 
 interface Sale {
     id: string;
@@ -26,9 +29,13 @@ interface Sale {
     created_at: string;
     customer_name?: string | null;
     customer_phone?: string | null;
+    batch_id?: string | null;
     products: {
         name: string;
+        expiry_date?: string | null;
     };
+    /** Expiry of the batch this line was sold from, when it is known. */
+    batchExpiry?: string | null;
     totalReturned?: number;
     remainingQuantity?: number;
 }
@@ -61,19 +68,35 @@ export default function SalesReturn() {
     const [returnQuantity, setReturnQuantity] = useState(1);
     const [returnReason, setReturnReason] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
+    // Salable goes back on the shelf; expired and damaged are written off.
+    const [returnType, setReturnType] = useState<ReturnType>('salable');
 
     const fetchData = async () => {
         try {
             // Fetch all sales (both positive and negative)
-            const allSalesRes = await supabase
+            // batch_id lands with the compliance migrations; select it
+            // separately so an un-migrated database still loads the page.
+            const withBatch = await supabase
                 .from('sales')
                 .select(`
           id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at,
-          customer_name, customer_phone,
-          products(name)
+          customer_name, customer_phone, batch_id,
+          products(name, expiry_date)
         `)
                 .eq('account_id', profile?.account_id)
                 .order('created_at', { ascending: false });
+
+            const allSalesRes = withBatch.error
+                ? await supabase
+                    .from('sales')
+                    .select(`
+          id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at,
+          customer_name, customer_phone,
+          products(name, expiry_date)
+        `)
+                    .eq('account_id', profile?.account_id)
+                    .order('created_at', { ascending: false })
+                : withBatch;
 
             if (allSalesRes.error) throw allSalesRes.error;
 
@@ -158,36 +181,73 @@ export default function SalesReturn() {
               ? selectedSale.quantity + (selectedSale.sub_qty! / selectedSale.pcs_per_unit!)
               : selectedSale.quantity;
             const totalReturnAmount = (selectedSale.total_price * returnQuantity) / effectiveQty;
-            const returnGstAmount = selectedSale.gst_amount
-                ? (selectedSale.gst_amount * returnQuantity) / effectiveQty
-                : 0;
 
-            // Create a negative sales entry to represent the return
-            const returnEntry = {
-                account_id: profile?.account_id,
-                product_id: selectedSale.product_id,
-                user_id: profile?.id,
-                quantity: -returnQuantity, // Negative quantity indicates return
-                unit_price: selectedSale.unit_price,
-                total_price: -totalReturnAmount, // Negative total
-                gst_amount: -returnGstAmount,
-                customer_name: selectedSale.customer_name,
-                customer_phone: selectedSale.customer_phone,
-            };
-
-            const { data, error } = await supabase.from('sales').insert([returnEntry]).select();
+            // record_sales_return books the reversal, splits the GST credit
+            // and decides — from return_type — whether the goods rejoin
+            // sellable stock. Expired and damaged never do.
+            const { error } = await db.rpc('record_sales_return', {
+                p_sale_id: selectedSale.id,
+                p_quantity: returnQuantity,
+                p_return_type: returnType,
+                p_reason: returnReason || null,
+            });
 
             if (error) {
-                console.error('Error inserting return:', error);
-                throw error;
-            }
+                // The RPC ships with 20260910400000. Until that migration is
+                // applied it does not exist, and a return must not simply
+                // fail — fall back to the raw negative-row insert this screen
+                // used before. Stock routing by return_type needs the trigger
+                // patch, so on this path everything restores stock as it
+                // always did; the reason still records what came back.
+                const rpcMissing =
+                    error.code === 'PGRST202' ||
+                    error.code === '42883' ||
+                    error.message?.includes('does not exist') ||
+                    error.message?.includes('Could not find the function');
 
-            console.log('Return inserted successfully:', data);
-            console.log('Return entry details:', returnEntry);
+                if (!rpcMissing) {
+                    console.error('Error recording return:', error);
+                    throw error;
+                }
+
+                const returnGstAmount = selectedSale.gst_amount
+                    ? (selectedSale.gst_amount * returnQuantity) / effectiveQty
+                    : 0;
+
+                const { error: legacyError } = await supabase.from('sales').insert([{
+                    account_id: profile?.account_id,
+                    product_id: selectedSale.product_id,
+                    user_id: profile?.id,
+                    quantity: -returnQuantity,
+                    unit_price: selectedSale.unit_price,
+                    total_price: -totalReturnAmount,
+                    gst_amount: -returnGstAmount,
+                    customer_name: selectedSale.customer_name,
+                    customer_phone: selectedSale.customer_phone,
+                }]);
+                if (legacyError) throw legacyError;
+
+                toast({
+                    title: 'Return processed (legacy mode)',
+                    description: returnType === 'salable'
+                        ? `Refunded ₹${totalReturnAmount.toFixed(2)}. Stock restored.`
+                        : `Refunded ₹${totalReturnAmount.toFixed(2)}. Note: stock was restored — write-off routing needs the compliance migrations.`,
+                });
+
+                setIsReturnDialogOpen(false);
+                setSelectedSale(null);
+                setReturnQuantity(1);
+                setReturnReason('');
+                setReturnType('salable');
+                fetchData();
+                return;
+            }
 
             toast({
                 title: "Return processed",
-                description: `Successfully returned ${returnQuantity} item(s) for ₹${totalReturnAmount.toFixed(2)}. Stock has been updated.`,
+                description: returnType === 'salable'
+                    ? `Refunded ₹${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Stock restored.`
+                    : `Refunded ₹${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Written off as ${returnType} — stock not restored.`,
             });
 
             // Reset form and close dialog
@@ -195,6 +255,7 @@ export default function SalesReturn() {
             setSelectedSale(null);
             setReturnQuantity(1);
             setReturnReason('');
+            setReturnType('salable');
 
             // Refresh data
             fetchData();
@@ -238,6 +299,33 @@ export default function SalesReturn() {
     // Reason quick-pick chips for the return dialog
     const REASON_PRESETS = ['Damaged', 'Expired', 'Wrong dose', 'Customer changed mind', 'Doctor changed prescription'];
     const reasonIsFromPreset = REASON_PRESETS.includes(returnReason);
+
+    // Suggest "Expired" when the goods being handed back are past their date.
+    // Only a suggestion — the counter can still mark them salable, because
+    // the customer may be returning stock bought long before it expired.
+    useEffect(() => {
+        if (!selectedSale) return;
+        setReturnType('salable');
+        let cancelled = false;
+
+        (async () => {
+            let expiry: string | null | undefined = selectedSale.products?.expiry_date;
+
+            if (selectedSale.batch_id) {
+                const { data } = await db
+                    .from('stock_batches')
+                    .select('expiry_date')
+                    .eq('id', selectedSale.batch_id)
+                    .single();
+                if (data?.expiry_date) expiry = data.expiry_date;
+            }
+
+            if (cancelled || !expiry) return;
+            if (new Date(expiry).getTime() < Date.now()) setReturnType('expired');
+        })();
+
+        return () => { cancelled = true; };
+    }, [selectedSale]);
 
     // Refund preview for the currently-selected sale
     const refundPreview = useMemo(() => {
@@ -508,7 +596,9 @@ export default function SalesReturn() {
                             Process Return
                         </DialogTitle>
                         <DialogDescription className="text-sm">
-                            {selectedSale ? `Refunds ${selectedSale.products?.name} and restores stock automatically.` : null}
+                            {selectedSale
+                                ? `Refunds ${selectedSale.products?.name}. Salable goods return to stock; expired or damaged ones are written off.`
+                                : null}
                         </DialogDescription>
                     </DialogHeader>
                     {selectedSale && (
@@ -593,6 +683,42 @@ export default function SalesReturn() {
                                 </div>
                             </div>
 
+                            {/* Return type — decides whether stock comes back */}
+                            <div className="space-y-1.5">
+                                <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Condition of returned goods
+                                </Label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {([
+                                        { value: 'salable', label: 'Salable', hint: 'Back to stock' },
+                                        { value: 'expired', label: 'Expired', hint: 'Write-off' },
+                                        { value: 'damaged', label: 'Damaged', hint: 'Write-off' },
+                                    ] as { value: ReturnType; label: string; hint: string }[]).map(opt => (
+                                        <button
+                                            key={opt.value}
+                                            type="button"
+                                            onClick={() => setReturnType(opt.value)}
+                                            className={cn(
+                                                'rounded-md border px-2 py-2 text-center transition-colors',
+                                                returnType === opt.value
+                                                    ? opt.value === 'salable'
+                                                        ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                                                        : 'bg-amber-50 border-amber-300 text-amber-800'
+                                                    : 'bg-card border-border hover:bg-muted',
+                                            )}
+                                        >
+                                            <span className="block text-xs font-semibold">{opt.label}</span>
+                                            <span className="block text-[10px] text-muted-foreground">{opt.hint}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                                {returnType !== 'salable' && (
+                                    <p className="text-[11px] text-amber-700">
+                                        The customer is refunded, but these units stay out of stock — they cannot legally be resold.
+                                    </p>
+                                )}
+                            </div>
+
                             {/* Reason chips + freetext */}
                             <div className="space-y-1.5">
                                 <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Reason (optional)</Label>
@@ -634,7 +760,9 @@ export default function SalesReturn() {
                                     </p>
                                 )}
                                 <p className="text-[11px] text-muted-foreground mt-2">
-                                    Stock for {selectedSale.products?.name} will be restored by {returnQuantity} unit{returnQuantity === 1 ? '' : 's'}.
+                                    {returnType === 'salable'
+                                        ? `Stock for ${selectedSale.products?.name} will be restored by ${returnQuantity} unit${returnQuantity === 1 ? '' : 's'}.`
+                                        : `${returnQuantity} unit${returnQuantity === 1 ? '' : 's'} of ${selectedSale.products?.name} will be written off — stock is not restored.`}
                                 </p>
                             </div>
 

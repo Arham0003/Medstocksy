@@ -292,27 +292,16 @@ export default function Products() {
     const inwardQty = editingProduct ? enteredQty - priorQty : enteredQty;
     const canCreateBatch = Boolean(expiryIso) && inwardQty > 0;
 
-    const productData = {
-
     const baseProductData = {
-
       name: formData.get('name') as string,
       hsn_code: hsnState || null,
       category: formData.get('category') as string,
       batch_number: batchNumber,
       manufacturer: formData.get('manufacturer') as string,
-
-      expiry_date: expiryIso,
-      quantity: enteredQty,
-      purchase_price: invoiceRate,
-      selling_price: parseFloat(formData.get('selling_price') as string),
-      gst: gstRate,
-
       expiry_date: expDateRaw && expDateRaw.length === 7 ? `${expDateRaw}-01` : (expDateRaw || null),
-      purchase_price: parseFloat(formData.get('rate') as string) || 0,
+      purchase_price: invoiceRate,
       selling_price: parseFloat(formData.get('mrp') as string) || 0,
-      gst: parseFloat(formData.get('gst') as string),
-
+      gst: gstRate,
       supplier: supplierSearch || (formData.get('supplier') as string) || null,
       supplier_id: selectedSupplierId || null,
       low_stock_threshold: parseInt(formData.get('low_stock_threshold') as string),
@@ -330,23 +319,14 @@ export default function Products() {
           .update(baseProductData)
           .eq('id', editingProduct.id));
       } else {
-
+        const newProductData = { ...baseProductData, quantity: 0 };
         const inserted = await supabase
           .from('products')
-          .insert([productData])
+          .insert([newProductData])
           .select('id')
           .single();
         error = inserted.error;
         productId = inserted.data?.id;
-
-        const newProductData = {
-          ...baseProductData,
-          quantity: 0
-        };
-        ({ error } = await supabase
-          .from('products')
-          .insert([newProductData]));
-
       }
 
       if (error) throw error;
@@ -364,10 +344,10 @@ export default function Products() {
           p_free_qty: freeQty,
           p_invoice_rate: invoiceRate,
           p_disc_pct: discPct,
-          p_mrp: productData.selling_price,
+          p_mrp: baseProductData.selling_price,
           p_hsn_code: hsnState || null,
           p_gst_rate: Number.isFinite(gstRate) ? gstRate : null,
-          p_manufacturer: productData.manufacturer || null,
+          p_manufacturer: baseProductData.manufacturer || null,
           p_supplier_id: selectedSupplierId || null,
           p_source: 'purchase',
           p_sync_product_qty: false,

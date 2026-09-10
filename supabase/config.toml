@@ -1,1 +1,14 @@
 project_id = "yuqvtucvqivvvpcfflhq"
+
+# Creates a Razorpay order for the signed-in user. Requires a JWT: the
+# order is stamped with the caller's user id, which is what the webhook
+# later trusts to decide whose subscription to activate.
+[functions.create-razorpay-order]
+verify_jwt = true
+
+# Razorpay calls this server-to-server and has no Supabase JWT, so the
+# platform's JWT gate must be off. The function is NOT unauthenticated:
+# it rejects any request whose body does not carry a valid
+# HMAC-SHA256 signature made with RAZORPAY_WEBHOOK_SECRET.
+[functions.razorpay-webhook]
+verify_jwt = false

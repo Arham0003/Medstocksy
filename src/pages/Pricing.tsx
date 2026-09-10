@@ -6,6 +6,37 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+/**
+ * Wait for razorpay-webhook to activate the subscription.
+ *
+ * The user can only SELECT their own row, which is all this needs. Polls
+ * for ~30s with a small backoff; the webhook usually lands within a couple
+ * of seconds. Returns false on timeout — the payment is still safe, the
+ * webhook retries, so this only affects whether we reload right now.
+ */
+async function waitForActivation(userId: string | undefined, paymentId?: string): Promise<boolean> {
+    if (!userId) return false;
+    const delays = [1000, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 6000];
+
+    for (const wait of delays) {
+        await new Promise((r) => setTimeout(r, wait));
+
+        const { data } = await supabase
+            .from('subscriptions' as any)
+            .select('status, razorpay_payment_id')
+            .eq('user_id', userId)
+            .maybeSingle();
+
+        const row: any = data;
+        if (!row || row.status !== 'active') continue;
+
+        // If we know the payment id, make sure we are seeing THIS payment
+        // and not a still-valid older subscription.
+        if (!paymentId || row.razorpay_payment_id === paymentId) return true;
+    }
+    return false;
+}
+
 const Pricing = () => {
     const [isAnnual, setIsAnnual] = useState(false);
 
@@ -121,36 +152,27 @@ const Pricing = () => {
                     description: `${planName} Subscription`,
                     order_id: data.orderId,
                     handler: async function (response: any) {
-                        toast.success("Payment Successful! Activating plan...");
+                        // The client does NOT activate the subscription. Only the
+                        // razorpay-webhook function may write `subscriptions`, after
+                        // verifying Razorpay's signature — a browser saying "I paid"
+                        // is not proof of payment.
+                        //
+                        // So we poll for the webhook to land. It is normally near
+                        // instant, but it is a separate network hop and can lag.
+                        toast.success("Payment successful — activating your plan…");
 
-                        const planType = planName === "Professional" 
-                            ? (isAnnual ? 'professional_annual' : 'professional_monthly') 
-                            : 'testing_weekly';
-                        const days = planName === "Professional" 
-                            ? (isAnnual ? 365 : 30) 
-                            : 7;
+                        const userId = (await supabase.auth.getUser()).data.user?.id;
+                        const activated = await waitForActivation(userId, response.razorpay_payment_id);
 
-                        // 3. Update Subscription in DB (Ideally done via Webhook, but update client-side for UX speed)
-                        // Note: This requires RLS to allow INSERT/UPDATE on 'subscriptions' for authenticated users
-                        // strictly for their own rows.
-                        const { error: updateError } = await supabase
-                            .from('subscriptions' as any)
-                            .upsert({
-                                user_id: (await supabase.auth.getUser()).data.user?.id,
-                                plan_type: planType,
-                                status: 'active',
-                                current_period_start: new Date().toISOString(),
-                                current_period_end: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
-                                razorpay_order_id: response.razorpay_order_id,
-                                razorpay_payment_id: response.razorpay_payment_id,
-                            });
-
-                        if (updateError) {
-                            console.error("Failed to update local record", updateError);
-                            toast.error("Payment received but status update failed. Please contacting support.");
-                        } else {
+                        if (activated) {
                             // Reload to clear the 'Subscription Expired' popup
                             window.location.reload();
+                        } else {
+                            toast.error(
+                                "Payment received. Activation is taking longer than usual — " +
+                                "it will complete automatically, please refresh in a minute.",
+                                { duration: 10000 },
+                            );
                         }
                     },
                     prefill: {

@@ -120,7 +120,6 @@ export default function Products() {
   const [freeQtyState, setFreeQtyState] = useState<string>('');
   const [discPctState, setDiscPctState] = useState<string>('');
   const [purchasePriceState, setPurchasePriceState] = useState<string>('');
-=======
   const [gstInclusive, setGstInclusive] = useState<boolean>(false);
 
   // URL state — initial values come from search params, changes get written back so views are shareable/bookmarkable
@@ -1066,8 +1065,6 @@ export default function Products() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
 
-                  <Label htmlFor="purchase_price" className="text-lg font-medium">Purchase Rate (₹)</Label>
-=======
                   <Label htmlFor="rate" className="text-lg font-medium">Rate (₹)</Label>
 
                   <Input

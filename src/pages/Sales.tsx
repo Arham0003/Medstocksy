@@ -218,8 +218,6 @@ export default function Sales() {
       // Fetch products (all products with stock)
 
       const productsRes = await supabase.from('products').select('id, name, quantity, selling_price, gst, hsn_code, batch_number, pcs_per_unit').gt('quantity', 0);
-=======
-      const productsRes = await supabase.from('products').select('id, name, quantity, selling_price, gst');
 
 
       if (productsRes.error) throw productsRes.error;

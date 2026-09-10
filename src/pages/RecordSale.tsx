@@ -795,9 +795,6 @@ export default function RecordSale({
       batchExpiryIso: '',
       cogsRate: 0,
       batchOptions: [],
-=======
-      pcsPerUnit: product.pcs_per_unit ?? 0,
-
     });
 
     const rowUid = rows[rowIndex]?.uid;
@@ -1198,7 +1195,7 @@ export default function RecordSale({
       // on INSERT, so the restore is done manually — mirroring the item-delete flow.
       if (editBillId) {
         const { data: orig, error: origErr } = await (supabase.from('sales') as any)
-          .select('product_id, quantity, sub_qty, pcs_per_unit')
+          .select('product_id, quantity, sub_qty, pcs_per_unit, batch_number')
           .eq('bill_id', editBillId);
         if (origErr) throw origErr;
         for (const it of (orig || []) as any[]) {
@@ -1209,6 +1206,15 @@ export default function RecordSale({
           const { data: prod } = await (supabase.from('products') as any).select('quantity').eq('id', it.product_id).single();
           const cur = Number((prod as any)?.quantity) || 0;
           await (supabase.from('products') as any).update({ quantity: cur + restore }).eq('id', it.product_id);
+          // Restore batch ledger so FEFO stays accurate (never throws — batch row may not exist for legacy stock)
+          if (profile?.account_id && restore > 0) {
+            await db.rpc('adjust_batch_stock', {
+              p_account_id: profile.account_id,
+              p_product_id: it.product_id,
+              p_batch_number: it.batch_number || null,
+              p_delta: restore,
+            });
+          }
         }
         const { error: delErr } = await (supabase.from('sales') as any).delete().eq('bill_id', editBillId);
         if (delErr) throw delErr;
@@ -1270,9 +1276,6 @@ export default function RecordSale({
           description: `${validRows.length} item(s) billed successfully${customerName ? ' for ' + customerName : ''}`,
         });
       }
-=======
-
-
 
       // Bill is finalized → drop its locally-saved draft so it isn't restored later.
       if (persistKey) clearBillData(persistKey);
@@ -1407,8 +1410,6 @@ export default function RecordSale({
   const GRID_COLS = 'grid-cols-[2.2fr_0.7fr_0.55fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]';
 
 
-  const handleFieldKeyDown = useCallback((e: ReactKeyboardEvent<GridField>, rowIndex: number, field: string) => {
-=======
   const isF3Unlocked = (uid: string, field: string) => f3Unlocked === `${uid}:${field}`;
 
   const handleF3Confirm = useCallback(() => {

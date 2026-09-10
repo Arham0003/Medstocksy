@@ -12,7 +12,6 @@ import { Loader2, ArrowLeft, Printer, Pencil, Plus, Trash2, Search } from 'lucid
 import { cn } from '@/lib/utils';
 
 import { db } from '@/lib/supabaseLoose';
-=======
 import { calcGst } from '@/lib/gst';
 
 interface SaleItem {
@@ -462,6 +461,14 @@ export default function PrintBill() {
                 .update({ quantity: currentQty + restoreUnits })
                 .eq('id', item.product_id);
             if (updErr) throw updErr;
+
+            // Restore batch ledger so FEFO stays accurate (never throws)
+            await db.rpc('adjust_batch_stock', {
+                p_account_id: billData.account_id,
+                p_product_id: item.product_id,
+                p_batch_number: item.batch_number && item.batch_number !== '-' ? item.batch_number : null,
+                p_delta: restoreUnits,
+            });
 
             // Delete the sales row
             const { error: delErr } = await supabase.from('sales').delete().eq('id', item.id);

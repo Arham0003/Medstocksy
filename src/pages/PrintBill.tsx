@@ -835,6 +835,38 @@ export default function PrintBill() {
 
                         <div style={{ borderTop: '1px dashed #666', margin: '2mm 0 1.5mm' }} />
 
+                        {/* HSN-wise Tax Summary */}
+                        {hsnSummary.length > 0 && (
+                            <>
+                                <div style={{ fontSize: '6pt', marginBottom: '2mm' }}>
+                                    <div style={{ fontWeight: 700, marginBottom: '0.5mm' }}>GST Summary:</div>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                        <thead>
+                                            <tr style={{ borderBottom: '1px dashed #666' }}>
+                                                <th style={{ textAlign: 'left', fontWeight: 600, paddingBottom: '1mm' }}>HSN</th>
+                                                <th style={{ textAlign: 'center', fontWeight: 600, paddingBottom: '1mm' }}>%</th>
+                                                <th style={{ textAlign: 'right', fontWeight: 600, paddingBottom: '1mm' }}>CGST</th>
+                                                <th style={{ textAlign: 'right', fontWeight: 600, paddingBottom: '1mm' }}>SGST</th>
+                                                <th style={{ textAlign: 'right', fontWeight: 600, paddingBottom: '1mm' }}>IGST</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {hsnSummary.map(row => (
+                                                <tr key={`${row.hsn}-${row.rate}`}>
+                                                    <td style={{ textAlign: 'left', paddingTop: '1mm' }}>{row.hsn || '-'}</td>
+                                                    <td style={{ textAlign: 'center', paddingTop: '1mm' }}>{row.rate}</td>
+                                                    <td style={{ textAlign: 'right', paddingTop: '1mm' }}>{row.cgst.toFixed(2)}</td>
+                                                    <td style={{ textAlign: 'right', paddingTop: '1mm' }}>{row.sgst.toFixed(2)}</td>
+                                                    <td style={{ textAlign: 'right', paddingTop: '1mm' }}>{row.igst.toFixed(2)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div style={{ borderTop: '1px dashed #666', margin: '0 0 1.5mm' }} />
+                            </>
+                        )}
+
                         {/* Payment + T&C */}
                         <div style={{ fontSize: '6.5pt', color: '#333', marginBottom: '2mm' }}>
                             <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> — Received with thanks.</div>

@@ -9,6 +9,7 @@ import Layout from "@/components/Layout";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import ErrorBoundary from "@/components/ErrorBoundary";
 // Lazy load heavy components
 import { lazy, Suspense } from "react";
 
@@ -45,7 +46,8 @@ const App = () => (
         <Sonner />
         <PWAPrompts />
         <BrowserRouter basename="/">
-          <Routes>
+          <ErrorBoundary>
+            <Routes>
             <Route path="/auth" element={<Auth />} />
             <Route path="/" element={<Layout />}>
               <Route index element={<Index />} />
@@ -158,7 +160,8 @@ const App = () => (
             {/* Fallback route for any unmatched paths */}
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </BrowserRouter>
+        </ErrorBoundary>
+      </BrowserRouter>
       </TooltipProvider>
     </AuthProvider>
   </QueryClientProvider>

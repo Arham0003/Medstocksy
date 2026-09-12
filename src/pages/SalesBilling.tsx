@@ -216,7 +216,7 @@ export default function SalesBilling() {
         <div role="tablist" aria-label="Open bills" className="flex items-end gap-0.5 overflow-hidden flex-1 min-w-0">
           {sessions.map((s, i) => {
             const isActive = s.id === activeId;
-            const label = s.meta.customerName || `Bill ${s.seq}`;
+            const label = s.meta?.customerName || `Bill ${s.seq}`;
             return (
               <div
                 key={s.id}
@@ -243,13 +243,13 @@ export default function SalesBilling() {
                   {i + 1}
                 </span>
 
-                {s.meta.dirty && (
+                {s.meta?.dirty && (
                   <span className="h-1.5 w-1.5 rounded-full shrink-0 bg-amber-500" title="Unsaved" />
                 )}
 
                 <span className="truncate text-xs font-medium flex-1 min-w-0">{label}</span>
 
-                {s.meta.itemCount > 0 && (
+                {(s.meta?.itemCount ?? 0) > 0 && (
                   <span className={cn('text-[9px] font-bold px-1 h-3.5 grid place-items-center rounded-full shrink-0 tabular-nums', isActive ? 'bg-emerald-600 text-white' : 'bg-muted-foreground/15 text-muted-foreground')}>
                     {s.meta.itemCount}
                   </span>
@@ -322,8 +322,8 @@ export default function SalesBilling() {
           <AlertDialogHeader>
             <AlertDialogTitle>Discard this bill?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will discard {pendingClose?.meta.itemCount ?? 0} item(s) for{' '}
-              <strong>{pendingClose?.meta.customerName || `Bill ${pendingClose?.seq}`}</strong>. This can’t be undone.
+              This will discard {pendingClose?.meta?.itemCount ?? 0} item(s) for{' '}
+              <strong>{pendingClose?.meta?.customerName || `Bill ${pendingClose?.seq}`}</strong>. This can’t be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

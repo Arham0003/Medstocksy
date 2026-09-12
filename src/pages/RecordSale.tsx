@@ -248,9 +248,16 @@ export default function RecordSale({
   const [globalDiscount, setGlobalDiscount] = useState(hydrated?.globalDiscount ?? 0);
 
   // ─── Rows ───────────────────────────────────────────────────────────────
-  const [rows, setRows] = useState<BillRow[]>(
-    Array.isArray(hydrated?.rows) && hydrated.rows.length ? (hydrated.rows as BillRow[]) : [EMPTY_ROW()],
-  );
+  const [rows, setRows] = useState<BillRow[]>(() => {
+    if (Array.isArray(hydrated?.rows) && hydrated.rows.length) {
+      return hydrated.rows.map((r: any) => ({
+        ...EMPTY_ROW(),
+        ...r,
+        batchOptions: Array.isArray(r.batchOptions) ? r.batchOptions : [],
+      }));
+    }
+    return [EMPTY_ROW()];
+  });
 
   // ─── Product search state per row  ─────────────────────────────────────
   const [activeSearchRow, setActiveSearchRow] = useState<number | null>(null);
@@ -1916,12 +1923,12 @@ export default function RecordSale({
                   {/* BATCH — FEFO picker when the product has batches, free
                       text otherwise (accounts not yet on the batch ledger). */}
                   <div className="px-0.5">
-                    {row.batchOptions.length > 0 ? (
+                    {(row.batchOptions?.length ?? 0) > 0 ? (
                       <select
                         ref={el => setFieldRef(row.uid, 'batch', el)}
                         value={row.batchId ?? ''}
                         onChange={e => {
-                          const picked = row.batchOptions.find(b => b.id === e.target.value);
+                          const picked = row.batchOptions?.find(b => b.id === e.target.value);
                           if (!picked) return;
                           updateRow(idx, {
                             batchId: picked.id,
@@ -1945,7 +1952,7 @@ export default function RecordSale({
                           expiryStatus(row.batchExpiryIso) === 'warning' && 'text-amber-600',
                         )}
                       >
-                        {row.batchOptions.map(b => (
+                        {row.batchOptions?.map(b => (
                           <option key={b.id} value={b.id}>
                             {b.batch_number} · {formatExpiryShort(b.expiry_date)} · {b.qty_available}
                           </option>

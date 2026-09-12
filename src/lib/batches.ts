@@ -18,7 +18,7 @@ export interface StockBatch {
  * to 90 to enforce the Schedule M quarantine window — it is passed straight
  * through to deduct_fefo(), so the UI and the database agree.
  */
-export const EXPIRY_QUARANTINE_DAYS = 0;
+export const EXPIRY_QUARANTINE_DAYS = 90;
 
 const isoDaysFromNow = (days: number) => {
   const d = new Date();

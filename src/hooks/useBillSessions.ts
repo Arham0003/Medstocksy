@@ -41,9 +41,22 @@ function loadInitial(): PersistedSessions {
     const raw = localStorage.getItem(SESSIONS_KEY);
     if (raw) {
       const p = JSON.parse(raw) as PersistedSessions;
-      if (p?.sessions?.length) {
-        const activeId = p.sessions.some(s => s.id === p.activeId) ? p.activeId : p.sessions[0].id;
-        return { sessions: p.sessions, activeId, seqCounter: p.seqCounter ?? p.sessions.length };
+      if (Array.isArray(p?.sessions) && p.sessions.length) {
+        const sanitized: BillSession[] = p.sessions
+          .filter(s => s && typeof s.id === 'string')
+          .map(s => ({
+            id: s.id,
+            seq: Number(s.seq) || 1,
+            meta: {
+              itemCount: Number(s.meta?.itemCount) || 0,
+              customerName: String(s.meta?.customerName || ''),
+              dirty: Boolean(s.meta?.dirty),
+            },
+          }));
+        if (sanitized.length > 0) {
+          const activeId = sanitized.some(s => s.id === p.activeId) ? p.activeId : sanitized[0].id;
+          return { sessions: sanitized, activeId, seqCounter: Number(p.seqCounter) || sanitized.length };
+        }
       }
     }
   } catch { /* ignore corrupt data */ }

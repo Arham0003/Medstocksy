@@ -981,17 +981,9 @@ export default function Products() {
                     id="quantity"
                     name="quantity"
                     type="number"
-
-                    required
-                    value={qtyState}
-                    onChange={(e) => setQtyState(e.target.value)}
-                    className="text-lg py-3 px-4"
-                    placeholder="0"
-
                     readOnly
                     defaultValue={formSource?.quantity || 0}
                     className="text-lg py-3 px-4 bg-gray-50 text-gray-500"
-
                   />
                   <p className="text-xs text-muted-foreground">Stock can only be updated via transactions.</p>
                 </div>

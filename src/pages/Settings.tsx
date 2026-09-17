@@ -48,6 +48,7 @@ interface Account {
   address?: string | null;
   phone?: string | null;
   gstin?: string | null;
+  drug_license?: string | null;
   state_code?: string | null;
   is_interstate_billing?: boolean | null;
 }
@@ -165,6 +166,7 @@ export default function Settings() {
     const address = (formData.get('storeAddress') as string) || null;
     const phone = (formData.get('storePhone') as string) || null;
     const gstin = (formData.get('storeGSTIN') as string) || null;
+    const drug_license = (formData.get('storeDrugLicense') as string) || null;
 
     try {
       const { error } = await supabase
@@ -175,6 +177,7 @@ export default function Settings() {
           address,
           phone,
           gstin,
+          drug_license,
           state_code: stateCodeState || null,
           is_interstate_billing: interstateState,
         } as any)
@@ -242,13 +245,16 @@ export default function Settings() {
 
     try {
       // Core columns always exist; the optional ones need later migrations.
+      // gst_type is in core — it exists since the earliest migrations and must always be saved.
+      // sales_edit_window_hours was added later and is the only truly optional field.
       const core: any = {
         currency,
         default_gst_rate: defaultGstRate,
         gst_enabled: gstEnabled,
+        gst_type: gstType,
         whatsapp_custom_note: whatsappCustomNote,
       };
-      const withOptional = { ...core, gst_type: gstType, sales_edit_window_hours: salesEditWindowHours };
+      const withOptional = { ...core, sales_edit_window_hours: salesEditWindowHours };
 
       const { error } = await supabase
         .from('settings')
@@ -425,6 +431,19 @@ export default function Settings() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Appears on invoices when GST is enabled.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <FieldLabel htmlFor="storeDrugLicense" icon={ShieldCheck}>Drug License (DL) Number</FieldLabel>
+                    <Input
+                      id="storeDrugLicense"
+                      name="storeDrugLicense"
+                      defaultValue={account?.drug_license || ''}
+                      placeholder="e.g. DL/MH/2024/12345"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Printed on every bill as required by pharmacy regulations.
                     </p>
                   </div>
 

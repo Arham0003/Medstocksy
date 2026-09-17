@@ -101,28 +101,21 @@ export default function CustomerRelation() {
           .order('created_at', { ascending: false });
 
         if (error) {
-          console.error('Error fetching regular CRM data:', error);
           if (error.message?.includes('column')) {
-            console.log('Falling back to basic CRM query');
             const { data: fallbackData, error: fallbackError } = await supabase
               .from('sales')
-              .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, prescription_notes, account_id, total_price, payment_mode, received_amount, is_settled')
+              .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled')
               .eq('account_id', profile?.account_id)
               .not('customer_phone', 'is', null)
               .neq('customer_phone', '')
               .order('created_at', { ascending: false });
             
             if (fallbackError) throw fallbackError;
-            console.log('Fallback data count:', fallbackData?.length);
             setSales((fallbackData as any[]) || []);
           } else {
             throw error;
           }
         } else {
-          console.log('CRM Data fetched:', data?.length, 'rows');
-          if (data && data.length > 0) {
-            console.log('Sample sale:', data[0]);
-          }
           setSales((data as any[]) || []);
         }
 
@@ -148,6 +141,11 @@ export default function CustomerRelation() {
 
   const handleDeleteCustomer = async () => {
     if (!customerToDelete || !profile?.account_id) return;
+    if (!customerToDelete.phone) {
+      // phone-less customers are derived from sales filtered by phone; nothing to match
+      toast({ variant: 'destructive', title: 'Cannot delete', description: 'No phone number on record.' });
+      return;
+    }
     setIsDeleting(true);
     try {
       // In this app, customers are derived from the sales table.
@@ -219,8 +217,7 @@ export default function CustomerRelation() {
       
       setIsSettleDialogOpen(false);
       setSettlementAmount(0);
-      // Wait a bit for DB to catch up then refresh
-      setTimeout(fetchCrm, 500);
+      fetchCrm();
     } catch (e: any) {
       toast({
         variant: "destructive",
@@ -399,22 +396,7 @@ export default function CustomerRelation() {
   };
 
   const shareWhatsapp = async (customer: CustomerSummary) => {
-    let phone = customer.phone ? customer.phone.replace(/\D/g, '') : '';
-
-    // Ensure phone number has country code for WhatsApp
-    if (phone) {
-      if (phone.length === 10) {
-        // Indian 10-digit number, add 91
-        phone = '91' + phone;
-      } else if (phone.length === 12 && phone.startsWith('91')) {
-        // Already has 91 prefix
-        phone = phone;
-      } else if (!phone.startsWith('91') && phone.length > 10) {
-        // Other country codes, keep as is
-        phone = phone;
-      }
-    }
-
+    const phone = normalizePhone(customer.phone);
     const due = customer.nextDueDate ? customer.nextDueDate.toLocaleDateString() : 'N/A';
 
     // Build the plain-text message (used for both navigator.share and the wa.me URL fallback)

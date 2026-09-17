@@ -100,8 +100,6 @@ const Pricing = () => {
                 setIsLoading(true);
                 toast.info("Initializing Checkout...");
 
-                console.log("Invoking create-razorpay-order with:", { planName, isAnnual, couponCode });
-                
                 // 1. Call Edge Function to create order
                 const { data, error } = await supabase.functions.invoke('create-razorpay-order', {
                     body: { planName, isAnnual: !!isAnnual, couponCode: couponCode.trim() || undefined }
@@ -126,7 +124,6 @@ const Pricing = () => {
                     throw new Error(data.error);
                 }
                 
-                console.log("Order created successfully:", data);
 
                 // Show discount toast if coupon was applied
                 if (data.discountApplied) {
@@ -228,7 +225,7 @@ const Pricing = () => {
                         >
                             Annual
                             <span className="absolute -top-3 -right-2 bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full shadow-sm animate-pulse">
-                                SAVE 33%
+                                SAVE 40%*
                             </span>
                         </button>
                     </div>

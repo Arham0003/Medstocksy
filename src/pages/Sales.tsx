@@ -305,7 +305,6 @@ export default function Sales() {
       } catch (error: any) {
         // If there's an error (likely due to missing columns), fall back to basic select
         if (error.message && (error.message.includes('customer_name') || error.message.includes('column'))) {
-          console.log('Customer fields not found, falling back to basic select');
 
           let fallbackQuery = supabase
             .from('sales')
@@ -761,7 +760,6 @@ export default function Sales() {
 
       // If there's an error due to missing columns, try again without those fields
       if (error && error.message && error.message.includes('column')) {
-        console.log('Missing column detected, trying without optional fields');
         const fallbackSalesToInsert = salesToInsert.map(sale => {
           const {
             customer_name, customer_phone, customer_address, prescription_months,

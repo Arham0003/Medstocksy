@@ -176,10 +176,6 @@ export default function SalesReturn() {
 
         try {
             // Calculate return amount proportionally based on effective quantity
-            const hasSub = selectedSale.sub_qty && selectedSale.pcs_per_unit && selectedSale.pcs_per_unit > 0;
-            const effectiveQty = hasSub
-              ? selectedSale.quantity + (selectedSale.sub_qty! / selectedSale.pcs_per_unit!)
-              : selectedSale.quantity;
             const totalReturnAmount = (selectedSale.total_price * returnQuantity) / effectiveQty;
 
             // record_sales_return books the reversal, splits the GST credit

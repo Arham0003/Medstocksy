@@ -76,6 +76,7 @@ interface BusinessDetails {
     address: string | null;
     phone: string | null;
     gstin: string | null;
+    drug_license: string | null;
 }
 
 export default function PrintBill() {
@@ -124,6 +125,24 @@ export default function PrintBill() {
     }, [billData]);
     const [businessDetails, setBusinessDetails] = useState<BusinessDetails | null>(null);
     const [format, setFormat] = useState<'A5' | 'A4' | 'T80'>('A5');
+    const [dateOverride, setDateOverride] = useState<string>(''); // YYYY-MM-DD, set once data loads
+
+    // ponytail: @page must live in document.head — browsers ignore it inside DOM nodes
+    useEffect(() => {
+        const FORMATS_STATIC = {
+            A5:  'A5 portrait',
+            A4:  'A4 portrait',
+            T80: '80mm auto',
+        } as const;
+        let el = document.getElementById('print-page-size-style') as HTMLStyleElement | null;
+        if (!el) {
+            el = document.createElement('style');
+            el.id = 'print-page-size-style';
+            document.head.appendChild(el);
+        }
+        el.textContent = `@page { size: ${FORMATS_STATIC[format]}; margin: 0; }`;
+        return () => { el?.remove(); };
+    }, [format]);
     const { toast } = useToast();
     const { profile } = useAuth();
 
@@ -336,15 +355,24 @@ export default function PrintBill() {
                 // Cast to any to bypass strict type checking against current schema which might be outdated
                 const itemsData = salesData as any[];
 
-                // Fetch business details
+                // Fetch business details (drug_license added by migration; retry without it on older DBs)
                 const accountId = itemsData[0].account_id;
-                const { data: accountData, error: accountError } = await supabase
+                let { data: accountData, error: accountError } = await supabase
                     .from('accounts')
-                    .select('name, address, phone, gstin')
+                    .select('name, address, phone, gstin, drug_license')
                     .eq('id', accountId)
                     .single();
 
-                if (accountError) console.error('Error fetching business details:', accountError);
+                if (accountError) {
+                    // Column may not exist yet — fall back to base columns
+                    const retry = await supabase
+                        .from('accounts')
+                        .select('name, address, phone, gstin')
+                        .eq('id', accountId)
+                        .single();
+                    accountData = retry.data;
+                    if (retry.error) console.error('Error fetching business details:', retry.error);
+                }
                 setBusinessDetails(accountData as any);
 
                 // Aggregate bill data
@@ -424,6 +452,9 @@ export default function PrintBill() {
                     received_amount: firstItem.received_amount || total_amount,
                     discount_percentage: firstItem.discount_percentage || 0,
                 });
+                // Seed the date picker with the bill's stored date
+                const rawDate = firstItem.sale_date || originalCreatedAt || firstItem.created_at;
+                setDateOverride(rawDate ? rawDate.slice(0, 10) : new Date().toISOString().slice(0, 10));
 
             } catch (err: any) {
                 console.error('Error loading bill:', err);
@@ -597,8 +628,22 @@ export default function PrintBill() {
     const totalProducts = billData.items.length;
     const invoiceNumber = billData.id.slice(0, 8).toUpperCase();
     const billCreatedAt = new Date(billData.created_at);
-    const invoiceDate = billCreatedAt.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const billTimestamp = billCreatedAt.toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    // invoiceDate: user-selected date (or original bill date)
+    const effectiveDate = dateOverride || billData.date;
+    const invoiceDate = (() => {
+        const d = new Date(effectiveDate);
+        // date-only string → parse as local midnight
+        const [y, m, day] = effectiveDate.slice(0, 10).split('-').map(Number);
+        const local = new Date(y, m - 1, day);
+        return local.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    })();
+    // billTimestamp: selected date + current time (wall clock at render)
+    const billTimestamp = (() => {
+        const [y, m, day] = effectiveDate.slice(0, 10).split('-').map(Number);
+        const now = new Date();
+        const mixed = new Date(y, m - 1, day, now.getHours(), now.getMinutes(), now.getSeconds());
+        return mixed.toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    })();
 
     // ponytail: single config object drives all format-dependent values
     const FORMATS = {
@@ -631,6 +676,17 @@ export default function PrintBill() {
                             {FORMATS[key].label}
                         </button>
                     ))}
+                </div>
+                {/* Date override — screen only */}
+                <div className="flex items-center gap-1.5">
+                    <label htmlFor="bill-date-override" className="text-xs text-muted-foreground font-medium">Bill Date:</label>
+                    <input
+                        id="bill-date-override"
+                        type="date"
+                        value={dateOverride}
+                        onChange={e => setDateOverride(e.target.value)}
+                        className="border rounded px-2 py-1 text-sm bg-white h-8"
+                    />
                 </div>
                 <div className="flex items-center gap-2">
                     <Button variant="outline" onClick={doEdit} title="Edit (F2)">
@@ -676,10 +732,6 @@ export default function PrintBill() {
             >
                 <style>
                     {`
-            @page {
-              size: ${fmt.pageSize};
-              margin: 0;
-            }
             @media print {
               body, html {
                 width: ${fmt.width};
@@ -743,6 +795,7 @@ export default function PrintBill() {
                             {businessDetails?.address && <div style={{ fontSize: '7pt', color: '#333' }}>{businessDetails.address}</div>}
                             {businessDetails?.phone && <div style={{ fontSize: '7pt' }}>📞 {businessDetails.phone}</div>}
                             {businessDetails?.gstin && <div style={{ fontSize: '6.5pt', color: '#555' }}>GSTIN: {businessDetails.gstin}</div>}
+                            {businessDetails?.drug_license && <div style={{ fontSize: '6.5pt', color: '#555' }}>DL: {businessDetails.drug_license}</div>}
                         </div>
 
                         <div style={{ borderTop: '1px dashed #666', margin: '0 0 2mm' }} />
@@ -921,6 +974,7 @@ export default function PrintBill() {
                                     {businessDetails?.address && <div>{businessDetails.address}</div>}
                                     {businessDetails?.phone && <span>📞 {businessDetails.phone}</span>}
                                     {businessDetails?.gstin && <span style={{ marginLeft: businessDetails?.phone ? '4px' : 0 }}>| GSTIN: {businessDetails.gstin}</span>}
+                                    {businessDetails?.drug_license && <span style={{ marginLeft: '4px' }}>| DL: {businessDetails.drug_license}</span>}
                                 </div>
                             </div>
                         </div>
@@ -937,7 +991,7 @@ export default function PrintBill() {
                             </div>
                             <div style={{ fontSize: '6.5pt', lineHeight: '1.4', color: '#333' }}>
                                 <div style={{ display: 'flex' }}>
-                                    <span style={{ width: '14mm', fontWeight: 600 }}>PARTY:</span>
+                                    <span style={{ width: '14mm', fontWeight: 600 }}>NAME:</span>
                                     <span>{billData.customer_name || 'Walk-in'}</span>
                                 </div>
                                 {billData.customer_address && (

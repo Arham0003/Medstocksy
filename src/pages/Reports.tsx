@@ -174,7 +174,6 @@ export default function Reports() {
 
       // Fallback: If newer columns are missing, try a simpler query
       if (salesError && (salesError.message.includes('column') || salesError.message.includes('sale_date'))) {
-        console.log("Reports: 'sale_date' or other columns missing, falling back to basic query");
         let fallbackQuery = (supabase as any)
           .from('sales')
           .select(`
@@ -309,7 +308,6 @@ export default function Reports() {
           setGlobalOutstandingCredit(total);
         }
       } catch (err) {
-        console.log("Outstanding credit fetch failed:", err);
         setGlobalOutstandingCredit(0);
       }
 

@@ -1765,16 +1765,18 @@ export default function RecordSale({
                 />
               </div>
 
-              {/* Date */}
+              {/* Date — locked once a bill is generated */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Date</span>
                 <input
                   ref={dateRef}
                   type="date"
                   value={billDate}
-                  onChange={e => setBillDate(e.target.value)}
+                  onChange={e => !editBillId && setBillDate(e.target.value)}
                   onKeyDown={enterTo(prescRef, addressRef)}
-                  className={cn(patientFieldCls, 'appearance-none')}
+                  readOnly={!!editBillId}
+                  title={editBillId ? 'Bill date cannot be changed after a bill is generated' : undefined}
+                  className={cn(patientFieldCls, 'appearance-none', editBillId && 'opacity-60 cursor-not-allowed pointer-events-none')}
                 />
               </div>
 

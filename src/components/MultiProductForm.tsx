@@ -782,7 +782,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                         />
                       </div>
                       <div className="flex flex-col gap-0.5">
-                        <FieldLabel>Qty</FieldLabel>
+                        <FieldLabel>Strips</FieldLabel>
                         <Input
                           ref={el => setFieldRef(row.tempId, 'quantity', el)}
                           type="text" inputMode="decimal"
@@ -794,7 +794,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                         />
                       </div>
                       <div className="flex flex-col gap-0.5">
-                        <FieldLabel>Pcs/Strip</FieldLabel>
+                        <FieldLabel>Pcs</FieldLabel>
                         <Input
                           ref={el => setFieldRef(row.tempId, 'pcs_per_unit', el)}
                           type="text" inputMode="decimal"

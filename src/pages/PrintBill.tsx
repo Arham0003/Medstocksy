@@ -803,7 +803,7 @@ export default function PrintBill() {
                         {/* Bill meta */}
                         <div style={{ fontSize: '7pt', marginBottom: '1.5mm' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ fontWeight: 700 }}>BILL OF SUPPLY</span>
+                                <span style={{ fontWeight: 700 }}>TAX INVOICE</span>
                                 <span style={{ fontWeight: 700 }}>{invoiceDate}</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -966,7 +966,7 @@ export default function PrintBill() {
                             </div>
                             {/* Business details */}
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>BILL OF SUPPLY</div>
+                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>TAX INVOICE</div>
                                 <div style={{ fontSize: '10pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
                                     {businessDetails?.name || 'PHARMA'}
                                 </div>

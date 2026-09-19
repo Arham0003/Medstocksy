@@ -341,13 +341,11 @@ const Pricing = () => {
                         <Tag className="h-4 w-4" />
                         <span>Have a coupon code?</span>
                     </div>
-                    <div className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md border border-red-100 mb-2">
-                        {isAnnual ? (
-                            <>Use code <strong>INVENTORY20OFF</strong> for extra discount!</>
-                        ) : (
-                            <>Use code <strong>MEDSTOCKSY100</strong> to get ₹100 off!</>
-                        )}
-                    </div>
+                    {isAnnual && (
+                        <div className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1.5 rounded-md border border-red-100 mb-2">
+                            Use code <strong>INVENTORY20OFF</strong> for extra discount!
+                        </div>
+                    )}
                     <div className="flex items-center gap-2 w-full max-w-sm">
                         <Input
                             id="coupon-code-input"

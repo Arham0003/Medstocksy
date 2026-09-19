@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { TableSkeleton } from '@/components/TableSkeleton';
-import { Plus, ShoppingCart, Package, Eye, Search, Printer, Download, ChevronDown, ChevronRight, Receipt, MoreVertical, Pencil, X, Lock, Filter } from 'lucide-react';
+import { Plus, ShoppingCart, Package, Eye, Search, Printer, Download, ChevronDown, ChevronRight, Receipt, MoreVertical, Pencil, X, Lock, Filter, Building2, Diamond } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from '@/hooks/useAuth';
@@ -23,6 +23,8 @@ import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft
 import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
 import { apportionGst } from '@/lib/gst';
 import { db } from '@/lib/supabaseLoose';
+import { useWholesaleAccess } from '@/hooks/useWholesaleAccess';
+import { PremiumUpgradeDialog } from '@/components/PremiumUpgradeDialog';
 
 interface Product {
   id: string;
@@ -85,6 +87,28 @@ export default function Sales() {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { toast } = useToast();
+  // Wholesale entry point. hasPlan = subscribed; isActive = subscribed AND the
+  // Settings toggle is on. Both false until `wholesaleLoading` clears.
+  const {
+    hasPlan: wholesalePlan,
+    isActive: wholesaleActive,
+    loading: wholesaleLoading,
+  } = useWholesaleAccess();
+  const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
+
+  const handleWholesaleClick = () => {
+    if (wholesaleLoading) return;              // answer not in yet
+    if (!wholesalePlan) { setShowUpgradeDialog(true); return; }  // no plan → sell it
+    if (!wholesaleActive) {                    // plan, but the toggle is off
+      toast({
+        title: 'Wholesale mode is off',
+        description: 'Turn on Wholesale Mode in Settings → Tax & Currency to start B2B billing.',
+      });
+      navigate('/settings');
+      return;
+    }
+    navigate('/wholesale');
+  };
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -1383,6 +1407,31 @@ Thank you for your purchase!
             Record and manage sales transactions
           </p>
         </div>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+        {/* Wholesale billing — 💎 while locked, straight through once unlocked.
+            Hidden entirely while the entitlement check is still in flight so it
+            never flickers from locked to unlocked. */}
+        {!wholesaleLoading && (
+          <Button
+            variant="outline"
+            onClick={handleWholesaleClick}
+            title={
+              !wholesalePlan
+                ? 'Premium feature — upgrade to the Wholesale plan'
+                : !wholesaleActive
+                ? 'Turn on Wholesale Mode in Settings'
+                : 'Open wholesale billing'
+            }
+            className="text-base sm:text-lg py-3 px-4 sm:px-6 gap-2 border-violet-200 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+          >
+            {(!wholesalePlan || !wholesaleActive) && (
+              <Diamond className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+            )}
+            <Building2 className="h-4 w-4 shrink-0" />
+            <span>Wholesale Sales</span>
+          </Button>
+        )}
+
         {/* Desktop: Navigate to full-page billing. Mobile: Open dialog */}
         {isMobile ? (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -2091,7 +2140,10 @@ Thank you for your purchase!
             <span className="text-xs bg-white/20 px-2 py-0.5 rounded border border-white/30 opacity-90 hidden sm:inline-block">F2</span>
           </Button>
         )}
+        </div>
       </div>
+
+      <PremiumUpgradeDialog open={showUpgradeDialog} onOpenChange={setShowUpgradeDialog} />
 
       <Card>
         <CardHeader className="pb-3">

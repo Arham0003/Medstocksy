@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/db conn/supabaseClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,8 @@ import { Loader2, ArrowLeft, Printer, Pencil, Plus, Trash2, Search } from 'lucid
 import { cn } from '@/lib/utils';
 
 import { db } from '@/lib/supabaseLoose';
-import { calcGst } from '@/lib/gst';
+import { calcGst, stateNameForCode } from '@/lib/gst';
+import { amountInWordsINR } from '@/lib/utils';
 
 interface SaleItem {
     id: string;
@@ -39,6 +40,8 @@ interface SaleItem {
     sgst_amount?: number | null;
     igst_amount?: number | null;
     hsn_code_stored?: string | null;
+    /** Scheme line: given away at ₹0, shown but never added to the invoice value. */
+    is_free?: boolean;
 }
 
 interface BillData {
@@ -58,6 +61,10 @@ interface BillData {
     payment_mode: string;
     received_amount: number;
     discount_percentage: number;
+    /** 'retail' (default) or 'wholesale' — drives the B2B invoice bits. */
+    sale_type?: string | null;
+    wholesale_customer_name?: string | null;
+    wholesale_customer_gstin?: string | null;
 }
 
 // Lightweight product type for the add-item search list
@@ -77,6 +84,8 @@ interface BusinessDetails {
     phone: string | null;
     gstin: string | null;
     drug_license: string | null;
+    /** Two-digit GST state code — printed as the place of supply on B2B invoices. */
+    state_code?: string | null;
 }
 
 export default function PrintBill() {
@@ -124,7 +133,15 @@ export default function PrintBill() {
         return Array.from(buckets.values()).sort((a, b) => a.hsn.localeCompare(b.hsn));
     }, [billData]);
     const [businessDetails, setBusinessDetails] = useState<BusinessDetails | null>(null);
-    const [format, setFormat] = useState<'A5' | 'A4' | 'T80'>('A5');
+    // ?format=A4|T80 comes from the wholesale print picker; retail keeps A5.
+    const [searchParams] = useSearchParams();
+    const [format, setFormat] = useState<'A5' | 'A4' | 'T80'>(() => {
+        const requested = searchParams.get('format');
+        return requested === 'A4' || requested === 'T80' || requested === 'A5' ? requested : 'A5';
+    });
+    // A wholesale invoice defaults to A4 (it needs the room), unless the URL
+    // already asked for a specific paper.
+    const formatAutoSet = useRef(false);
     const [dateOverride, setDateOverride] = useState<string>(''); // YYYY-MM-DD, set once data loads
 
     // ponytail: @page must live in document.head — browsers ignore it inside DOM nodes
@@ -332,19 +349,23 @@ export default function PrintBill() {
             // GST-split columns arrive with 20260910200000. Retry without them
             // so a bill still prints on a database that has not been migrated.
             const GST_SPLIT_COLS = ', taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount, hsn_code';
+            // Wholesale columns arrive with 20260918000000; same degrade-on-miss
+            // approach as the GST-split set above.
+            const WHOLESALE_COLS = ', sale_type, wholesale_customer_name, wholesale_customer_gstin';
 
             // db (untyped client): a column list built at runtime defeats
             // PostgREST's generated row typing; rows are re-mapped by hand below.
-            let { data: salesData, error: salesError } = await db.from('sales')
-                .select(BASE_COLS + GST_SPLIT_COLS)
-                .eq('bill_id', billId);
-
-            if (salesError) {
-                const retry = await db.from('sales')
-                    .select(BASE_COLS)
-                    .eq('bill_id', billId);
-                salesData = retry.data;
-                salesError = retry.error;
+            let salesData: Record<string, unknown>[] | null = null;
+            let salesError: { message?: string } | null = null;
+            for (const cols of [
+                BASE_COLS + GST_SPLIT_COLS + WHOLESALE_COLS,
+                BASE_COLS + GST_SPLIT_COLS,
+                BASE_COLS,
+            ]) {
+                const res = await db.from('sales').select(cols).eq('bill_id', billId);
+                salesData = res.data;
+                salesError = res.error;
+                if (!salesError) break;
             }
 
                 if (salesError) throw salesError;
@@ -359,7 +380,7 @@ export default function PrintBill() {
                 const accountId = itemsData[0].account_id;
                 let { data: accountData, error: accountError } = await supabase
                     .from('accounts')
-                    .select('name, address, phone, gstin, drug_license')
+                    .select('name, address, phone, gstin, drug_license, state_code')
                     .eq('id', accountId)
                     .single();
 
@@ -407,6 +428,9 @@ export default function PrintBill() {
                         selling_price: item.products?.selling_price || item.unit_price,
                         taxable_value: item.taxable_value ?? null,
                         gst_rate: item.gst_rate ?? null,
+                        // A scheme line: zero rate AND zero value. Both checks so a
+                        // genuine ₹0-value discounted line is never mistaken for free.
+                        is_free: Number(item.unit_price) === 0 && Number(item.total_price) === 0,
                         cgst_amount: item.cgst_amount ?? null,
                         sgst_amount: item.sgst_amount ?? null,
                         igst_amount: item.igst_amount ?? null,
@@ -415,6 +439,7 @@ export default function PrintBill() {
                 });
 
                 const subtotal = items.reduce((sum, item) => {
+                    if (item.is_free) return sum; // given away — no invoice value
                     const effectiveQty = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
                         ? item.quantity + (item.sub_qty / item.pcs_per_unit)
                         : (item.quantity || 1);
@@ -451,6 +476,9 @@ export default function PrintBill() {
                     payment_mode: firstItem.payment_mode || 'Cash',
                     received_amount: firstItem.received_amount || total_amount,
                     discount_percentage: firstItem.discount_percentage || 0,
+                    sale_type: firstItem.sale_type ?? 'retail',
+                    wholesale_customer_name: firstItem.wholesale_customer_name ?? null,
+                    wholesale_customer_gstin: firstItem.wholesale_customer_gstin ?? null,
                 });
                 // Seed the date picker with the bill's stored date
                 const rawDate = firstItem.sale_date || originalCreatedAt || firstItem.created_at;
@@ -467,6 +495,14 @@ export default function PrintBill() {
     useEffect(() => {
         fetchBillDetails();
     }, [fetchBillDetails]);
+
+    // Wholesale bills need the A4 grid (free-qty column + HSN summary).
+    const isWholesaleBill = billData?.sale_type === 'wholesale';
+    useEffect(() => {
+        if (!isWholesaleBill || formatAutoSet.current) return;
+        formatAutoSet.current = true;
+        if (!searchParams.get('format')) setFormat('A4');
+    }, [isWholesaleBill, searchParams]);
 
     // Remove a single line item: restore stock, then delete the row
     const handleRemoveItem = async (item: SaleItem) => {
@@ -795,6 +831,11 @@ export default function PrintBill() {
                             {businessDetails?.address && <div style={{ fontSize: '7pt', color: '#333' }}>{businessDetails.address}</div>}
                             {businessDetails?.phone && <div style={{ fontSize: '7pt' }}>📞 {businessDetails.phone}</div>}
                             {businessDetails?.gstin && <div style={{ fontSize: '6.5pt', color: '#555' }}>GSTIN: {businessDetails.gstin}</div>}
+                            {isWholesaleBill && billData.wholesale_customer_gstin && (
+                                <div style={{ fontSize: '6.5pt', color: '#555' }}>
+                                    Buyer GSTIN: {billData.wholesale_customer_gstin}
+                                </div>
+                            )}
                             {businessDetails?.drug_license && <div style={{ fontSize: '6.5pt', color: '#555' }}>DL: {businessDetails.drug_license}</div>}
                         </div>
 
@@ -803,7 +844,7 @@ export default function PrintBill() {
                         {/* Bill meta */}
                         <div style={{ fontSize: '7pt', marginBottom: '1.5mm' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ fontWeight: 700 }}>BILL OF SUPPLY</span>
+                                <span style={{ fontWeight: 700 }}>TAX INVOICE</span>
                                 <span style={{ fontWeight: 700 }}>{invoiceDate}</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -842,7 +883,10 @@ export default function PrintBill() {
                                     return (
                                         <tr key={item.id}>
                                             <td style={{ paddingTop: '1.5px', wordBreak: 'break-word' }}>
-                                                <div style={{ fontWeight: 700 }}>{index + 1}. {item.product_name}</div>
+                                                <div style={{ fontWeight: 700 }}>
+                                                    {index + 1}. {item.product_name}
+                                                    {item.is_free && <span style={{ fontSize: '6.5pt', fontWeight: 700 }}> (FREE)</span>}
+                                                </div>
                                                 {item.batch_number && item.batch_number !== '-' && (
                                                     <div style={{ fontSize: '6.5pt', color: '#555' }}>
                                                         Batch: {item.batch_number}{item.expiry && item.expiry !== '-' ? ` | Exp: ${item.expiry}` : ''}
@@ -966,7 +1010,7 @@ export default function PrintBill() {
                             </div>
                             {/* Business details */}
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>BILL OF SUPPLY</div>
+                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>TAX INVOICE</div>
                                 <div style={{ fontSize: '10pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
                                     {businessDetails?.name || 'PHARMA'}
                                 </div>
@@ -975,6 +1019,14 @@ export default function PrintBill() {
                                     {businessDetails?.phone && <span>📞 {businessDetails.phone}</span>}
                                     {businessDetails?.gstin && <span style={{ marginLeft: businessDetails?.phone ? '4px' : 0 }}>| GSTIN: {businessDetails.gstin}</span>}
                                     {businessDetails?.drug_license && <span style={{ marginLeft: '4px' }}>| DL: {businessDetails.drug_license}</span>}
+                                    {isWholesaleBill && businessDetails?.state_code && (
+                                        <div>
+                                            State: {businessDetails.state_code}
+                                            {stateNameForCode(businessDetails.state_code)
+                                                ? ` — ${stateNameForCode(businessDetails.state_code)}`
+                                                : ''}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -1012,6 +1064,13 @@ export default function PrintBill() {
                                         <span>{billData.doctor_name}</span>
                                     </div>
                                 )}
+                                {/* Buyer GSTIN — mandatory on a B2B tax invoice */}
+                                {isWholesaleBill && billData.wholesale_customer_gstin && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>GSTIN:</span>
+                                        <span style={{ fontWeight: 600 }}>{billData.wholesale_customer_gstin}</span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -1028,6 +1087,7 @@ export default function PrintBill() {
                                 <th style={{ width: '10%' }}>Batch</th>
                                 <th style={{ width: '6%' }}>Exp</th>
                                 <th style={{ width: '5%' }}>Qty</th>
+                                {isWholesaleBill && <th style={{ width: '4%' }}>Free</th>}
                                 <th style={{ width: '7%' }}>MRP</th>
                                 <th style={{ width: '7%' }}>Rate</th>
                                 <th style={{ width: '5%', fontSize: '7pt' }}>Dis%</th>
@@ -1063,19 +1123,31 @@ export default function PrintBill() {
                                 return (
                                     <tr key={item.id}>
                                         <td style={{ textAlign: 'center' }}>{index + 1}</td>
-                                        <td style={{ textAlign: 'left', fontWeight: 600, wordWrap: 'break-word' }}>{item.product_name}</td>
+                                        <td style={{ textAlign: 'left', fontWeight: 600, wordWrap: 'break-word' }}>
+                                            {item.product_name}
+                                            {item.is_free && (
+                                                <span style={{ marginLeft: '2mm', fontSize: '5.5pt', fontWeight: 700, color: '#6d28d9', border: '0.5px solid #6d28d9', borderRadius: '2px', padding: '0 1mm' }}>
+                                                    FREE
+                                                </span>
+                                            )}
+                                        </td>
                                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.hsn}</td>
                                         <td style={{ textAlign: 'center', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.batch_number}</td>
                                         <td style={{ textAlign: 'center' }}>{item.expiry}</td>
                                         <td style={{ textAlign: 'center' }}>
-                                            {item.sub_qty ? (
+                                            {item.is_free ? '-' : item.sub_qty ? (
                                                 <span>{item.quantity}<span style={{ fontSize: '0.8em', color: '#1565c0' }}>+{item.sub_qty}</span></span>
                                             ) : (
                                                 item.quantity
                                             )}
                                         </td>
+                                        {isWholesaleBill && (
+                                            <td style={{ textAlign: 'center', fontWeight: 700, color: '#6d28d9' }}>
+                                                {item.is_free ? item.quantity : '-'}
+                                            </td>
+                                        )}
                                         <td style={{ textAlign: 'right' }}>{mrp.toFixed(2)}</td>
-                                        <td style={{ textAlign: 'right' }}>{rate.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'right' }}>{item.is_free ? '0.00' : rate.toFixed(2)}</td>
                                         <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>{item.discount_percentage ? item.discount_percentage + '%' : '-'}</td>
                                         <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? igstAmt.toFixed(2) : (cgstAmt > 0 ? cgstAmt.toFixed(2) : '-')}</td>
                                         <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? '-' : (sgstAmt > 0 ? sgstAmt.toFixed(2) : '-')}</td>
@@ -1088,6 +1160,7 @@ export default function PrintBill() {
                                 <tr key={`empty-${i}`}>
                                     <td style={{ height: '14px' }}>&nbsp;</td>
                                     <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                                    {isWholesaleBill && <td></td>}
                                 </tr>
                             ))}
                         </tbody>
@@ -1149,6 +1222,13 @@ export default function PrintBill() {
                         {/* Left: Payment Mode + Terms */}
                         <div style={{ flex: '1.3', borderRight: '1px solid #444', padding: '1.5mm', fontSize: '6.5pt', lineHeight: '1.4', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                             <div>
+                                {/* Total in words — a tax invoice has to state it */}
+                                {isWholesaleBill && (
+                                    <div style={{ marginBottom: '1mm', fontSize: '6.5pt', lineHeight: '1.3' }}>
+                                        <span style={{ fontWeight: 700 }}>Amount in words: </span>
+                                        <span style={{ fontStyle: 'italic' }}>{amountInWordsINR(billData.total_amount)}</span>
+                                    </div>
+                                )}
                                 <div style={{ marginBottom: '1mm' }}>
                                     <span style={{ fontWeight: 700 }}>Payment: </span>
                                     <span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span>
@@ -1156,14 +1236,22 @@ export default function PrintBill() {
                                 </div>
                                 <div style={{ fontSize: '6pt', lineHeight: '1.35', color: '#444' }}>
                                     <span style={{ fontWeight: 700 }}>T&C: </span>
-                                    Goods once sold will not be taken back. GST included in MRP. Subject to local jurisdiction.{' '}
-                                    <span style={{ color: '#0d6e3a', fontWeight: 600 }}>Get well soon!</span>
+                                    {isWholesaleBill ? (
+                                        <>Goods once sold will not be taken back. Subject to local jurisdiction. E&amp;OE.</>
+                                    ) : (
+                                        <>
+                                            Goods once sold will not be taken back. GST included in MRP. Subject to local jurisdiction.{' '}
+                                            <span style={{ color: '#0d6e3a', fontWeight: 600 }}>Get well soon!</span>
+                                        </>
+                                    )}
                                 </div>
                             </div>
                             {/* Authorized Signatory */}
                             <div style={{ paddingRight: '1mm' }}>
-                                <div style={{ borderTop: '0.5px solid #666', width: '24mm', textAlign: 'center', paddingTop: '1mm' }}>
-                                    <span style={{ fontSize: '6pt', color: '#555' }}>Auth Sign</span>
+                                <div style={{ borderTop: '0.5px solid #666', width: isWholesaleBill ? '30mm' : '24mm', textAlign: 'center', paddingTop: '1mm' }}>
+                                    <span style={{ fontSize: '6pt', color: '#555' }}>
+                                        {isWholesaleBill ? 'Authorised Signatory' : 'Auth Sign'}
+                                    </span>
                                 </div>
                             </div>
                         </div>

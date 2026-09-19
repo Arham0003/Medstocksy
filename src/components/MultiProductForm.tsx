@@ -57,6 +57,7 @@ interface ProductRow {
   free: string;         // free qty
   low_stock: string;    // low stock alert threshold (defaults to '10')
   mrp: string;          // max retail price → maps to selling_price
+  wholesale_price: string; // B2B rate → maps to products.wholesale_price
   rate: string;         // purchase rate   → maps to purchase_price
   disc_pct: string;     // line discount %
   gst: string;          // GST %
@@ -111,6 +112,7 @@ const makeRow = (defaultGst = 18): ProductRow => ({
   free: '',
   low_stock: '10',
   mrp: '',
+  wholesale_price: '',
   rate: '',
   disc_pct: '',
   gst: String(defaultGst),
@@ -177,9 +179,9 @@ const PRESET_CATEGORIES = [
 ];
 
 // 17 visible columns + row# col + delete col (19 cols total)
-// # | PRODUCT | CATEGORY | HSN | BATCH | EXPIRY | QTY | PCS | FREE | LOW STOCK | MRP | RATE | DISC% | GST% | MARGIN | AMOUNT | ✕
+// # | PRODUCT | CATEGORY | HSN | BATCH | EXPIRY | QTY | PCS | FREE | LOW STOCK | MRP | W.PRICE | RATE | DISC% | GST% | MARGIN | AMOUNT | ✕
 const ROW_COLS =
-  'grid-cols-[22px_1.8fr_0.75fr_0.52fr_0.68fr_0.55fr_0.44fr_0.42fr_0.42fr_0.48fr_0.65fr_0.65fr_0.5fr_0.5fr_0.55fr_0.68fr_26px]';
+  'grid-cols-[22px_1.8fr_0.75fr_0.52fr_0.68fr_0.55fr_0.44fr_0.42fr_0.42fr_0.48fr_0.65fr_0.65fr_0.65fr_0.5fr_0.5fr_0.55fr_0.68fr_26px]';
 
 // ─── SupplierPicker ───────────────────────────────────────────────────────────
 // Reused as-is for the invoice header. Portal-based dropdown to avoid clipping.
@@ -833,7 +835,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                     </div>
 
                     {/* Card Strip 3: Pricing & Tax (preserving exact MRP and Rate names/fields!) */}
-                    <div className="px-2.5 py-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 items-end bg-slate-50/40">
+                    <div className="px-2.5 py-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 items-end bg-slate-50/40">
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel>MRP</FieldLabel>
                         <Input
@@ -844,6 +846,21 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           onKeyDown={e => handleEnterNav(e, idx, 'mrp')}
                           placeholder="0.00"
                           className={cn(cardInputCls, 'text-right')}
+                        />
+                      </div>
+                      {/* W.Price — B2B rate, mirrored onto products.wholesale_price.
+                          Optional: leave blank and wholesale billing falls back to MRP. */}
+                      <div className="flex flex-col gap-0.5">
+                        <FieldLabel>W.Price</FieldLabel>
+                        <Input
+                          ref={el => setFieldRef(row.tempId, 'wholesale_price', el)}
+                          type="text" inputMode="decimal"
+                          value={row.wholesale_price}
+                          onChange={e => updateRow(row.tempId, { wholesale_price: e.target.value.replace(/[^0-9.]/g, '') })}
+                          onKeyDown={e => handleEnterNav(e, idx, 'wholesale_price')}
+                          placeholder="0.00"
+                          title="Wholesale price — default rate on wholesale bills"
+                          className={cn(cardInputCls, 'text-right text-violet-900')}
                         />
                       </div>
                       <div className="flex flex-col gap-0.5">
@@ -975,7 +992,7 @@ export const MultiProductForm = ({
   // Enter-key field order within a row (last field triggers row commit + new row)
   const ENTER_FIELDS = [
     'name', 'manufacturer', 'category', 'hsn_code', 'batch_number', 'expiry_date',
-    'quantity', 'pcs_per_unit', 'free', 'low_stock', 'mrp', 'rate', 'disc_pct', 'gst',
+    'quantity', 'pcs_per_unit', 'free', 'low_stock', 'mrp', 'wholesale_price', 'rate', 'disc_pct', 'gst',
   ] as const;
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -1065,6 +1082,7 @@ export const MultiProductForm = ({
         pcs_per_unit: match.pcs_per_unit ? String(match.pcs_per_unit) : '',
         low_stock: match.low_stock_threshold ? String(match.low_stock_threshold) : '10',
         mrp: match.selling_price ? String(match.selling_price) : '',
+        wholesale_price: match.wholesale_price ? String(match.wholesale_price) : '',
         rate: match.purchase_price ? String(match.purchase_price) : '',
         gst: match.gst ? String(match.gst) : String(defaultGstRate),
         batch_number: match.batch_number || '',
@@ -1301,6 +1319,7 @@ export const MultiProductForm = ({
           pcs_per_unit: parseInt(r.pcs_per_unit) || null,
           freeQty: r.freeQty,
           mrpNum: r.mrpNum || null,
+          wholesale_price: parseFloat(r.wholesale_price) || null,
           rateNum: r.rateNum || null,
           discPct: r.discPct || 0,
           gstRate: r.gstRate || 0,

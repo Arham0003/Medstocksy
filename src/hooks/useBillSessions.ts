@@ -6,9 +6,20 @@ export const MAX_BILL_TABS = 5;
 const SESSIONS_KEY = 'medstocksy.billSessions';
 export const BILL_DATA_PREFIX = 'medstocksy.bill.';
 
+/**
+ * Retail and wholesale billing are separate workspaces, so they get separate
+ * storage. The retail namespace is undefined and keeps the ORIGINAL keys, so
+ * bills already open in a user's browser survive this change untouched.
+ */
+export type BillNamespace = 'wholesale' | undefined;
+
+const sessionsKey = (ns: BillNamespace) => (ns ? `${SESSIONS_KEY}.${ns}` : SESSIONS_KEY);
+export const billDataPrefix = (ns: BillNamespace) =>
+  ns ? `${BILL_DATA_PREFIX}${ns}.` : BILL_DATA_PREFIX;
+
 /** Remove a single bill's saved contents (on close / finalize). */
-export function clearBillData(id: string) {
-  try { localStorage.removeItem(BILL_DATA_PREFIX + id); } catch { /* ignore */ }
+export function clearBillData(id: string, ns?: BillNamespace) {
+  try { localStorage.removeItem(billDataPrefix(ns) + id); } catch { /* ignore */ }
 }
 
 export interface BillSessionMeta {
@@ -36,9 +47,9 @@ interface PersistedSessions {
 }
 
 // Read the saved tab list once at startup; fall back to a single fresh bill.
-function loadInitial(): PersistedSessions {
+function loadInitial(ns: BillNamespace): PersistedSessions {
   try {
-    const raw = localStorage.getItem(SESSIONS_KEY);
+    const raw = localStorage.getItem(sessionsKey(ns));
     if (raw) {
       const p = JSON.parse(raw) as PersistedSessions;
       if (Array.isArray(p?.sessions) && p.sessions.length) {
@@ -69,8 +80,8 @@ function loadInitial(): PersistedSessions {
  * The tab list is persisted to localStorage so open bills survive a refresh
  * or an app reopen; each bill's contents are persisted by its <RecordSale/>.
  */
-export function useBillSessions() {
-  const [initial] = useState(loadInitial);
+export function useBillSessions(namespace?: BillNamespace) {
+  const [initial] = useState(() => loadInitial(namespace));
   const [seqCounter, setSeqCounter] = useState(initial.seqCounter);
   const [sessions, setSessions] = useState<BillSession[]>(initial.sessions);
   const [activeId, setActiveId] = useState<string>(initial.activeId);
@@ -80,9 +91,9 @@ export function useBillSessions() {
   // Persist the tab list on every change.
   useEffect(() => {
     try {
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify({ sessions, activeId, seqCounter }));
+      localStorage.setItem(sessionsKey(namespace), JSON.stringify({ sessions, activeId, seqCounter }));
     } catch { /* ignore quota errors */ }
-  }, [sessions, activeId, seqCounter]);
+  }, [sessions, activeId, seqCounter, namespace]);
 
   const addSession = useCallback((): boolean => {
     // Decide from the current render's length — a functional-updater side effect
@@ -104,15 +115,15 @@ export function useBillSessions() {
     if (sessions.length >= MAX_BILL_TABS) return null;
     const nextSeq = seqCounter + 1;
     const s = newSession(nextSeq);
-    try { localStorage.setItem(BILL_DATA_PREFIX + s.id, JSON.stringify(data)); } catch { /* ignore */ }
+    try { localStorage.setItem(billDataPrefix(namespace) + s.id, JSON.stringify(data)); } catch { /* ignore */ }
     setSeqCounter(nextSeq);
     setSessions(prev => (prev.length >= MAX_BILL_TABS ? prev : [...prev, s]));
     setActiveId(s.id);
     return s.id;
-  }, [sessions.length, seqCounter]);
+  }, [sessions.length, seqCounter, namespace]);
 
   const closeSession = useCallback((id: string) => {
-    clearBillData(id); // drop this bill's saved contents
+    clearBillData(id, namespace); // drop this bill's saved contents
     setSessions(prev => {
       if (prev.length <= 1) return prev; // always keep at least one
       const idx = prev.findIndex(s => s.id === id);
@@ -125,7 +136,7 @@ export function useBillSessions() {
       });
       return next;
     });
-  }, []);
+  }, [namespace]);
 
   const updateMeta = useCallback((id: string, meta: BillSessionMeta) => {
     setSessions(prev => {

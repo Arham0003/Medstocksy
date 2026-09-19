@@ -24,6 +24,8 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import SubscriptionGuard from './SubscriptionGuard';
+import { PremiumBadge } from './PremiumBadge';
+import { useWholesaleAccess } from '@/hooks/useWholesaleAccess';
 import {
   Home,
   Package,
@@ -37,6 +39,7 @@ import {
   CreditCard,
   Truck,
   PackageX,
+  FileStack,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +58,14 @@ const ownerNavItems = [
   { title: 'Billing & Plans', icon: CreditCard, href: '/pricing' },
 ];
 
+// Premium entry, appended only for accounts on a wholesale plan. It goes at the
+// END on purpose: every existing item keeps its number shortcut (1–9, 0), and
+// this one sits past the 10 the shortcut scheme covers.
+const wholesaleNavItem = { title: 'Wholesale Reports', icon: FileStack, href: '/wholesale-reports' };
+
+// Every route that can supply a page title, gated or not.
+const allNavItems = [...ownerNavItems, wholesaleNavItem];
+
 const extraRouteTitles: Record<string, string> = {
   '/record-sale': 'Record Sale',
   '/print-bill': 'Print Bill',
@@ -68,7 +79,14 @@ function getInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-const AppSidebar = memo(({ accountName, userName, focusedIndex }: { accountName: string; userName: string; focusedIndex: number | null }) => {
+const AppSidebar = memo(({ accountName, userName, focusedIndex, navItems, wholesaleLocked }: {
+  accountName: string;
+  userName: string;
+  focusedIndex: number | null;
+  navItems: typeof ownerNavItems;
+  /** Subscribed, but Wholesale Mode is switched off in Settings. */
+  wholesaleLocked: boolean;
+}) => {
   const { signOut } = useAuth();
   const location = useLocation();
 
@@ -92,14 +110,15 @@ const AppSidebar = memo(({ accountName, userName, focusedIndex }: { accountName:
         <SidebarGroup className="flex-1 overflow-y-auto">
           <SidebarGroupContent>
             <SidebarMenu>
-              {ownerNavItems.map((item, index) => {
+              {navItems.map((item, index) => {
                 const shortcutKey = index + 1 === 10 ? 0 : index + 1;
+                const hasShortcut = index < 10;
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
                       asChild
                       isActive={location.pathname === item.href}
-                      tooltip={`${item.title} (${shortcutKey})`}
+                      tooltip={hasShortcut ? `${item.title} (${shortcutKey})` : item.title}
                       className={`text-base py-3 rounded-lg transition-all duration-300 ease-out ${
                         focusedIndex === index
                           ? 'bg-white/70 dark:bg-white/20 backdrop-blur-2xl border border-white/80 dark:border-white/30 shadow-[0_8px_32px_0_rgba(31,38,135,0.15)] ring-1 ring-white/60 dark:ring-white/20 scale-[1.04] py-3.5 px-3.5 my-1 rounded-xl font-bold text-foreground z-10'
@@ -111,9 +130,18 @@ const AppSidebar = memo(({ accountName, userName, focusedIndex }: { accountName:
                           <item.icon className="h-5 w-5 shrink-0" />
                           <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
                         </div>
-                        <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap ml-2">
-                          {shortcutKey}
-                        </span>
+                        {item.href === wholesaleNavItem.href && wholesaleLocked ? (
+                          <PremiumBadge
+                            className="group-data-[collapsible=icon]:hidden ml-2"
+                            label=""
+                            title="Wholesale Mode is off — turn it on in Settings"
+                            interactive={false}
+                          />
+                        ) : hasShortcut ? (
+                          <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap ml-2">
+                            {shortcutKey}
+                          </span>
+                        ) : null}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -156,7 +184,7 @@ AppSidebar.displayName = 'AppSidebar';
 function PageTitle() {
   const location = useLocation();
   const title = useMemo(() => {
-    const exact = ownerNavItems.find((i) => i.href === location.pathname);
+    const exact = allNavItems.find((i) => i.href === location.pathname);
     if (exact) return exact.title;
     const extraKey = Object.keys(extraRouteTitles).find((k) => location.pathname.startsWith(k));
     if (extraKey) return extraRouteTitles[extraKey];
@@ -216,6 +244,13 @@ function UserMenu({ userName, accountName }: { userName: string; accountName: st
 
 export default function Layout() {
   const { user, loading, profile } = useAuth();
+  // Wholesale Reports is hidden outright without a plan; shown with a 💎 when
+  // the plan exists but the Settings toggle is off.
+  const { hasPlan: wholesalePlan, isActive: wholesaleActive } = useWholesaleAccess();
+  const navItems = useMemo(
+    () => (wholesalePlan ? [...ownerNavItems, wholesaleNavItem] : ownerNavItems),
+    [wholesalePlan]
+  );
   const [accountName, setAccountName] = useState('My Store');
   const [userName, setUserName] = useState('Manager');
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
@@ -267,27 +302,27 @@ export default function Layout() {
 
       // ponytail: ArrowLeft focuses sidebar from anywhere (if not defaultPrevented); when focused, Up/Down move highlight, Right/Enter open and enter section
       // Guard: only activate on top-level routes — sub-pages (/sales/new etc.) own ← for their own navigation.
-      const isTopLevelForNav = ownerNavItems.some((item) => item.href === location.pathname);
+      const isTopLevelForNav = navItems.some((item) => item.href === location.pathname);
       if (!e.defaultPrevented && e.key === 'ArrowLeft' && focusedIndex === null && isTopLevelForNav) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        const current = ownerNavItems.findIndex((item) => item.href === location.pathname);
+        const current = navItems.findIndex((item) => item.href === location.pathname);
         setFocusedIndex(current === -1 ? 0 : current);
       } else if (focusedIndex !== null) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
           e.stopImmediatePropagation();
-          setFocusedIndex((prev) => (prev !== null ? (prev + 1) % ownerNavItems.length : 0));
+          setFocusedIndex((prev) => (prev !== null ? (prev + 1) % navItems.length : 0));
         } else if (e.key === 'ArrowUp') {
           e.preventDefault();
           e.stopImmediatePropagation();
           setFocusedIndex((prev) =>
-            prev !== null ? (prev - 1 + ownerNavItems.length) % ownerNavItems.length : ownerNavItems.length - 1
+            prev !== null ? (prev - 1 + navItems.length) % navItems.length : navItems.length - 1
           );
         } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
           e.preventDefault();
           e.stopImmediatePropagation();
-          const item = ownerNavItems[focusedIndex];
+          const item = navItems[focusedIndex];
           if (item) {
             navigate(item.href);
             setFocusedIndex(null);
@@ -300,7 +335,7 @@ export default function Layout() {
       }
 
       // ponytail: skip number nav shortcuts on sub-pages (e.g. /sales/new) — only apply to top-level routes
-      const isTopLevel = ownerNavItems.some((item) => item.href === location.pathname);
+      const isTopLevel = navItems.some((item) => item.href === location.pathname);
       if (!isTopLevel) return;
 
       // Check numbers
@@ -308,9 +343,9 @@ export default function Layout() {
       if (!isNaN(key)) {
         let item;
         if (key >= 1 && key <= 9) {
-          item = ownerNavItems[key - 1];
+          item = navItems[key - 1];
         } else if (key === 0) {
-          item = ownerNavItems[9];
+          item = navItems[9];
         }
         
         if (item) {
@@ -323,7 +358,7 @@ export default function Layout() {
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [navigate, location.pathname, focusedIndex]);
+  }, [navigate, location.pathname, focusedIndex, navItems]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -366,7 +401,13 @@ export default function Layout() {
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <AppSidebar accountName={accountName} userName={userName} focusedIndex={focusedIndex} />
+        <AppSidebar
+          accountName={accountName}
+          userName={userName}
+          focusedIndex={focusedIndex}
+          navItems={navItems}
+          wholesaleLocked={wholesalePlan && !wholesaleActive}
+        />
         <main className="flex-1 flex flex-col min-w-0">
           <header className="border-b px-3 sm:px-4 py-2 bg-background sticky top-0 z-10 flex items-center gap-2 sm:gap-3">
             <SidebarTrigger className="h-9 w-9 shrink-0" />

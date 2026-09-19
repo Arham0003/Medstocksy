@@ -80,6 +80,28 @@ const Pricing = () => {
             disabled: false,
             showInAnnual: true,
         },
+        {
+            name: "Professional + Wholesale",
+            description: "Everything in Professional, plus B2B invoicing, free-qty schemes, and wholesale reports.",
+            price: isAnnual ? "₹7,200" : "₹599",
+            originalPrice: isAnnual ? "₹8,400" : "₹699",
+            discount: "20% OFF",
+            period: isAnnual ? "/year" : "/month",
+            features: [
+                { name: "All Professional features", included: true },
+                { name: "Wholesale price per product (set at purchase)", included: true },
+                { name: "Wholesale billing with multi-tab sessions", included: true },
+                { name: "Free Qty / Scheme Qty per line (Marg style)", included: true },
+                { name: "A4 Tax Invoice + 3-inch thermal print", included: true },
+                { name: "B2B customer & GSTIN on every bill", included: true },
+                { name: "Separate Wholesale Reports section", included: true },
+            ],
+            saving: isAnnual ? "Save ₹1,200/year vs monthly" : null,
+            cta: "Upgrade to Wholesale",
+            variant: "outline" as const,
+            disabled: false,
+            showInAnnual: true,
+        },
 
     ];
 
@@ -142,12 +164,16 @@ const Pricing = () => {
                     handler: async function (response: any) {
                         toast.success("Payment Successful! Activating plan...");
 
-                        const planType = planName === "Professional" 
-                            ? (isAnnual ? 'professional_annual' : 'professional_monthly') 
-                            : 'testing_weekly';
-                        const days = planName === "Professional" 
-                            ? (isAnnual ? 365 : 30) 
-                            : 7;
+                        const planType =
+                            planName === "Professional + Wholesale"
+                                ? (isAnnual ? 'wholesale_annual' : 'wholesale_monthly')
+                                : planName === "Professional"
+                                ? (isAnnual ? 'professional_annual' : 'professional_monthly')
+                                : 'testing_weekly';
+                        const days =
+                            planName === "Professional" || planName === "Professional + Wholesale"
+                                ? (isAnnual ? 365 : 30)
+                                : 7;
 
                         // 3. Update Subscription in DB (Ideally done via Webhook, but update client-side for UX speed)
                         // Note: This requires RLS to allow INSERT/UPDATE on 'subscriptions' for authenticated users

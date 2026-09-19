@@ -28,6 +28,12 @@ serve(async (req: any) => {
             } else {
                 baseAmount = 49900; // ₹499.00 in paise for Professional Monthly
             }
+        } else if (planName === 'Professional + Wholesale') {
+            if (isAnnualPlan) {
+                baseAmount = 720000; // ₹7,200.00 in paise for Professional + Wholesale Annual
+            } else {
+                baseAmount = 59900; // ₹599.00 in paise for Professional + Wholesale Monthly
+            }
         } else if (planName === 'Testing Plan') {
             baseAmount = 5000; // Fixed ₹50.00 in paise for Testing Plan
         } else {

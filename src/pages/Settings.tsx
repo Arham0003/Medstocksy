@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,12 +25,15 @@ import {
   CircleDollarSign,
   ShieldCheck,
   Clock,
+  Diamond,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { GST_STATE_CODES } from '@/lib/gst';
+import { useWholesaleAccess, refreshWholesaleAccess } from '@/hooks/useWholesaleAccess';
+import { PremiumBadge } from '@/components/PremiumBadge';
 
 interface Settings {
   id: string;
@@ -39,6 +43,7 @@ interface Settings {
   gst_type?: string;
   whatsapp_custom_note?: string | null;
   sales_edit_window_hours?: number | null;
+  wholesale_mode?: boolean | null;
 }
 
 interface Account {
@@ -107,6 +112,10 @@ export default function Settings() {
   // IGST for every bill — there is no per-bill override by design.
   const [stateCodeState, setStateCodeState] = useState<string>('');
   const [interstateState, setInterstateState] = useState<boolean>(false);
+  // Wholesale mode. hasPlan decides whether the toggle is shown at all; the
+  // toggle itself is what actually unlocks wholesale across the app.
+  const { hasPlan, loading: wholesaleLoading } = useWholesaleAccess();
+  const [wholesaleModeState, setWholesaleModeState] = useState<boolean>(false);
 
   const fetchData = async () => {
     try {
@@ -134,6 +143,8 @@ export default function Settings() {
         setGstTypeState(settingsRaw.gst_type);
       }
       setGstEnabledState(Boolean(settingsRaw?.gst_enabled));
+      // Added by 20260918000000_add_wholesale_fields.sql; absent on older databases.
+      setWholesaleModeState(Boolean(settingsRaw?.wholesale_mode));
 
       // Added by 20260910000000_create_hsn_codes.sql; absent on older databases.
       const accountRaw: any = accountRes.data;
@@ -254,7 +265,11 @@ export default function Settings() {
         gst_type: gstType,
         whatsapp_custom_note: whatsappCustomNote,
       };
-      const withOptional = { ...core, sales_edit_window_hours: salesEditWindowHours };
+      const withOptional = {
+        ...core,
+        sales_edit_window_hours: salesEditWindowHours,
+        wholesale_mode: wholesaleModeState,
+      };
 
       const { error } = await supabase
         .from('settings')
@@ -279,6 +294,9 @@ export default function Settings() {
         });
       }
 
+      // Wholesale mode may have flipped — re-read it so the sidebar entry and
+      // the Sales button update without a reload.
+      refreshWholesaleAccess();
       fetchData();
     } catch (error: any) {
       toast({
@@ -681,6 +699,52 @@ export default function Settings() {
                     </div>
                     {/* Hidden input so FormData still has it (save handler uses gstTypeState anyway) */}
                     <input type="hidden" name="gstType" value={gstTypeState} />
+                  </div>
+
+                  {/* ── Wholesale mode ───────────────────────────────────
+                      Shown to everyone: subscribers get the switch, everyone
+                      else gets the upgrade line so the feature is discoverable. */}
+                  <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 rounded-lg shrink-0 bg-violet-100 text-violet-600">
+                        <Diamond className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 text-sm sm:text-base">Wholesale Mode</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
+                          Enable wholesale billing, B2B invoicing, and free-qty schemes across the app.
+                        </p>
+                      </div>
+                    </div>
+
+                    {wholesaleLoading ? (
+                      <div className="h-10 w-full bg-violet-100/60 animate-pulse rounded-lg" />
+                    ) : !hasPlan ? (
+                      <div className="flex items-center gap-3 p-3 rounded-lg bg-white border border-violet-100">
+                        <PremiumBadge />
+                        <p className="text-sm text-violet-700">
+                          Wholesale billing is a premium feature.{' '}
+                          <Link to="/pricing" className="underline font-medium">Upgrade your plan &rarr;</Link>
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-white border border-violet-100">
+                        <div className="min-w-0">
+                          <Label htmlFor="wholesaleMode" className="text-sm font-medium text-slate-800 cursor-pointer">
+                            Enable Wholesale Mode
+                          </Label>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Shows wholesale billing, B2B fields, and the free-qty column.
+                          </p>
+                        </div>
+                        <Switch
+                          id="wholesaleMode"
+                          checked={wholesaleModeState}
+                          onCheckedChange={setWholesaleModeState}
+                          aria-label="Enable Wholesale Mode"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex justify-end pt-2 border-t border-slate-100">

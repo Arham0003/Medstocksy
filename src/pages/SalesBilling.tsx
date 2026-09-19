@@ -4,7 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/db_conn/supabaseClient';
 import { cn } from '@/lib/utils';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, FileText, Receipt } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,7 +26,17 @@ import { useBillSessions, type BillSession } from '@/hooks/useBillSessions';
  * Product + settings data is fetched ONCE here and shared across every tab,
  * which also lets a Quick-Add'd medicine appear in all tabs instantly.
  */
-export default function SalesBilling() {
+export interface SalesBillingProps {
+  /**
+   * 'wholesale' turns this into the B2B workspace: wholesale rates, the Free
+   * Qty column, buyer GSTIN and sale_type='wholesale'. Its tabs and drafts are
+   * stored separately from retail billing. Defaults to 'retail'.
+   */
+  mode?: 'retail' | 'wholesale';
+}
+
+export default function SalesBilling({ mode = 'retail' }: SalesBillingProps = {}) {
+  const isWholesale = mode === 'wholesale';
   const { profile } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -37,8 +47,12 @@ export default function SalesBilling() {
   const [dataLoading, setDataLoading] = useState(true);
 
   // ─── Tab sessions ────────────────────────────────────────────────────────
-  const { sessions, activeId, setActiveId, addSession, addSessionWithData, closeSession, updateMeta } = useBillSessions();
+  const { sessions, activeId, setActiveId, addSession, addSessionWithData, closeSession, updateMeta } =
+    useBillSessions(isWholesale ? 'wholesale' : undefined);
   const [pendingClose, setPendingClose] = useState<BillSession | null>(null);
+  // Wholesale: after saving, ask which paper the invoice goes on. Both choices
+  // open the existing /print-bill route — only the initial format differs.
+  const [pendingPrint, setPendingPrint] = useState<{ sessionId: string; billId: string } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const editHandled = useRef(false);
 
@@ -49,7 +63,7 @@ export default function SalesBilling() {
         const [prodRes, settingsRes] = await Promise.all([
           supabase
             .from('products')
-            .select('id, name, quantity, selling_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer'),
+            .select('id, name, quantity, selling_price, wholesale_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer'),
           profile?.account_id
             ? supabase.from('settings').select('gst_enabled, default_gst_rate, gst_type').eq('account_id', profile.account_id).single()
             : Promise.resolve({ data: null, error: null }),
@@ -157,7 +171,30 @@ export default function SalesBilling() {
     else closeSession(s.id);
   }, [sessions.length, closeSession]);
 
+  /** Finalized bill, no print wanted: retire its tab (or leave the workspace). */
+  const dismissPrint = useCallback((sessionId: string) => {
+    setPendingPrint(null);
+    if (sessions.length <= 1) navigate('/sales');
+    else closeSession(sessionId);
+  }, [sessions.length, navigate, closeSession]);
+
+  /** Opens the saved bill in the chosen paper format, preserving other tabs. */
+  const openPrint = useCallback((sessionId: string, billId: string, format: 'A4' | 'T80') => {
+    const url = `/print-bill/${billId}?format=${format}`;
+    if (sessions.length <= 1) {
+      navigate(url);
+    } else {
+      window.open(url, '_blank', 'noopener');
+      closeSession(sessionId);
+      toast({ title: 'Bill completed ✓', description: 'Print opened in a new tab. Your other bills are preserved.' });
+    }
+  }, [sessions.length, navigate, closeSession, toast]);
+
   const handleCompleted = useCallback((sessionId: string, billId: string) => {
+    if (isWholesale) {
+      setPendingPrint({ sessionId, billId });
+      return;
+    }
     if (sessions.length <= 1) {
       // Only bill open → identical to the original single-bill flow.
       navigate(`/print-bill/${billId}`);
@@ -167,7 +204,7 @@ export default function SalesBilling() {
       closeSession(sessionId);
       toast({ title: 'Bill completed ✓', description: 'Print opened in a new tab. Your other bills are preserved.' });
     }
-  }, [sessions.length, navigate, closeSession, toast]);
+  }, [sessions.length, navigate, closeSession, toast, isWholesale]);
 
   const handleProductCreated = useCallback((p: Product) => {
     setProducts(prev => (prev.some(x => x.id === p.id) ? prev : [p, ...prev]));
@@ -310,11 +347,56 @@ export default function SalesBilling() {
                 onMetaChange={meta => updateMeta(s.id, meta)}
                 onCompleted={billId => handleCompleted(s.id, billId)}
                 onProductCreated={handleProductCreated}
+                mode={mode}
               />
             </div>
           );
         })}
       </div>
+
+      {/* ══════ WHOLESALE PRINT PICKER ══════ */}
+      <AlertDialog open={!!pendingPrint} onOpenChange={o => { if (!o && pendingPrint) dismissPrint(pendingPrint.sessionId); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Bill saved ✓ — how should it print?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Choose the paper for this wholesale invoice. You can switch formats again on the print screen.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-2">
+            <button
+              type="button"
+              autoFocus
+              onClick={() => { const p = pendingPrint; setPendingPrint(null); if (p) openPrint(p.sessionId, p.billId, 'A4'); }}
+              className="text-left p-4 rounded-xl border-2 border-violet-200 hover:border-violet-500 hover:bg-violet-50/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 transition-all"
+            >
+              <div className="flex items-center gap-2 font-semibold text-slate-900">
+                <FileText className="h-4 w-4 text-violet-600" /> A4 Tax Invoice
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Full GST invoice with buyer GSTIN and the HSN-wise tax summary.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => { const p = pendingPrint; setPendingPrint(null); if (p) openPrint(p.sessionId, p.billId, 'T80'); }}
+              className="text-left p-4 rounded-xl border-2 border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 transition-all"
+            >
+              <div className="flex items-center gap-2 font-semibold text-slate-900">
+                <Receipt className="h-4 w-4 text-emerald-600" /> 3-inch Thermal
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Compact counter slip, with the GSTIN line included.
+              </p>
+            </button>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { if (pendingPrint) dismissPrint(pendingPrint.sessionId); }}>
+              Skip printing
+            </AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ══════ CLOSE CONFIRMATION ══════ */}
       <AlertDialog open={!!pendingClose} onOpenChange={o => { if (!o) setPendingClose(null); }}>

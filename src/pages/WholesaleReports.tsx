@@ -262,7 +262,7 @@ export default function WholesaleReports() {
         </Button>
       </div>
 
-      {/* Filters — date range, customer, payment mode */}
+      {/* Filters: date range, customer, payment mode */}
       <Card className="border-slate-200">
         <CardContent className="p-3 sm:p-4">
           <div className="flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4">
@@ -419,11 +419,11 @@ export default function WholesaleReports() {
                   {filteredBills.map(b => (
                     <TableRow key={b.bill_id || `${b.date}-${b.customer}`}>
                       <TableCell className="whitespace-nowrap">{b.date}</TableCell>
-                      <TableCell className="font-mono text-xs uppercase">{b.bill_id.slice(0, 8) || '—'}</TableCell>
+                      <TableCell className="font-mono text-xs uppercase">{b.bill_id.slice(0, 8) || '-'}</TableCell>
                       <TableCell className="font-medium max-w-[180px] truncate" title={b.customer}>
                         {b.customer}
                       </TableCell>
-                      <TableCell className="hidden md:table-cell font-mono text-xs">{b.gstin || '—'}</TableCell>
+                      <TableCell className="hidden md:table-cell font-mono text-xs">{b.gstin || '-'}</TableCell>
                       <TableCell className="text-center tabular-nums">{b.items}</TableCell>
                       <TableCell className="text-right tabular-nums">₹{b.taxable.toFixed(2)}</TableCell>
                       <TableCell className="text-right tabular-nums">₹{b.gst.toFixed(2)}</TableCell>

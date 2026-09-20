@@ -21,14 +21,14 @@ const lenisOptions = {
   touchMultiplier: 2,
 
   // Prevent Lenis from hijacking nested scroll containers (modals, dropdowns, tables, etc.)
-  // Only target elements identified by ARIA roles and specific tags — NOT generic overflow classes,
+  // Only target elements identified by ARIA roles and specific tags - NOT generic overflow classes,
   // because the main scroll wrapper itself uses overflow-y-auto.
   prevent: (node: Element) => {
     // Walk up from the event target. If we hit a known nested scrollable before
     // hitting the main Lenis wrapper, let native scroll handle it.
     let el: Element | null = node;
     while (el) {
-      // If we reached the main wrapper, stop — this is Lenis territory.
+      // If we reached the main wrapper, stop - this is Lenis territory.
       if (el.hasAttribute('data-lenis-wrapper')) return false;
 
       const role = el.getAttribute('role');
@@ -52,6 +52,17 @@ const lenisOptions = {
   }
 };
 
+/** See the note in the effect below before changing this list. */
+const SKIP_SMOOTH_SCROLL = [
+  '/',
+  '/pricing',
+  '/customer-relation',
+  '/reports',
+  '/settings',
+  '/admin-control',
+  '/wholesale-reports',
+];
+
 export function useSmoothScroll() {
   return useContext(SmoothScrollContext);
 }
@@ -67,8 +78,17 @@ export default function SmoothScrollProvider({ children, scrollContainerRef, pat
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // ponytail: skip smooth scroll on pages where it breaks native scrolling
-    if (['/', '/pricing', '/customer-relation', '/reports', '/settings'].includes(pathname || '')) return;
+    // Routes that scroll the DOCUMENT rather than the wrapper div.
+    //
+    // Lenis is initialised with `wrapper: mainContentRef.current`, but that div
+    // is not height-constrained - the flex layout lets it grow, so the page
+    // itself is what scrolls. On those routes Lenis captures the wheel events
+    // and drives an element with no overflow, and the page appears frozen.
+    // Skipping it hands scrolling back to the browser.
+    //
+    // ADDING A NEW FULL-PAGE ROUTE? If it is a normal page that grows past the
+    // viewport (tables, tabs, stat cards), add it here or it will not scroll.
+    if (SKIP_SMOOTH_SCROLL.includes(pathname || '')) return;
 
     const options: any = { ...lenisOptions };
 

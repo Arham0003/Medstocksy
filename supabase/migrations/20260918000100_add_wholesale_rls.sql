@@ -3,7 +3,7 @@
 --
 -- A frontend bypass must still be blocked, so the check lives in RLS.
 --
--- NOTE ON POLICY TYPE — this is deliberately RESTRICTIVE.
+-- NOTE ON POLICY TYPE - this is deliberately RESTRICTIVE.
 -- Postgres OR's *permissive* policies together, so adding a permissive
 -- INSERT policy here would WIDEN access, not narrow it: the existing
 -- "Users can create sales in their account" and "Owners can manage all

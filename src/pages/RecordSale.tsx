@@ -48,7 +48,7 @@ export interface Settings {
 // Props are all optional so <RecordSale/> still works standalone. The tab
 // container (SalesBilling) injects shared data + wires tab behaviour.
 export interface RecordSaleProps {
-  /** When false, this instance is a hidden background tab — global shortcuts are ignored. */
+  /** When false, this instance is a hidden background tab - global shortcuts are ignored. */
   isActive?: boolean;
   /** Rendered inside the tab container (absolute) vs. standalone full-screen (fixed). */
   embedded?: boolean;
@@ -62,7 +62,7 @@ export interface RecordSaleProps {
   onCompleted?: (billId: string) => void;
   /** Bubbles a freshly quick-added product up so the container can share it across tabs. */
   onProductCreated?: (product: Product) => void;
-  /** localStorage key (the session id) — persists this bill's contents across refresh/reopen. */
+  /** localStorage key (the session id) - persists this bill's contents across refresh/reopen. */
   persistKey?: string;
   /**
    * 'wholesale' switches on the B2B bill: wholesale_price as the default rate,
@@ -88,7 +88,7 @@ interface BillRow {
   gst: number;
   discount: number;
   amount: number;
-  /** Scheme/free quantity — given away, never billed. Wholesale only. */
+  /** Scheme/free quantity - given away, never billed. Wholesale only. */
   freeQty: number;
   // FEFO batch tracking. batchOptions is what the counter can pick from,
   // nearest expiry first; batchId is the one actually being sold.
@@ -222,7 +222,7 @@ export default function RecordSale({
   const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
   const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>(hydrated?.prescriptionMonths ?? '');
   const [monthsTaken, setMonthsTaken] = useState<number | ''>(hydrated?.monthsTaken ?? 1);
-  // When set, this bill is being EDITED — save replaces the finalized bill of this id.
+  // When set, this bill is being EDITED - save replaces the finalized bill of this id.
   const [editBillId] = useState<string | null>(() => hydrated?.editBillId ?? null);
 
   // ─── CRM Retrieve Dialog ─────────────────────────────────────────────────
@@ -467,7 +467,7 @@ export default function RecordSale({
 
       const { data: allRows } = (await allQuery) as { data: any[] | null };
 
-      // Step 3: group by product_id — count purchases, keep latest details
+      // Step 3: group by product_id - count purchases, keep latest details
       const productMap = new Map<string, CrmBillItem>();
       if (allRows) {
         // rows are newest-first; first hit per product = most recent details
@@ -614,7 +614,7 @@ export default function RecordSale({
    * nearest expiry (FEFO). Addressed by uid rather than index because the
    * fetch is async and rows can shift while it is in flight.
    *
-   * Silent when the product has no batches — the row keeps the
+   * Silent when the product has no batches - the row keeps the
    * product-level batch/expiry, so an account still on aggregate stock
    * bills exactly as it did before.
    */
@@ -1028,7 +1028,7 @@ export default function RecordSale({
     if (paymentMode !== 'credit') {
       setReceivedAmount(totals.grandTotal);
     } else {
-      // Only set to 0 when switching TO credit mode — handled by the paymentMode change below
+      // Only set to 0 when switching TO credit mode - handled by the paymentMode change below
     }
   }, [totals.grandTotal]);
 
@@ -1113,7 +1113,7 @@ export default function RecordSale({
     }
     if (isSaving) return;
 
-    // A tax invoice must name its buyer, and a GSTIN — when given — must be
+    // A tax invoice must name its buyer, and a GSTIN - when given - must be
     // well formed, because it is printed on the invoice and feeds GSTR-1.
     if (isWholesale) {
       if (!customerName.trim()) {
@@ -1155,7 +1155,7 @@ export default function RecordSale({
       const isGstInclusive = settings?.gst_type === 'inclusive';
 
       // receivedNum = how much the customer actually paid right now (can be 0 for pure credit,
-      // or a partial amount even on credit mode — e.g. ₹200 upfront on a ₹500 credit sale)
+      // or a partial amount even on credit mode - e.g. ₹200 upfront on a ₹500 credit sale)
       const receivedNum = receivedAmount !== '' ? Number(receivedAmount) : 0;
 
       // Settled = fully paid (applies to ALL modes including credit with full upfront payment)
@@ -1194,16 +1194,16 @@ export default function RecordSale({
         // - Full payment → match total_price exactly to avoid rounding dust
         let rowReceivedAmount = 0;
         if (isFullPayment) {
-          rowReceivedAmount = totalPriceRounded; // Paid in full — match total exactly
+          rowReceivedAmount = totalPriceRounded; // Paid in full - match total exactly
         } else if (receivedNum > 0 && totals.grandTotal > 0) {
-          // Partial payment — distribute proportionally across rows
+          // Partial payment - distribute proportionally across rows
           rowReceivedAmount = receivedNum * (finalTotal / totals.grandTotal);
         }
         // else receivedNum === 0 → rowReceivedAmount stays 0 (pure credit, nothing paid)
 
         // GST breakup for GSTR-1. finalGst is the tax actually charged on
         // this line after both discounts, so it is apportioned rather than
-        // recomputed — recomputing taxable x rate would drift by paise.
+        // recomputed - recomputing taxable x rate would drift by paise.
         const taxableValue = isGstInclusive ? netAfterAll - finalGst : netAfterAll;
         const split = apportionGst(finalGst, isInterstate);
 
@@ -1294,7 +1294,7 @@ export default function RecordSale({
 
       // Editing: un-apply the original bill first (restore its stock, then delete its
       // rows) so re-inserting below re-deducts cleanly. The stock trigger only fires
-      // on INSERT, so the restore is done manually — mirroring the item-delete flow.
+      // on INSERT, so the restore is done manually - mirroring the item-delete flow.
       if (editBillId) {
         const { data: orig, error: origErr } = await (supabase.from('sales') as any)
           .select('product_id, quantity, sub_qty, pcs_per_unit, batch_number')
@@ -1308,7 +1308,7 @@ export default function RecordSale({
           const { data: prod } = await (supabase.from('products') as any).select('quantity').eq('id', it.product_id).single();
           const cur = Number((prod as any)?.quantity) || 0;
           await (supabase.from('products') as any).update({ quantity: cur + restore }).eq('id', it.product_id);
-          // Restore batch ledger so FEFO stays accurate (never throws — batch row may not exist for legacy stock)
+          // Restore batch ledger so FEFO stays accurate (never throws - batch row may not exist for legacy stock)
           if (profile?.account_id && restore > 0) {
             await db.rpc('adjust_batch_stock', {
               p_account_id: profile.account_id,
@@ -1325,7 +1325,7 @@ export default function RecordSale({
       let { error } = await supabase.from('sales').insert(allRowsToInsert);
 
       if (error && error.message?.includes('column')) {
-        // A wholesale bill cannot be downgraded to a retail one — losing
+        // A wholesale bill cannot be downgraded to a retail one - losing
         // sale_type would silently file it under retail. Say so instead.
         if (isWholesale) {
           throw new Error('Wholesale billing needs a database update. Please run the pending migrations.');
@@ -1356,7 +1356,7 @@ export default function RecordSale({
       // Batch ledger. products.quantity was already moved by the sales
       // trigger; this takes the same units off the batches so FEFO and
       // expiry tracking stay truthful. A failure here is reported but never
-      // fails the bill — the sale is already committed.
+      // fails the bill - the sale is already committed.
       const batchProblems: string[] = [];
       if (profile?.account_id) {
         for (const row of validRows) {
@@ -1378,7 +1378,7 @@ export default function RecordSale({
       if (batchProblems.length > 0) {
         toast({
           variant: 'destructive',
-          title: 'Bill saved — batch ledger out of step',
+          title: 'Bill saved - batch ledger out of step',
           description: batchProblems.slice(0, 3).join(' · '),
         });
       } else {
@@ -1494,7 +1494,7 @@ export default function RecordSale({
   }, [handleSave, navigate, rows, focusField, clearRow, removeRow, isActive, focusFirstEmptyProduct, infoProduct, activeSearchRow, customerDropdownOpen]);
 
   // Capture-phase Escape: runs before any field/handler so an open popup ALWAYS
-  // closes first (and only the popup) — even while typing in the product search.
+  // closes first (and only the popup) - even while typing in the product search.
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -1526,7 +1526,7 @@ export default function RecordSale({
   const GRID_COLS = isWholesale
     ? 'grid-cols-[2.2fr_0.7fr_0.55fr_0.5fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]'
     : 'grid-cols-[2.2fr_0.7fr_0.55fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]';
-  /** Cells per grid line — kept in step with GRID_COLS for the filler rows. */
+  /** Cells per grid line - kept in step with GRID_COLS for the filler rows. */
   const GRID_COL_COUNT = isWholesale ? 12 : 11;
 
 
@@ -1568,7 +1568,7 @@ export default function RecordSale({
     }
 
     // ↑ / ↓ : next / previous field within row (at caret boundary).
-    // ← / → owed page-wide — see handleVerticalArrowNav.
+    // ← / → owed page-wide - see handleVerticalArrowNav.
     if (e.key === 'ArrowDown') {
       if (caretAtEnd(e.currentTarget) && currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
         e.preventDefault();
@@ -1620,16 +1620,16 @@ export default function RecordSale({
   }, [rows, focusField, addNewRow]);
 
   // ─── ← / → : walk every focusable element on the page (top-to-bottom) ────
-  // Horizontal keyboard navigation across the whole billing screen — customer
+  // Horizontal keyboard navigation across the whole billing screen - customer
   // fields, every row's inputs, payment, discount, save. stopPropagation keeps
   // it from bubbling to the tab-bar's bill-switch handler.
   const handleVerticalArrowNav = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     const active = document.activeElement as HTMLElement | null;
     if (!active) return;
-    // The product search owns ↑/↓ for its results dropdown — leave it alone.
+    // The product search owns ↑/↓ for its results dropdown - leave it alone.
     if (active === masterSearchRef.current) return;
-    // date/month inputs use ←/→ internally (mm/dd/yyyy segments) — don't intercept.
+    // date/month inputs use ←/→ internally (mm/dd/yyyy segments) - don't intercept.
     const inputType = (active as HTMLInputElement).type;
     if (inputType === 'date' || inputType === 'month') return;
 
@@ -1679,7 +1679,7 @@ export default function RecordSale({
     <div className={cn('flex flex-col bg-gray-50 overflow-hidden', embedded ? 'absolute inset-0' : 'fixed inset-0 z-50')} onKeyDown={handleVerticalArrowNav}>
 
 
-      {/* CRM "Returning Customer Found" popup removed — replaced by inline
+      {/* CRM "Returning Customer Found" popup removed - replaced by inline
           existing-customer suggestions in the Patient Name field. */}
       {/* ──────── SHORTCUT OVERLAY ──────── */}
       {showShortcutOverlay && (
@@ -1767,7 +1767,7 @@ export default function RecordSale({
             type="button"
             onClick={() => setQuickAddOpen(true)}
             className="h-9 gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold px-3 rounded-md shadow-sm shadow-amber-500/25 transition-colors"
-            title="Add a new medicine to inventory and this bill — without leaving billing"
+            title="Add a new medicine to inventory and this bill - without leaving billing"
           >
             <Zap className="h-4 w-4" />
             <span className="hidden sm:inline">Quick Add</span>
@@ -1790,7 +1790,7 @@ export default function RecordSale({
           {/* Product search now lives inline in each grid row's Product cell.
               Press F2 (or Enter from the last patient field) to jump there. */}
 
-          {/* Row 2: Patient details — modern boxed fields, Enter moves to the next */}
+          {/* Row 2: Patient details - modern boxed fields, Enter moves to the next */}
           <div className="bg-white border border-emerald-200 rounded-xl px-3 py-2.5 shadow-sm">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
 
@@ -1838,7 +1838,7 @@ export default function RecordSale({
                 </div>
               </div>
 
-              {/* Phone — +91 prefix box, 10 digits only */}
+              {/* Phone - +91 prefix box, 10 digits only */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Phone</span>
                 <div className="flex items-center flex-1 min-w-0 h-8 rounded-md border border-emerald-200 bg-white overflow-hidden transition-colors focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-100">
@@ -1872,7 +1872,7 @@ export default function RecordSale({
                 />
               </div>
 
-              {/* GSTIN — B2B buyer identity, printed on the tax invoice. */}
+              {/* GSTIN - B2B buyer identity, printed on the tax invoice. */}
               {isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">GSTIN</span>
@@ -1882,7 +1882,7 @@ export default function RecordSale({
                     placeholder="15-character GSTIN"
                     maxLength={15}
                     autoComplete="off"
-                    title="Buyer GSTIN — printed on the tax invoice"
+                    title="Buyer GSTIN - printed on the tax invoice"
                     className={cn(patientFieldCls, 'uppercase tracking-wide')}
                   />
                 </div>
@@ -1901,7 +1901,7 @@ export default function RecordSale({
                 />
               </div>
 
-              {/* Date — locked once a bill is generated */}
+              {/* Date - locked once a bill is generated */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Date</span>
                 <input
@@ -1916,7 +1916,7 @@ export default function RecordSale({
                 />
               </div>
 
-              {/* Prescription months / taken — compact, same row as Address & Date */}
+              {/* Prescription months / taken - compact, same row as Address & Date */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Months</span>
                 <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -1964,16 +1964,16 @@ export default function RecordSale({
 
       {/* ══════ ZONE 4: PRODUCT ENTRY ══════ */}
       <div className="flex-1 overflow-auto px-1.5 sm:px-4 py-1.5 bg-gray-50">
-        {/* Marg-style dense billing grid — one responsive table for every screen.
+        {/* Marg-style dense billing grid - one responsive table for every screen.
             On phones the fluid fr columns shrink to fill the full width with no
             horizontal scroll; from lg up it opens out to the spacious desktop size. */}
         <div className="billing-grid flex w-full min-w-[900px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
-          {/* Table header — Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount */}
+          {/* Table header - Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount */}
           <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[11px] lg:text-[13px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
             <div className="pl-2 lg:pl-4 truncate">Product</div>
             <div className="px-0.5 lg:px-1 text-center">Expiry</div>
             <div className="px-0.5 lg:px-1 text-center">Strip</div>
-            {isWholesale && <div className="px-0.5 lg:px-1 text-center" title="Free / scheme quantity — given away, not billed">Free</div>}
+            {isWholesale && <div className="px-0.5 lg:px-1 text-center" title="Free / scheme quantity - given away, not billed">Free</div>}
             <div className="px-0.5 lg:px-1 text-center">PCS</div>
             <div className="px-0.5 lg:px-1 text-center">Batch</div>
             <div className="px-0.5 lg:px-1 text-center">MRP</div>
@@ -1993,7 +1993,7 @@ export default function RecordSale({
                 className={`group/row group transition-colors duration-100 focus-within:bg-emerald-50 focus-within:shadow-sm ${row.productId ? 'bg-white hover:bg-green-50/40' : 'bg-transparent'}`}
               >
                 <div className={`grid ${GRID_COLS} items-center h-9 overflow-hidden divide-x divide-green-50 group-focus-within/row:divide-emerald-200`}>
-                  {/* PRODUCT — inline search when empty, name once selected */}
+                  {/* PRODUCT - inline search when empty, name once selected */}
                   <div className="pl-2 lg:pl-4 relative flex items-center min-w-0">
                     {row.productId ? (
                       <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 pointer-events-none">
@@ -2016,7 +2016,7 @@ export default function RecordSale({
                     )}
                   </div>
 
-                  {/* EXPIRY — editable YYYY-MM */}
+                  {/* EXPIRY - editable YYYY-MM */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'expiry', el)}
@@ -2029,7 +2029,7 @@ export default function RecordSale({
                     />
                   </div>
 
-                  {/* STRIP — full strips qty */}
+                  {/* STRIP - full strips qty */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'qty', el)}
@@ -2043,7 +2043,7 @@ export default function RecordSale({
                     />
                   </div>
 
-                  {/* FREE — scheme qty. Given away: excluded from the amount,
+                  {/* FREE - scheme qty. Given away: excluded from the amount,
                       still deducted from stock as its own ₹0 invoice line. */}
                   {isWholesale && (
                     <div className="px-0.5">
@@ -2055,14 +2055,14 @@ export default function RecordSale({
                         onChange={e => updateRow(idx, { freeQty: Math.max(0, parseInt(e.target.value) || 0) })}
                         onKeyDown={e => handleFieldKeyDown(e, idx, 'freeQty')}
                         disabled={!row.productId}
-                        placeholder="—"
-                        title="Free / scheme quantity — not billed, but deducted from stock"
+                        placeholder="-"
+                        title="Free / scheme quantity - not billed, but deducted from stock"
                         className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-violet-50 focus:bg-violet-50 focus:!text-violet-900 focus:!border-violet-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-violet-400 focus:!rounded-lg transition-all shadow-none text-violet-700"
                       />
                     </div>
                   )}
 
-                  {/* PCS — loose tablets (subQty) */}
+                  {/* PCS - loose tablets (subQty) */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'subQty', el)}
@@ -2073,12 +2073,12 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { subQty: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
                       disabled={!row.productId || row.pcsPerUnit === 0}
-                      placeholder={row.pcsPerUnit > 0 ? '—' : 'N/A'}
+                      placeholder={row.pcsPerUnit > 0 ? '-' : 'N/A'}
                       className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 transition-all shadow-none text-green-700"
                     />
                   </div>
 
-                  {/* BATCH — FEFO picker when the product has batches, free
+                  {/* BATCH - FEFO picker when the product has batches, free
                       text otherwise (accounts not yet on the batch ledger). */}
                   <div className="px-0.5">
                     {(row.batchOptions?.length ?? 0) > 0 ? (
@@ -2128,7 +2128,7 @@ export default function RecordSale({
                     )}
                   </div>
 
-                  {/* MRP — F3 to edit */}
+                  {/* MRP - F3 to edit */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'mrp', el)}
@@ -2140,7 +2140,7 @@ export default function RecordSale({
                       disabled={!row.productId}
                       readOnly={!isF3Unlocked(row.uid, 'mrp')}
                       onBlur={() => { if (isF3Unlocked(row.uid, 'mrp')) setF3Unlocked(null); }}
-                      title={isF3Unlocked(row.uid, 'mrp') ? 'Editing MRP — press F3 to lock' : 'Press F3 to edit MRP'}
+                      title={isF3Unlocked(row.uid, 'mrp') ? 'Editing MRP - press F3 to lock' : 'Press F3 to edit MRP'}
                       className={`h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 transition-all shadow-none tabular-nums ${
                         isF3Unlocked(row.uid, 'mrp')
                           ? 'focus:bg-amber-50 focus:!text-amber-900 focus:!border-amber-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-amber-400 focus:!rounded-lg text-amber-700'
@@ -2333,15 +2333,15 @@ export default function RecordSale({
                 const tabs = sales.reduce((s: number, r: any) => s + (r.sub_qty || 0), 0);
                 const revenue = sales.reduce((s: number, r: any) => s + (r.total_price || 0), 0);
                 const lastSold = sales[0];
-                const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
                 return (
                   <>
                     {/* Key stats */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <StatTile label="Current Stock" value={String(full.quantity ?? infoProduct.quantity)} />
                       <StatTile label="M.R.P." value={`₹${mrp.toFixed(2)}`} accent />
-                      <StatTile label="Purchase" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : '—'} />
-                      <StatTile label="Margin" value={margin != null ? `${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%` : '—'} accent={margin != null && margin >= 0} />
+                      <StatTile label="Purchase" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : '-'} />
+                      <StatTile label="Margin" value={margin != null ? `${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%` : '-'} accent={margin != null && margin >= 0} />
                     </div>
 
                     {/* Product details */}
@@ -2371,7 +2371,7 @@ export default function RecordSale({
                       <DetailItem label="Strips sold" value={String(strips)} />
                       <DetailItem label="Tablets sold" value={String(tabs)} />
                       <DetailItem label="Total revenue" value={`₹${revenue.toFixed(2)}`} />
-                      <DetailItem label="Last sold" value={lastSold ? fmtDate(lastSold.sale_date || lastSold.created_at) : '—'} />
+                      <DetailItem label="Last sold" value={lastSold ? fmtDate(lastSold.sale_date || lastSold.created_at) : '-'} />
                       <DetailItem label="Last sold to" value={lastSold?.customer_name || null} />
                     </InfoSection>
 
@@ -2433,9 +2433,9 @@ export default function RecordSale({
       {/* ══════ ZONE 5: STICKY FOOTER (SLEEK) ══════ */}
       <div className="bg-white border-t border-green-100 shadow-[0_-8px_24px_rgba(0,0,0,0.04)] shrink-0 z-30">
         <div className="px-2 sm:px-6 py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-4 max-w-[1700px] mx-auto">
-          {/* Left: Payment & inputs — full width on mobile */}
+          {/* Left: Payment & inputs - full width on mobile */}
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 md:gap-4 md:flex-1 min-w-0">
-            {/* Payment modes — 4-up grid on phones, inline from sm */}
+            {/* Payment modes - 4-up grid on phones, inline from sm */}
             <div className="grid grid-cols-4 sm:flex gap-1 sm:gap-1.5 bg-white p-1 rounded-lg border border-green-100 w-full sm:w-auto">
               {paymentModes.map((mode, i) => (
                 <button
@@ -2471,7 +2471,7 @@ export default function RecordSale({
 
             <div className="hidden md:block h-8 w-px bg-green-100"></div>
 
-            {/* Disc + Received — share one row on phones, flow inline from sm */}
+            {/* Disc + Received - share one row on phones, flow inline from sm */}
             <div className="flex gap-2 w-full sm:contents">
               <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-green-100 flex-1 sm:flex-none min-w-0">
                 <Label className="text-[11px] font-medium text-green-700 shrink-0">Global Disc%</Label>
@@ -2534,7 +2534,7 @@ export default function RecordSale({
             })()}
           </div>
 
-          {/* Right: Amount + Finalize — full width on mobile */}
+          {/* Right: Amount + Finalize - full width on mobile */}
           <div className="flex items-stretch gap-2 sm:gap-3 w-full md:w-auto">
             <div className="hidden lg:flex items-center gap-5 text-sm font-medium">
               <div className="flex flex-col text-right">
@@ -2657,7 +2657,7 @@ export default function RecordSale({
             onClick={e => e.stopPropagation()}
           >
             <div className="px-6 pt-6 pb-2">
-              <p id="leave-title" className="text-base font-bold text-gray-900">Bill in progress — leave without saving?</p>
+              <p id="leave-title" className="text-base font-bold text-gray-900">Bill in progress - leave without saving?</p>
               <p className="text-sm text-gray-500 mt-1">Your unsaved bill will be lost.</p>
             </div>
             <div className="flex gap-3 px-6 py-4 justify-end">
@@ -2711,7 +2711,7 @@ function DetailItem({ label, value }: { label: string; value: React.ReactNode })
   return (
     <div className="min-w-0">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
-      <p className="text-sm font-medium text-gray-800 break-words">{value || '—'}</p>
+      <p className="text-sm font-medium text-gray-800 break-words">{value || '-'}</p>
     </div>
   );
 }

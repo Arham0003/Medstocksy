@@ -4,7 +4,7 @@
 // be imported into the "Add Multiple Products" form. It is tuned to the common
 // Indian pharma-distributor layout (S. | HSN | Code | Product | Pack | Mfr |
 // Batch | Mfg | Exp | MRP | Rate | Dis | Qty | SGST | CGST | Amount | Net) but
-// is written defensively — anything it can't confidently read is left blank for
+// is written defensively - anything it can't confidently read is left blank for
 // the user to fill in the preview step.
 
 import * as pdfjsLib from 'pdfjs-dist';

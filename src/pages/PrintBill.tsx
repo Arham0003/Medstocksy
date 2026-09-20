@@ -46,8 +46,8 @@ interface SaleItem {
 
 interface BillData {
     id: string; // bill_id
-    date: string;          // sale_date (date only) — used as the canonical bill date
-    created_at: string;    // full TIMESTAMPTZ from the first row — frozen at creation
+    date: string;          // sale_date (date only) - used as the canonical bill date
+    created_at: string;    // full TIMESTAMPTZ from the first row - frozen at creation
     account_id: string;
     customer_name: string | null;
     customer_phone: string | null;
@@ -61,7 +61,7 @@ interface BillData {
     payment_mode: string;
     received_amount: number;
     discount_percentage: number;
-    /** 'retail' (default) or 'wholesale' — drives the B2B invoice bits. */
+    /** 'retail' (default) or 'wholesale' - drives the B2B invoice bits. */
     sale_type?: string | null;
     wholesale_customer_name?: string | null;
     wholesale_customer_gstin?: string | null;
@@ -84,7 +84,7 @@ interface BusinessDetails {
     phone: string | null;
     gstin: string | null;
     drug_license: string | null;
-    /** Two-digit GST state code — printed as the place of supply on B2B invoices. */
+    /** Two-digit GST state code - printed as the place of supply on B2B invoices. */
     state_code?: string | null;
 }
 
@@ -96,7 +96,7 @@ export default function PrintBill() {
     const [billData, setBillData] = useState<BillData | null>(null);
 
     /**
-     * HSN-wise tax summary — the block a GST invoice must carry and the shape
+     * HSN-wise tax summary - the block a GST invoice must carry and the shape
      * GSTR-1 wants. Taxable value and tax are summed per HSN + rate pair.
      */
     const hsnSummary = useMemo(() => {
@@ -144,7 +144,7 @@ export default function PrintBill() {
     const formatAutoSet = useRef(false);
     const [dateOverride, setDateOverride] = useState<string>(''); // YYYY-MM-DD, set once data loads
 
-    // ponytail: @page must live in document.head — browsers ignore it inside DOM nodes
+    // ponytail: @page must live in document.head - browsers ignore it inside DOM nodes
     useEffect(() => {
         const FORMATS_STATIC = {
             A5:  'A5 portrait',
@@ -183,7 +183,7 @@ export default function PrintBill() {
     const [removingItemId, setRemovingItemId] = useState<string | null>(null);
     const [editGlobalDiscount, setEditGlobalDiscount] = useState(0);
 
-    // Account-wide tax/currency settings — drives whether new items get GST and how it's calculated
+    // Account-wide tax/currency settings - drives whether new items get GST and how it's calculated
     const [taxSettings, setTaxSettings] = useState<{ gst_enabled: boolean; gst_type: 'inclusive' | 'exclusive'; default_gst_rate: number }>({
         gst_enabled: true,
         gst_type: 'exclusive',
@@ -385,7 +385,7 @@ export default function PrintBill() {
                     .single();
 
                 if (accountError) {
-                    // Column may not exist yet — fall back to base columns
+                    // Column may not exist yet - fall back to base columns
                     const retry = await supabase
                         .from('accounts')
                         .select('name, address, phone, gstin')
@@ -439,7 +439,7 @@ export default function PrintBill() {
                 });
 
                 const subtotal = items.reduce((sum, item) => {
-                    if (item.is_free) return sum; // given away — no invoice value
+                    if (item.is_free) return sum; // given away - no invoice value
                     const effectiveQty = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
                         ? item.quantity + (item.sub_qty / item.pcs_per_unit)
                         : (item.quantity || 1);
@@ -463,7 +463,7 @@ export default function PrintBill() {
                     id: billId,
                     account_id: firstItem.account_id,
                     date: firstItem.sale_date || originalCreatedAt || firstItem.created_at,
-                    created_at: originalCreatedAt || firstItem.created_at, // full timestamp — frozen at first save
+                    created_at: originalCreatedAt || firstItem.created_at, // full timestamp - frozen at first save
                     customer_name: firstItem.customer_name,
                     customer_phone: firstItem.customer_phone,
                     customer_address: firstItem.customer_address,
@@ -578,7 +578,7 @@ export default function PrintBill() {
 
         setIsAddingItem(true);
         try {
-            // Compute net + GST + total — respects account-level gst_enabled / gst_type
+            // Compute net + GST + total - respects account-level gst_enabled / gst_type
             const gross = Math.round(addRate * addQty * 100) / 100;
             // Apply global discount first
             const discAmt = Math.round((gross * editGlobalDiscount) / 100 * 100) / 100;
@@ -713,7 +713,7 @@ export default function PrintBill() {
                         </button>
                     ))}
                 </div>
-                {/* Date override — screen only */}
+                {/* Date override - screen only */}
                 <div className="flex items-center gap-1.5">
                     <label htmlFor="bill-date-override" className="text-xs text-muted-foreground font-medium">Bill Date:</label>
                     <input
@@ -863,7 +863,7 @@ export default function PrintBill() {
 
                         <div style={{ borderTop: '1px dashed #666', margin: '0 0 1.5mm' }} />
 
-                        {/* Items table — 5 cols only (name wraps, no HSN/Batch/Exp/GST split) */}
+                        {/* Items table - 5 cols only (name wraps, no HSN/Batch/Exp/GST split) */}
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #000' }}>
@@ -966,7 +966,7 @@ export default function PrintBill() {
 
                         {/* Payment + T&C */}
                         <div style={{ fontSize: '6.5pt', color: '#333', marginBottom: '2mm' }}>
-                            <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> — Received with thanks.</div>
+                            <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> - Received with thanks.</div>
                             <div style={{ marginTop: '1mm', color: '#555', fontSize: '6pt' }}>
                                 T&C: Goods once sold will not be taken back. GST incl. in MRP. Subject to local jurisdiction.{' '}
                                 <span style={{ color: '#0d6e3a', fontWeight: 700 }}>Get well soon!</span>
@@ -1023,7 +1023,7 @@ export default function PrintBill() {
                                         <div>
                                             State: {businessDetails.state_code}
                                             {stateNameForCode(businessDetails.state_code)
-                                                ? ` — ${stateNameForCode(businessDetails.state_code)}`
+                                                ? ` - ${stateNameForCode(businessDetails.state_code)}`
                                                 : ''}
                                         </div>
                                     )}
@@ -1064,7 +1064,7 @@ export default function PrintBill() {
                                         <span>{billData.doctor_name}</span>
                                     </div>
                                 )}
-                                {/* Buyer GSTIN — mandatory on a B2B tax invoice */}
+                                {/* Buyer GSTIN - mandatory on a B2B tax invoice */}
                                 {isWholesaleBill && billData.wholesale_customer_gstin && (
                                     <div style={{ display: 'flex' }}>
                                         <span style={{ width: '14mm', fontWeight: 600 }}>GSTIN:</span>
@@ -1222,7 +1222,7 @@ export default function PrintBill() {
                         {/* Left: Payment Mode + Terms */}
                         <div style={{ flex: '1.3', borderRight: '1px solid #444', padding: '1.5mm', fontSize: '6.5pt', lineHeight: '1.4', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                             <div>
-                                {/* Total in words — a tax invoice has to state it */}
+                                {/* Total in words - a tax invoice has to state it */}
                                 {isWholesaleBill && (
                                     <div style={{ marginBottom: '1mm', fontSize: '6.5pt', lineHeight: '1.3' }}>
                                         <span style={{ fontWeight: 700 }}>Amount in words: </span>
@@ -1232,7 +1232,7 @@ export default function PrintBill() {
                                 <div style={{ marginBottom: '1mm' }}>
                                     <span style={{ fontWeight: 700 }}>Payment: </span>
                                     <span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span>
-                                    <span style={{ marginLeft: '4px', color: '#555' }}>— Received with thanks.</span>
+                                    <span style={{ marginLeft: '4px', color: '#555' }}>- Received with thanks.</span>
                                 </div>
                                 <div style={{ fontSize: '6pt', lineHeight: '1.35', color: '#444' }}>
                                     <span style={{ fontWeight: 700 }}>T&C: </span>
@@ -1303,7 +1303,7 @@ export default function PrintBill() {
                 )}
             </div>
 
-            {/* Edit Bill Dialog — never shown in print */}
+            {/* Edit Bill Dialog - never shown in print */}
             <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
                 <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 print:hidden">
                     <DialogHeader className="pr-8 space-y-1">

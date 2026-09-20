@@ -134,7 +134,7 @@ const AppSidebar = memo(({ accountName, userName, focusedIndex, navItems, wholes
                           <PremiumBadge
                             className="group-data-[collapsible=icon]:hidden ml-2"
                             label=""
-                            title="Wholesale Mode is off — turn it on in Settings"
+                            title="Wholesale Mode is off. Turn it on in Settings"
                             interactive={false}
                           />
                         ) : hasShortcut ? (
@@ -301,7 +301,7 @@ export default function Layout() {
       }
 
       // ponytail: ArrowLeft focuses sidebar from anywhere (if not defaultPrevented); when focused, Up/Down move highlight, Right/Enter open and enter section
-      // Guard: only activate on top-level routes — sub-pages (/sales/new etc.) own ← for their own navigation.
+      // Guard: only activate on top-level routes - sub-pages (/sales/new etc.) own ← for their own navigation.
       const isTopLevelForNav = navItems.some((item) => item.href === location.pathname);
       if (!e.defaultPrevented && e.key === 'ArrowLeft' && focusedIndex === null && isTopLevelForNav) {
         e.preventDefault();
@@ -334,7 +334,7 @@ export default function Layout() {
         }
       }
 
-      // ponytail: skip number nav shortcuts on sub-pages (e.g. /sales/new) — only apply to top-level routes
+      // ponytail: skip number nav shortcuts on sub-pages (e.g. /sales/new) - only apply to top-level routes
       const isTopLevel = navItems.some((item) => item.href === location.pathname);
       if (!isTopLevel) return;
 

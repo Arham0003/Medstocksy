@@ -150,7 +150,7 @@ const Pricing = () => {
                 // Show discount toast if coupon was applied
                 if (data.discountApplied) {
                     const saved = (data.discountApplied.savedPaise / 100).toFixed(2);
-                    toast.success(`Coupon "${data.discountApplied.code}" applied — ₹${saved} off!`);
+                    toast.success(`Coupon "${data.discountApplied.code}" applied - ₹${saved} off!`);
                 }
 
                 // 2. Open Razorpay options
@@ -162,41 +162,61 @@ const Pricing = () => {
                     description: `${planName} Subscription`,
                     order_id: data.orderId,
                     handler: async function (response: any) {
-                        toast.success("Payment Successful! Activating plan...");
+                        // The browser no longer writes `subscriptions` itself.
+                        // verify-razorpay-payment checks the Razorpay signature
+                        // with the key secret, then the service role records the
+                        // payment. It EXTENDS rather than replaces: buy a second
+                        // month while the first is running and the new period
+                        // starts when the current one ends, so the days add up.
+                        toast.info("Confirming payment...");
 
-                        const planType =
-                            planName === "Professional + Wholesale"
-                                ? (isAnnual ? 'wholesale_annual' : 'wholesale_monthly')
-                                : planName === "Professional"
-                                ? (isAnnual ? 'professional_annual' : 'professional_monthly')
-                                : 'testing_weekly';
-                        const days =
-                            planName === "Professional" || planName === "Professional + Wholesale"
-                                ? (isAnnual ? 365 : 30)
-                                : 7;
+                        const { data: verified, error: verifyError } = await supabase.functions.invoke(
+                            'verify-razorpay-payment',
+                            {
+                                body: {
+                                    razorpay_order_id: response.razorpay_order_id,
+                                    razorpay_payment_id: response.razorpay_payment_id,
+                                    razorpay_signature: response.razorpay_signature,
+                                    planName,
+                                    isAnnual: !!isAnnual,
+                                },
+                            },
+                        );
 
-                        // 3. Update Subscription in DB (Ideally done via Webhook, but update client-side for UX speed)
-                        // Note: This requires RLS to allow INSERT/UPDATE on 'subscriptions' for authenticated users
-                        // strictly for their own rows.
-                        const { error: updateError } = await supabase
-                            .from('subscriptions' as any)
-                            .upsert({
-                                user_id: (await supabase.auth.getUser()).data.user?.id,
-                                plan_type: planType,
-                                status: 'active',
-                                current_period_start: new Date().toISOString(),
-                                current_period_end: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
-                                razorpay_order_id: response.razorpay_order_id,
-                                razorpay_payment_id: response.razorpay_payment_id,
-                            });
+                        let message = verifyError?.message ?? verified?.error ?? null;
+                        if (!message && verifyError) message = "Could not confirm the payment.";
 
-                        if (updateError) {
-                            console.error("Failed to update local record", updateError);
-                            toast.error("Payment received but status update failed. Please contacting support.");
-                        } else {
-                            // Reload to clear the 'Subscription Expired' popup
-                            window.location.reload();
+                        if (message) {
+                            console.error("Payment verification failed", verifyError ?? verified);
+                            toast.error(
+                                "Payment taken but activation failed: " + message +
+                                " Please contact support with payment id " + response.razorpay_payment_id,
+                            );
+                            return;
                         }
+
+                        const until = verified?.periodEnd
+                            ? new Date(verified.periodEnd).toLocaleDateString("en-IN", {
+                                  day: "2-digit", month: "short", year: "numeric",
+                              })
+                            : null;
+
+                        if (verified?.duplicate) {
+                            toast.info("This payment was already applied. Access runs to " + until + ".");
+                        } else if (verified?.queued) {
+                            const from = new Date(verified.periodStart).toLocaleDateString("en-IN", {
+                                day: "2-digit", month: "short", year: "numeric",
+                            });
+                            toast.success(
+                                "Payment successful. Your current plan runs to " + from +
+                                ", and this one takes over from then until " + until + ".",
+                            );
+                        } else {
+                            toast.success("Payment successful. Access is active until " + until + ".");
+                        }
+
+                        // Reload so the guard and the plan badge pick up the new period.
+                        setTimeout(() => window.location.reload(), 2500);
                     },
                     prefill: {
                         name: "Pharmacy Owner",
@@ -355,7 +375,7 @@ const Pricing = () => {
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' && couponInput.trim()) {
                                     setCouponCode(couponInput.trim());
-                                    toast.info(`Coupon "${couponInput.trim()}" staged — click Subscribe to apply.`);
+                                    toast.info(`Coupon "${couponInput.trim()}" staged - click Subscribe to apply.`);
                                 }
                             }}
                             className="font-mono tracking-widest uppercase"
@@ -366,7 +386,7 @@ const Pricing = () => {
                             onClick={() => {
                                 if (!couponInput.trim()) return;
                                 setCouponCode(couponInput.trim());
-                                toast.info(`Coupon "${couponInput.trim()}" staged — click Subscribe to apply.`);
+                                toast.info(`Coupon "${couponInput.trim()}" staged - click Subscribe to apply.`);
                             }}
                         >
                             Apply
@@ -386,7 +406,7 @@ const Pricing = () => {
                     {couponCode && (
                         <Badge variant="secondary" className="text-emerald-600 bg-emerald-50 border border-emerald-200 gap-1">
                             <Tag className="h-3 w-3" />
-                            {couponCode} — will be applied at checkout
+                            {couponCode} - will be applied at checkout
                         </Badge>
                     )}
                 </div>

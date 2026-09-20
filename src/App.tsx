@@ -35,7 +35,7 @@ const Pricing = lazy(() => import("./pages/Pricing"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const Suppliers = lazy(() => import("./pages/Suppliers"));
 const PurchaseReturn = lazy(() => import("./pages/PurchaseReturn"));
-// Wholesale (premium) — lazily loaded so accounts without the plan never
+// Wholesale (premium) - lazily loaded so accounts without the plan never
 // download this code.
 const WholesaleBilling = lazy(() => import("./pages/WholesaleBilling"));
 const WholesaleReports = lazy(() => import("./pages/WholesaleReports"));

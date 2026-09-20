@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 export function PremiumBadge({
   className,
   label = 'Premium',
-  title = 'Premium feature — upgrade to the Wholesale plan',
+  title = 'Premium feature. Upgrade to the Wholesale plan',
   interactive = true,
 }: {
   className?: string;
@@ -18,7 +18,7 @@ export function PremiumBadge({
   title?: string;
   /**
    * false renders a plain <span>. Required when the badge sits inside another
-   * link or button — a nested <button> is invalid HTML and swallows the row's
+   * link or button - a nested <button> is invalid HTML and swallows the row's
    * own click target.
    */
   interactive?: boolean;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 export const MAX_BILL_TABS = 5;
 
-// localStorage keys — the tab list, and one entry per bill's full contents.
+// localStorage keys - the tab list, and one entry per bill's full contents.
 const SESSIONS_KEY = 'medstocksy.billSessions';
 export const BILL_DATA_PREFIX = 'medstocksy.bill.';
 
@@ -96,7 +96,7 @@ export function useBillSessions(namespace?: BillNamespace) {
   }, [sessions, activeId, seqCounter, namespace]);
 
   const addSession = useCallback((): boolean => {
-    // Decide from the current render's length — a functional-updater side effect
+    // Decide from the current render's length - a functional-updater side effect
     // is NOT reliable to read back synchronously, which previously made this
     // always report failure (spurious "limit reached").
     if (sessions.length >= MAX_BILL_TABS) return false;

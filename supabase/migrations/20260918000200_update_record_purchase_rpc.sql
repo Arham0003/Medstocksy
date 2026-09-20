@@ -2,11 +2,11 @@
 --
 -- Recreates record_purchase() from 20260723000000 with `wholesale_price`
 -- threaded through in three places: the purchase_items insert, the products
--- update, and the products insert. No other logic changes — all stock and
+-- update, and the products insert. No other logic changes - all stock and
 -- free_qty arithmetic is byte-for-byte the original.
 --
 -- The UPDATE uses COALESCE so a later purchase that leaves W.Price blank does
--- NOT wipe the price already set on the product — matching how `category` and
+-- NOT wipe the price already set on the product - matching how `category` and
 -- `manufacturer` are treated in the same statement.
 
 CREATE OR REPLACE FUNCTION record_purchase(payload jsonb)

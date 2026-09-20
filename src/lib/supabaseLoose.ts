@@ -5,8 +5,8 @@ import { supabase } from '@/db_conn/supabaseClient';
  * Untyped view of the Supabase client.
  *
  * `src/integrations/supabase/types.ts` is hand-maintained and already lags
- * the schema — it has no `purchase_returns`, no `bill_id`, no `payment_mode`
- * — and it does not know about the compliance tables and columns added by
+ * the schema - it has no `purchase_returns`, no `bill_id`, no `payment_mode`
+ * - and it does not know about the compliance tables and columns added by
  * the 2026-09-10 migrations (`stock_batches`, `hsn_codes`, the GST-split
  * columns on `sales`, or any of the new RPCs).
  *

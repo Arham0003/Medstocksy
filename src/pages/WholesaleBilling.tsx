@@ -4,7 +4,7 @@ import { useWholesaleAccess } from '@/hooks/useWholesaleAccess';
 import SalesBilling from './SalesBilling';
 
 /**
- * /wholesale — the B2B billing workspace.
+ * /wholesale - the B2B billing workspace.
  *
  * Thin gate over SalesBilling so there is exactly one billing screen to
  * maintain. Reaching this URL without an active wholesale plan (or with the
@@ -16,7 +16,7 @@ export default function WholesaleBilling() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Wait for the answer — `isActive` is false while the check is in flight,
+    // Wait for the answer - `isActive` is false while the check is in flight,
     // so redirecting early would bounce paying subscribers.
     if (!loading && !isActive) navigate('/pricing', { replace: true });
   }, [isActive, loading, navigate]);

@@ -127,7 +127,7 @@ export default function Suppliers() {
   // Detail dialog
   const [selectedSupplier, setSelectedSupplier] = useState<SupplierWithStats | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
-  // Confirm-delete state — when set, the AlertDialog is open and points at this supplier id
+  // Confirm-delete state - when set, the AlertDialog is open and points at this supplier id
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   // Edit-mode: when truthy, the register dialog acts as an "edit" form pre-filled from this supplier
   const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
@@ -326,7 +326,7 @@ export default function Suppliers() {
       setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
       // Keep the detail dialog showing the updated row
       if (editingSupplierId && selectedSupplier?.id === editingSupplierId) {
-        // Local optimistic — fetchData will overwrite with truth
+        // Local optimistic - fetchData will overwrite with truth
         setSelectedSupplier(prev => prev ? ({ ...prev, ...payload } as SupplierWithStats) : prev);
       }
       fetchData();
@@ -571,7 +571,7 @@ export default function Suppliers() {
       {returnToProducts && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
           <p className="text-sm text-blue-800">
-            Add the new supplier here, then head back — your product entry was saved and will be restored.
+            Add the new supplier here, then head back - your product entry was saved and will be restored.
           </p>
           <Button
             size="sm"
@@ -1431,7 +1431,7 @@ export default function Suppliers() {
                                 {(showAllProducts ? supplierProducts : supplierProducts.slice(0, 5)).map(p => (
                                   <TableRow key={p.id}>
                                     <TableCell className="font-medium text-sm py-2.5">{p.name}</TableCell>
-                                    <TableCell className="hidden md:table-cell text-sm py-2.5 text-muted-foreground">{p.category || '—'}</TableCell>
+                                    <TableCell className="hidden md:table-cell text-sm py-2.5 text-muted-foreground">{p.category || '-'}</TableCell>
                                     <TableCell className="text-center text-sm py-2.5">{p.quantity}</TableCell>
                                     <TableCell className="hidden sm:table-cell text-right text-sm py-2.5">{formatINR(p.purchase_price ?? 0)}</TableCell>
                                     <TableCell className="text-right text-sm py-2.5 font-medium">{formatINR((p.purchase_price ?? 0) * p.quantity)}</TableCell>
@@ -1497,7 +1497,7 @@ export default function Suppliers() {
                                   <TableCell className="text-sm py-2.5 text-right font-semibold text-emerald-700">
                                     {formatINR(p.amount)}
                                   </TableCell>
-                                  <TableCell className="hidden md:table-cell text-sm py-2.5 text-muted-foreground">{p.notes || '—'}</TableCell>
+                                  <TableCell className="hidden md:table-cell text-sm py-2.5 text-muted-foreground">{p.notes || '-'}</TableCell>
                                   <TableCell className="text-right py-2.5">
                                     <Button
                                       variant="ghost"
@@ -1531,7 +1531,7 @@ export default function Suppliers() {
           <DialogHeader>
             <DialogTitle className="text-xl">Record Payment</DialogTitle>
             <DialogDescription className="text-base">
-              {selectedSupplier && <>Payment to <strong>{selectedSupplier.name}</strong> — Balance due: <strong className="text-red-600">{formatINR(selectedSupplier.balance)}</strong></>}
+              {selectedSupplier && <>Payment to <strong>{selectedSupplier.name}</strong> - Balance due: <strong className="text-red-600">{formatINR(selectedSupplier.balance)}</strong></>}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAddPayment} className="space-y-4 mt-2">

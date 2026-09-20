@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 // ──────────────────────────────────────────────────────────────
 // IMPORTANT: These credentials live in the frontend JS bundle and
 // are readable by anyone who inspects the deployed code. They are
-// a soft gate — they keep casual users out of the admin panel, but
+// a soft gate - they keep casual users out of the admin panel, but
 // they are NOT the security boundary.
 //
 // The real boundary is server-side: every admin_* RPC calls
@@ -28,7 +28,7 @@ const MAX_ATTEMPTS_BEFORE_COOLDOWN = 5;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
-  // The email the server compares against admin_users — NOT the ID typed below.
+  // The email the server compares against admin_users - NOT the ID typed below.
   const { user: authUser, profile } = useAuth();
   const signedInEmail = profile?.email || authUser?.email || '';
   const [unlocked, setUnlocked] = useState<boolean>(() => {
@@ -49,7 +49,7 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
   // Server's verdict on whether this login is a platform admin.
   //   null      = still checking
   //   true      = confirmed admin
-  //   false     = the server said NO — the only case that blocks
+  //   false     = the server said NO - the only case that blocks
   //   'unknown' = the check could not run (migration missing, offline…).
   //
   // Only a definitive `false` blocks. Anything else fails OPEN with a banner:
@@ -145,14 +145,14 @@ ON CONFLICT (email) DO NOTHING;`;
               <CardTitle className="text-xl">This login isn't on the admin list</CardTitle>
               <CardDescription>
                 The password was accepted. The admin list is checked against the account you are
-                <strong> signed into the app with</strong> — not the ID typed on the unlock screen.
+                <strong> signed into the app with</strong>, not the ID typed on the unlock screen.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-lg border bg-slate-50 px-3 py-2.5 text-sm">
                 <div className="text-xs text-muted-foreground">Signed in as</div>
                 <div className="font-medium text-slate-900 break-all">
-                  {signedInEmail || 'unknown — no session'}
+                  {signedInEmail || 'unknown (no session)'}
                 </div>
               </div>
 
@@ -190,7 +190,7 @@ ON CONFLICT (email) DO NOTHING;`;
             <ShieldCheck className="h-3.5 w-3.5" />
             <span>
               Admin session unlocked
-              {serverAdmin === null ? ' — verifying…' : serverAdmin === true ? ' and verified.' : '.'}
+              {serverAdmin === null ? ', verifying...' : serverAdmin === true ? ' and verified.' : '.'}
             </span>
           </div>
           <button

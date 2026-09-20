@@ -328,7 +328,7 @@ BEGIN
 END;
 $$;
 
--- discount_value is PAISE for 'flat' and 1-100 for 'percent' — the same
+-- discount_value is PAISE for 'flat' and 1-100 for 'percent' - the same
 -- units create-razorpay-order reads.
 CREATE OR REPLACE FUNCTION public.admin_upsert_coupon(
   coupon_code    TEXT,

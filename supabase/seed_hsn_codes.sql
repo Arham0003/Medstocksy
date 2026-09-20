@@ -1,5 +1,5 @@
 -- ============================================================
--- One-time DML — seed common pharma HSN codes for every account.
+-- One-time DML - seed common pharma HSN codes for every account.
 -- Run AFTER 20260910000000_create_hsn_codes.sql, in the Supabase SQL editor.
 -- Safe to re-run: ON CONFLICT DO NOTHING keeps owner edits intact.
 --

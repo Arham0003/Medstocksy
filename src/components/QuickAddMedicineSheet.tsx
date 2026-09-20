@@ -39,11 +39,11 @@ const QTY_PRESETS = [1, 5, 10];
 interface QuickAddMedicineSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Current in-memory product list — used for the live duplicate lookup. */
+  /** Current in-memory product list - used for the live duplicate lookup. */
   existingProducts: Product[];
   /** Called after the medicine is saved to inventory AND a quantity is chosen. */
   onSaved: (product: Product, quantity: number) => void;
-  /** Default GST rate from settings — pre-selected in the form. */
+  /** Default GST rate from settings - pre-selected in the form. */
   defaultGst?: number | null;
 }
 
@@ -191,7 +191,7 @@ export default function QuickAddMedicineSheet({
     resetAndClose();
   };
 
-  // ── "Use existing" — skip creating a duplicate, go straight to qty ──
+  // ── "Use existing" - skip creating a duplicate, go straight to qty ──
   const useExisting = (p: Product) => {
     setSavedProduct(p);
     setAddedToInventory(false);
@@ -215,7 +215,7 @@ export default function QuickAddMedicineSheet({
           </SheetTitle>
           <SheetDescription>
             {step === 'form'
-              ? 'Create a medicine and drop it into the current bill — without leaving billing.'
+              ? 'Create a medicine and drop it into the current bill - without leaving billing.'
               : `${addedToInventory ? 'Saved to inventory.' : 'Using existing item.'} How many for this bill?`}
           </SheetDescription>
         </SheetHeader>
@@ -236,7 +236,7 @@ export default function QuickAddMedicineSheet({
                 {matches.length > 0 && (
                   <div className="col-span-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2 space-y-1">
                     <p className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 px-1">
-                      <Info className="h-3.5 w-3.5" /> Similar medicine already exists — use it instead?
+                      <Info className="h-3.5 w-3.5" /> Similar medicine already exists - use it instead?
                     </p>
                     {matches.map(m => (
                       <button

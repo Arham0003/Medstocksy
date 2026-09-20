@@ -1,5 +1,5 @@
 -- ============================================================
--- B1 (adapted) — add_stock_batch()
+-- B1 (adapted) - add_stock_batch()
 -- Plan: Lean Compliance Plan, Phase B / B1
 --
 -- The plan patches a record_purchase() RPC. This codebase has no purchase

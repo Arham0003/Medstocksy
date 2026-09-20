@@ -743,7 +743,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           value={row.hsn_code}
                           onChange={e => updateRow(row.tempId, { hsn_code: e.target.value })}
                           onKeyDown={e => handleEnterNav(e, idx, 'hsn_code')}
-                          placeholder="—"
+                          placeholder="-"
                           className={cardInputCls}
                         />
                       </div>
@@ -803,7 +803,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           value={row.pcs_per_unit}
                           onChange={e => updateRow(row.tempId, { pcs_per_unit: e.target.value.replace(/[^0-9]/g, '') })}
                           onKeyDown={e => handleEnterNav(e, idx, 'pcs_per_unit')}
-                          placeholder="—"
+                          placeholder="-"
                           className={cn(cardInputCls, 'text-center')}
                         />
                       </div>
@@ -848,7 +848,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           className={cn(cardInputCls, 'text-right')}
                         />
                       </div>
-                      {/* W.Price — B2B rate, mirrored onto products.wholesale_price.
+                      {/* W.Price - B2B rate, mirrored onto products.wholesale_price.
                           Optional: leave blank and wholesale billing falls back to MRP. */}
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel>W.Price</FieldLabel>
@@ -859,7 +859,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           onChange={e => updateRow(row.tempId, { wholesale_price: e.target.value.replace(/[^0-9.]/g, '') })}
                           onKeyDown={e => handleEnterNav(e, idx, 'wholesale_price')}
                           placeholder="0.00"
-                          title="Wholesale price — default rate on wholesale bills"
+                          title="Wholesale price - default rate on wholesale bills"
                           className={cn(cardInputCls, 'text-right text-violet-900')}
                         />
                       </div>
@@ -907,13 +907,13 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                             row.marginPct < 0 ? 'text-rose-600' : 'text-slate-700',
                           )}
                         >
-                          {row.mrp || row.rate ? `${row.marginPct.toFixed(2)}%` : '—'}
+                          {row.mrp || row.rate ? `${row.marginPct.toFixed(2)}%` : '-'}
                         </div>
                       </div>
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel>Amount</FieldLabel>
                         <div className="h-7 flex items-center justify-end pr-2 text-xs text-slate-900 tabular-nums select-none font-bold border border-transparent rounded bg-white/60">
-                          {row.finalAmount > 0 ? `₹${row.finalAmount.toFixed(2)}` : '—'}
+                          {row.finalAmount > 0 ? `₹${row.finalAmount.toFixed(2)}` : '-'}
                         </div>
                       </div>
                     </div>
@@ -1753,7 +1753,7 @@ export const MultiProductForm = ({
       </Dialog>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          F2 — NEW INVOICE CONFIRMATION
+          F2 - NEW INVOICE CONFIRMATION
       ════════════════════════════════════════════════════════════════════ */}
       <Dialog open={f2ConfirmOpen} onOpenChange={setF2ConfirmOpen}>
         <DialogContent
@@ -1859,7 +1859,7 @@ export const MultiProductForm = ({
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="text-amber-600 border-amber-200">
-                        New — will be set in header
+                        New - will be set in header
                       </Badge>
                     )}
                   </div>
@@ -1906,16 +1906,16 @@ export const MultiProductForm = ({
                                 <div className="text-[10px] text-muted-foreground">{it.manufacturer}</div>
                               )}
                             </td>
-                            <td className="p-2 text-center text-slate-600">{it.hsn_code || '—'}</td>
-                            <td className="p-2 text-center text-slate-600">{it.batch_number || '—'}</td>
+                            <td className="p-2 text-center text-slate-600">{it.hsn_code || '-'}</td>
+                            <td className="p-2 text-center text-slate-600">{it.batch_number || '-'}</td>
                             <td className="p-2 text-center text-slate-600">
-                              {it.expiry_date ? it.expiry_date.slice(0, 7) : '—'}
+                              {it.expiry_date ? it.expiry_date.slice(0, 7) : '-'}
                             </td>
-                            <td className="p-2 text-center font-medium">{it.quantity || '—'}</td>
-                            <td className="p-2 text-center">{it.gst ? `${it.gst}%` : '—'}</td>
-                            <td className="p-2 text-right text-slate-600">{it.purchase_price || '—'}</td>
+                            <td className="p-2 text-center font-medium">{it.quantity || '-'}</td>
+                            <td className="p-2 text-center">{it.gst ? `${it.gst}%` : '-'}</td>
+                            <td className="p-2 text-right text-slate-600">{it.purchase_price || '-'}</td>
                             <td className="p-2 text-right font-semibold text-emerald-700">
-                              {it.selling_price || '—'}
+                              {it.selling_price || '-'}
                             </td>
                           </tr>
                         );

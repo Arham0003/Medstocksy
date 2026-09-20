@@ -122,7 +122,7 @@ export default function Products() {
   const [purchasePriceState, setPurchasePriceState] = useState<string>('');
   const [gstInclusive, setGstInclusive] = useState<boolean>(false);
 
-  // URL state — initial values come from search params, changes get written back so views are shareable/bookmarkable
+  // URL state - initial values come from search params, changes get written back so views are shareable/bookmarkable
   const [searchParams, setSearchParams] = useSearchParams();
   const initialSort = (() => {
     const raw = searchParams.get('sort');
@@ -332,7 +332,7 @@ export default function Products() {
       if (error) throw error;
 
       // Batch ledger. products.quantity has already been written above, so
-      // the RPC is told not to touch it (p_sync_product_qty: false) — it only
+      // the RPC is told not to touch it (p_sync_product_qty: false) - it only
       // records the batch, its expiry and its landed cost.
       let batchWarning: string | null = null;
       if (productId && canCreateBatch) {
@@ -354,7 +354,7 @@ export default function Products() {
         });
         if (batchError) batchWarning = batchError.message;
       } else if (productId && editingProduct && inwardQty < 0) {
-        // Stock reduced by hand — take it off the batches too, nearest expiry
+        // Stock reduced by hand - take it off the batches too, nearest expiry
         // first, so the ledger does not drift above products.quantity.
         const { error: adjError } = await db.rpc('adjust_batch_stock', {
           p_account_id: profile?.account_id,
@@ -366,7 +366,7 @@ export default function Products() {
       }
 
       // Before the compliance migrations the RPC simply does not exist. That
-      // is not a fault worth alarming the user about — the product saved and
+      // is not a fault worth alarming the user about - the product saved and
       // stock is correct, batch tracking just is not installed yet.
       const batchRpcMissing =
         !!batchWarning &&
@@ -677,7 +677,7 @@ export default function Products() {
     setDiscPctState('');
   }, [isDialogOpen, formSource, defaultGstRate]);
 
-  // Landed cost preview — the figure that will be stored on the batch and
+  // Landed cost preview - the figure that will be stored on the batch and
   // used as COGS. Mirrors computeEffectiveCost() in add_stock_batch().
   const previewEffectiveCost = computeEffectiveCost(
     parseFloat(qtyState) || 0,
@@ -703,7 +703,7 @@ export default function Products() {
       {searchParams.get('from') === 'record-sale' && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
           <p className="text-sm text-blue-800">
-            Add the new product here, then head back — your sale in progress was saved and will be restored.
+            Add the new product here, then head back - your sale in progress was saved and will be restored.
           </p>
           <Button
             size="sm"
@@ -1029,7 +1029,7 @@ export default function Products() {
                   <p className="text-xs text-muted-foreground">
                     {hsnRateFor(hsnState) != null
                       ? `Filled from HSN ${hsnState}. Override only if this item is rated differently.`
-                      : 'No HSN match — this manually entered rate will be used.'}
+                      : 'No HSN match - this manually entered rate will be used.'}
                   </p>
                 </div>
               </div>
@@ -1475,7 +1475,7 @@ export default function Products() {
                 </Select>
               </div>
 
-              {/* Mobile: compact table — real column alignment (Product | Stock | Price | ⋮)
+              {/* Mobile: compact table - real column alignment (Product | Stock | Price | ⋮)
                   so rows read like the desktop table and many products fit on screen. */}
               <div className="md:hidden rounded-md border bg-card overflow-hidden">
                 {/* Column header */}
@@ -1507,7 +1507,7 @@ export default function Products() {
                           {[
                             product.batch_number && `B:${product.batch_number}`,
                             product.category,
-                          ].filter(Boolean).join(' · ') || '—'}
+                          ].filter(Boolean).join(' · ') || '-'}
                           {expiryText && (
                             <span className={cn("ml-1", isExpiringSoon && "text-rose-600 font-medium")}>Exp {expiryText}</span>
                           )}
@@ -1643,15 +1643,15 @@ export default function Products() {
                           </TableCell>
                           <TableCell className="hidden lg:table-cell">
                             <div className="flex flex-col">
-                              <span className="text-sm">{product.category || '—'}</span>
+                              <span className="text-sm">{product.category || '-'}</span>
                               <span className="text-xs text-muted-foreground">{product.manufacturer || 'Unknown manufacturer'}</span>
                             </div>
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col">
-                              <span className="text-sm">{product.batch_number || '—'}</span>
+                              <span className="text-sm">{product.batch_number || '-'}</span>
                               <span className={cn("text-xs", isExpiringSoon ? "text-rose-600 font-medium" : "text-muted-foreground")}>
-                                Exp {expiryText || '—'}
+                                Exp {expiryText || '-'}
                               </span>
                             </div>
                           </TableCell>

@@ -51,7 +51,7 @@ export default function SalesBilling({ mode = 'retail' }: SalesBillingProps = {}
     useBillSessions(isWholesale ? 'wholesale' : undefined);
   const [pendingClose, setPendingClose] = useState<BillSession | null>(null);
   // Wholesale: after saving, ask which paper the invoice goes on. Both choices
-  // open the existing /print-bill route — only the initial format differs.
+  // open the existing /print-bill route - only the initial format differs.
   const [pendingPrint, setPendingPrint] = useState<{ sessionId: string; billId: string } | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const editHandled = useRef(false);
@@ -358,7 +358,7 @@ export default function SalesBilling({ mode = 'retail' }: SalesBillingProps = {}
       <AlertDialog open={!!pendingPrint} onOpenChange={o => { if (!o && pendingPrint) dismissPrint(pendingPrint.sessionId); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Bill saved ✓ — how should it print?</AlertDialogTitle>
+            <AlertDialogTitle>Bill saved. How should it print?</AlertDialogTitle>
             <AlertDialogDescription>
               Choose the paper for this wholesale invoice. You can switch formats again on the print screen.
             </AlertDialogDescription>

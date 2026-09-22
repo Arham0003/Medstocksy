@@ -32,12 +32,9 @@ const Pricing = () => {
         script.async = true;
         document.body.appendChild(script);
 
-        return () => {
-            // Clean up: remove the script if we leave the page (optional, but keep it clean)
-            if (document.body.contains(script)) {
-                document.body.removeChild(script);
-            }
-        };
+        // ponytail: no cleanup — Razorpay's handler fires after the modal closes;
+        // removing the script on unmount kills window.Razorpay mid-checkout.
+        return () => {};
     }, []);
 
     const plans = [
@@ -183,11 +180,13 @@ const Pricing = () => {
                             },
                         );
 
-                        let message = verifyError?.message ?? verified?.error ?? null;
-                        if (!message && verifyError) message = "Could not confirm the payment.";
+                        // supabase.functions.invoke puts the parsed body in `data` even on 4xx.
+                        // `verifyError.message` is always a generic SDK string, not the real error.
+                        // The real error, if any, is in `verified.error` (the body we returned).
+                        const message: string | null = verified?.error ?? verifyError?.message ?? null;
 
                         if (message) {
-                            console.error("Payment verification failed", verifyError ?? verified);
+                            console.error("Payment verification failed", { verifyError, verified });
                             toast.error(
                                 "Payment taken but activation failed: " + message +
                                 " Please contact support with payment id " + response.razorpay_payment_id,

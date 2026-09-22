@@ -104,7 +104,7 @@ export default function Sales() {
         title: 'Wholesale mode is off',
         description: 'Turn on Wholesale Mode in Settings → Tax & Currency to start B2B billing.',
       });
-      navigate('/settings');
+      navigate('/settings?tab=tax');
       return;
     }
     navigate('/wholesale');

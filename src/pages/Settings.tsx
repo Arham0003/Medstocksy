@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -121,6 +121,40 @@ export default function Settings() {
     needsMigration: wholesaleNeedsMigration,
   } = useWholesaleAccess();
   const [wholesaleModeState, setWholesaleModeState] = useState<boolean>(false);
+  const [wholesaleSaving, setWholesaleSaving] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'store';
+
+  const handleToggleWholesaleMode = async (enabled: boolean) => {
+    setWholesaleModeState(enabled);
+    if (!profile?.account_id) return;
+    setWholesaleSaving(true);
+    try {
+      const { error } = await supabase
+        .from('settings')
+        .update({ wholesale_mode: enabled })
+        .eq('account_id', profile.account_id);
+
+      if (error) throw error;
+
+      refreshWholesaleAccess();
+      toast({
+        title: enabled ? 'Wholesale mode enabled' : 'Wholesale mode disabled',
+        description: enabled
+          ? 'Wholesale billing, B2B fields, and reports are now active.'
+          : 'Wholesale mode has been switched off.',
+      });
+    } catch (err: any) {
+      setWholesaleModeState(!enabled);
+      toast({
+        variant: 'destructive',
+        title: 'Failed to update wholesale mode',
+        description: err.message || 'Could not update database.',
+      });
+    } finally {
+      setWholesaleSaving(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -260,20 +294,18 @@ export default function Settings() {
     const salesEditWindowHours = Number.isFinite(rawEditWindow) && rawEditWindow > 0 ? rawEditWindow : 24;
 
     try {
-      // Core columns always exist; the optional ones need later migrations.
-      // gst_type is in core - it exists since the earliest migrations and must always be saved.
-      // sales_edit_window_hours was added later and is the only truly optional field.
+      // Core columns + wholesale_mode must always be preserved
       const core: any = {
         currency,
         default_gst_rate: defaultGstRate,
         gst_enabled: gstEnabled,
         gst_type: gstType,
         whatsapp_custom_note: whatsappCustomNote,
+        wholesale_mode: wholesaleModeState,
       };
       const withOptional = {
         ...core,
         sales_edit_window_hours: salesEditWindowHours,
-        wholesale_mode: wholesaleModeState,
       };
 
       const { error } = await supabase
@@ -282,7 +314,7 @@ export default function Settings() {
         .eq('account_id', profile?.account_id);
 
       if (error) {
-        // A newer column (gst_type / sales_edit_window_hours) may not exist yet → save the core fields.
+        // Optional sales_edit_window_hours column may not exist yet → save core fields (keeping wholesale_mode)
         const { error: retryError } = await supabase
           .from('settings')
           .update(core)
@@ -290,7 +322,7 @@ export default function Settings() {
         if (retryError) throw retryError;
         toast({
           title: 'Settings updated',
-          description: 'Saved. Some newer fields (GST type / edit window) need a database migration.',
+          description: 'Saved. Some newer fields (edit window) need a database migration.',
         });
       } else {
         toast({
@@ -349,7 +381,7 @@ export default function Settings() {
           <div className="h-64 w-full bg-slate-100 animate-pulse rounded-xl" />
         </div>
       ) : (
-        <Tabs defaultValue="store" className="w-full">
+        <Tabs value={activeTab} onValueChange={(val) => setSearchParams({ tab: val })} className="w-full">
           {/* Scrollable tab bar for small screens */}
           <TabsList className="w-full h-auto p-1 bg-slate-100/80 rounded-xl flex-wrap justify-start sm:justify-center">
             <TabsTrigger
@@ -767,7 +799,8 @@ export default function Settings() {
                         <Switch
                           id="wholesaleMode"
                           checked={wholesaleModeState}
-                          onCheckedChange={setWholesaleModeState}
+                          onCheckedChange={handleToggleWholesaleMode}
+                          disabled={wholesaleSaving}
                           aria-label="Enable Wholesale Mode"
                         />
                       </div>

@@ -65,6 +65,16 @@ interface BillData {
     sale_type?: string | null;
     wholesale_customer_name?: string | null;
     wholesale_customer_gstin?: string | null;
+    /** Rule 65(4): the buyer's drug licence, as recorded when the sale was made. */
+    wholesale_customer_dl?: string | null;
+    wholesale_customer_dl_expiry?: string | null;
+    /** Two-digit GST state code of the buyer. Place of supply on a B2B invoice. */
+    buyer_state_code?: string | null;
+    ship_to_address?: string | null;
+    /** Sequential number required by CGST Rule 46, e.g. WS/26-27/00001. */
+    bill_serial?: string | null;
+    /** True when every line is a reversal, so the bill prints as a credit note. */
+    is_credit_note?: boolean;
 }
 
 // Lightweight product type for the add-item search list
@@ -86,6 +96,10 @@ interface BusinessDetails {
     drug_license: string | null;
     /** Two-digit GST state code - printed as the place of supply on B2B invoices. */
     state_code?: string | null;
+    /** Seller compliance, set once in Settings and read here on every print. */
+    fssai_number?: string | null;
+    dl_form_type?: string | null;
+    drug_license_expiry?: string | null;
 }
 
 export default function PrintBill() {
@@ -352,12 +366,16 @@ export default function PrintBill() {
             // Wholesale columns arrive with 20260918000000; same degrade-on-miss
             // approach as the GST-split set above.
             const WHOLESALE_COLS = ', sale_type, wholesale_customer_name, wholesale_customer_gstin';
+            // Compliance columns arrive with 20260925000000; the cascade below
+            // drops them first so a bill still prints on an un-migrated database.
+            const COMPLIANCE_COLS = ', wholesale_customer_dl, wholesale_customer_dl_expiry, buyer_state_code, ship_to_address, bill_serial, return_type';
 
             // db (untyped client): a column list built at runtime defeats
             // PostgREST's generated row typing; rows are re-mapped by hand below.
             let salesData: Record<string, unknown>[] | null = null;
             let salesError: { message?: string } | null = null;
             for (const cols of [
+                BASE_COLS + GST_SPLIT_COLS + WHOLESALE_COLS + COMPLIANCE_COLS,
                 BASE_COLS + GST_SPLIT_COLS + WHOLESALE_COLS,
                 BASE_COLS + GST_SPLIT_COLS,
                 BASE_COLS,
@@ -378,22 +396,20 @@ export default function PrintBill() {
 
                 // Fetch business details (drug_license added by migration; retry without it on older DBs)
                 const accountId = itemsData[0].account_id;
-                let { data: accountData, error: accountError } = await supabase
-                    .from('accounts')
-                    .select('name, address, phone, gstin, drug_license, state_code')
-                    .eq('id', accountId)
-                    .single();
-
-                if (accountError) {
-                    // Column may not exist yet - fall back to base columns
-                    const retry = await supabase
-                        .from('accounts')
-                        .select('name, address, phone, gstin')
-                        .eq('id', accountId)
-                        .single();
-                    accountData = retry.data;
-                    if (retry.error) console.error('Error fetching business details:', retry.error);
+                // Widest set first, narrowing on failure, so a bill still prints
+                // against a database that has not taken the later migrations.
+                let accountData: unknown = null;
+                let accountError: { message?: string } | null = null;
+                for (const cols of [
+                    'name, address, phone, gstin, drug_license, state_code, fssai_number, dl_form_type, drug_license_expiry',
+                    'name, address, phone, gstin, drug_license, state_code',
+                    'name, address, phone, gstin',
+                ]) {
+                    const res = await supabase.from('accounts').select(cols).eq('id', accountId).single();
+                    accountError = res.error;
+                    if (!res.error) { accountData = res.data; break; }
                 }
+                if (!accountData) console.error('Error fetching business details:', accountError);
                 setBusinessDetails(accountData as any);
 
                 // Aggregate bill data
@@ -479,6 +495,14 @@ export default function PrintBill() {
                     sale_type: firstItem.sale_type ?? 'retail',
                     wholesale_customer_name: firstItem.wholesale_customer_name ?? null,
                     wholesale_customer_gstin: firstItem.wholesale_customer_gstin ?? null,
+                    wholesale_customer_dl: firstItem.wholesale_customer_dl ?? null,
+                    wholesale_customer_dl_expiry: firstItem.wholesale_customer_dl_expiry ?? null,
+                    buyer_state_code: firstItem.buyer_state_code ?? null,
+                    ship_to_address: firstItem.ship_to_address ?? null,
+                    bill_serial: firstItem.bill_serial ?? null,
+                    // A bill made entirely of reversal rows is a credit note, and
+                    // has to say so: GST wants the document type on its face.
+                    is_credit_note: salesData.every((r) => !!(r as Record<string, unknown>).return_type),
                 });
                 // Seed the date picker with the bill's stored date
                 const rawDate = firstItem.sale_date || originalCreatedAt || firstItem.created_at;
@@ -1010,7 +1034,9 @@ export default function PrintBill() {
                             </div>
                             {/* Business details */}
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>TAX INVOICE</div>
+                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>
+                                    {billData.is_credit_note ? 'CREDIT NOTE' : 'TAX INVOICE'}
+                                </div>
                                 <div style={{ fontSize: '10pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
                                     {businessDetails?.name || 'PHARMA'}
                                 </div>
@@ -1018,7 +1044,17 @@ export default function PrintBill() {
                                     {businessDetails?.address && <div>{businessDetails.address}</div>}
                                     {businessDetails?.phone && <span>📞 {businessDetails.phone}</span>}
                                     {businessDetails?.gstin && <span style={{ marginLeft: businessDetails?.phone ? '4px' : 0 }}>| GSTIN: {businessDetails.gstin}</span>}
-                                    {businessDetails?.drug_license && <span style={{ marginLeft: '4px' }}>| DL: {businessDetails.drug_license}</span>}
+                                    {businessDetails?.drug_license && (
+                                        <span style={{ marginLeft: '4px' }}>
+                                            | DL{businessDetails?.dl_form_type ? ' (Form ' + businessDetails.dl_form_type + ')' : ''}: {businessDetails.drug_license}
+                                            {isWholesaleBill && businessDetails?.drug_license_expiry
+                                                ? ' valid to ' + new Date(businessDetails.drug_license_expiry).toLocaleDateString('en-IN')
+                                                : ''}
+                                        </span>
+                                    )}
+                                    {isWholesaleBill && businessDetails?.fssai_number && (
+                                        <div>FSSAI: {businessDetails.fssai_number}</div>
+                                    )}
                                     {isWholesaleBill && businessDetails?.state_code && (
                                         <div>
                                             State: {businessDetails.state_code}
@@ -1035,7 +1071,9 @@ export default function PrintBill() {
                         <div style={{ flex: '1', padding: '1.5mm' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1mm' }}>
                                 <div style={{ fontSize: '9pt', fontWeight: 700, color: '#1a3a5c' }}>
-                                    Invoice/{invoiceNumber}
+                                    {/* The sequential series once it exists; older bills keep the
+                                        short form of their UUID so they still print. */}
+                                    {billData.bill_serial || 'Invoice/' + invoiceNumber}
                                 </div>
                                 <div style={{ fontSize: '7.5pt', fontWeight: 600, textAlign: 'right' }}>
                                     {invoiceDate}
@@ -1069,6 +1107,35 @@ export default function PrintBill() {
                                     <div style={{ display: 'flex' }}>
                                         <span style={{ width: '14mm', fontWeight: 600 }}>GSTIN:</span>
                                         <span style={{ fontWeight: 600 }}>{billData.wholesale_customer_gstin}</span>
+                                    </div>
+                                )}
+                                {/* Rule 65(4): the buyer's licence belongs on the invoice. */}
+                                {isWholesaleBill && billData.wholesale_customer_dl && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>DL NO:</span>
+                                        <span style={{ fontWeight: 600 }}>
+                                            {billData.wholesale_customer_dl}
+                                            {billData.wholesale_customer_dl_expiry
+                                                ? ' (valid to ' + new Date(billData.wholesale_customer_dl_expiry).toLocaleDateString('en-IN') + ')'
+                                                : ''}
+                                        </span>
+                                    </div>
+                                )}
+                                {isWholesaleBill && billData.buyer_state_code && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>POS:</span>
+                                        <span>
+                                            {billData.buyer_state_code}
+                                            {stateNameForCode(billData.buyer_state_code)
+                                                ? ' - ' + stateNameForCode(billData.buyer_state_code)
+                                                : ''}
+                                        </span>
+                                    </div>
+                                )}
+                                {isWholesaleBill && billData.ship_to_address && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>SHIP TO:</span>
+                                        <span>{billData.ship_to_address}</span>
                                     </div>
                                 )}
                             </div>
@@ -1237,7 +1304,18 @@ export default function PrintBill() {
                                 <div style={{ fontSize: '6pt', lineHeight: '1.35', color: '#444' }}>
                                     <span style={{ fontWeight: 700 }}>T&C: </span>
                                     {isWholesaleBill ? (
-                                        <>Goods once sold will not be taken back. Subject to local jurisdiction. E&amp;OE.</>
+                                        <>
+                                            Goods once sold will not be taken back. Subject to local jurisdiction. E&amp;OE.
+                                            {/* Warranty under sections 18 and 19 of the Drugs and Cosmetics
+                                                Act 1940. The wholesale invoice is the document that carries it. */}
+                                            <div style={{ marginTop: '0.8mm', fontSize: '5.5pt', lineHeight: '1.3', color: '#333' }}>
+                                                <span style={{ fontWeight: 700 }}>Warranty: </span>
+                                                We hereby declare that the drugs supplied under this invoice do not contravene
+                                                in any way the provisions of Section 18 of the Drugs and Cosmetics Act, 1940, and
+                                                the Rules made thereunder, and the warranty under Section 19(3) of the said Act
+                                                is hereby given.
+                                            </div>
+                                        </>
                                     ) : (
                                         <>
                                             Goods once sold will not be taken back. GST included in MRP. Subject to local jurisdiction.{' '}

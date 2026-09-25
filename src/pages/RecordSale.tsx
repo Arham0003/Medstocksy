@@ -219,6 +219,13 @@ export default function RecordSale({
   // B2B buyer GSTIN. Held per-instance (not lifted to the tab container) so
   // each of the parallel bills keeps its own buyer.
   const [wholesaleGstin, setWholesaleGstin] = useState<string>(hydrated?.wholesaleGstin ?? '');
+  // Rule 65(4): a wholesale sale must record the buyer's drug licence. Both are
+  // snapshots on the sale row, so renaming a buyer later never rewrites history.
+  const [wholesaleDl, setWholesaleDl] = useState<string>(hydrated?.wholesaleDl ?? '');
+  const [wholesaleDlExpiry, setWholesaleDlExpiry] = useState<string>(hydrated?.wholesaleDlExpiry ?? '');
+  const [shipToAddress, setShipToAddress] = useState<string>(hydrated?.shipToAddress ?? '');
+  // The seller's own state code decides CGST+SGST against IGST per buyer.
+  const [sellerStateCode, setSellerStateCode] = useState<string>('');
   const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
   const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>(hydrated?.prescriptionMonths ?? '');
   const [monthsTaken, setMonthsTaken] = useState<number | ''>(hydrated?.monthsTaken ?? 1);
@@ -419,10 +426,11 @@ export default function RecordSale({
         if (profile?.account_id) {
           const { data: acct } = await db
             .from('accounts')
-            .select('is_interstate_billing')
+            .select('is_interstate_billing, state_code')
             .eq('id', profile.account_id)
             .single();
           setIsInterstate(Boolean(acct?.is_interstate_billing));
+          setSellerStateCode(String((acct as any)?.state_code ?? ''));
         }
       } catch (err: any) {
         toast({ variant: 'destructive', title: 'Error loading data', description: err.message });
@@ -1051,6 +1059,27 @@ export default function RecordSale({
     onMetaChangeRef.current?.({ itemCount, customerName: customerName.trim(), dirty });
   }, [rows, customerName, customerPhone]);
 
+  // Buyer state code is the first two digits of their GSTIN. For a wholesale
+  // bill this, not the account-wide toggle, decides the tax split: the same
+  // pharmacy can sell intrastate one minute and interstate the next.
+  const buyerStateCode = useMemo(
+    () => (isWholesale ? wholesaleGstin.trim().slice(0, 2) : ''),
+    [isWholesale, wholesaleGstin],
+  );
+
+  const effectiveInterstate = useMemo(() => {
+    if (!isWholesale) return isInterstate;
+    if (buyerStateCode.length !== 2 || !sellerStateCode) return isInterstate;
+    return buyerStateCode !== sellerStateCode;
+  }, [isWholesale, isInterstate, buyerStateCode, sellerStateCode]);
+
+  // Warning only, never a hard block: a mistyped expiry must not stop a
+  // legitimate sale at the counter.
+  const dlExpired = useMemo(() => {
+    if (!isWholesale || !wholesaleDlExpiry) return false;
+    return wholesaleDlExpiry < new Date().toISOString().slice(0, 10);
+  }, [isWholesale, wholesaleDlExpiry]);
+
   // ─── Persist this bill's contents locally (survives refresh / app reopen) ─
   useEffect(() => {
     if (!persistKey) return;
@@ -1058,12 +1087,12 @@ export default function RecordSale({
       localStorage.setItem(billDataPrefix(isWholesale ? 'wholesale' : undefined) + persistKey, JSON.stringify({
         customerName, customerPhone, customerAddress, doctorName, billDate,
         prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
-        editBillId, wholesaleGstin,
+        editBillId, wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress,
       }));
     } catch { /* ignore quota errors */ }
   }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
       prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
-      wholesaleGstin, isWholesale]);
+      wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress, isWholesale]);
 
   // ─── Quick Add: add a freshly created product straight into this bill ────
   const handleQuickAddSaved = useCallback((product: Product, qty: number) => {
@@ -1154,6 +1183,38 @@ export default function RecordSale({
       const billId = editBillId || crypto.randomUUID();
       const isGstInclusive = settings?.gst_type === 'inclusive';
 
+      // CGST Rule 46 wants a unique sequential number per financial year, and a
+      // UUID is neither sequential nor within the 16-character limit. The serial
+      // is display-only: bill_id stays the key, so nothing downstream changes.
+      //
+      // Allocated here rather than after the insert because it has to appear on
+      // every row of the bill. Editing reuses the number already on the invoice;
+      // re-numbering a filed invoice would be the actual compliance breach.
+      let billSerial: string | null = null;
+      if (isWholesale) {
+        if (editBillId) {
+          const { data: existing } = await db.from('sales')
+            .select('bill_serial').eq('bill_id', editBillId).limit(1).maybeSingle();
+          billSerial = existing?.bill_serial ?? null;
+        }
+        if (!billSerial) {
+          const { data: serial, error: serialErr } = await db
+            .rpc('next_invoice_number', { p_series: 'WS' });
+          if (serialErr) {
+            // A missing function means the migration has not been applied yet.
+            // The bill is still lawful in every other respect, so save it and
+            // say what is missing rather than refusing the sale.
+            console.warn('[Medstocksy] next_invoice_number unavailable:', serialErr.message);
+            toast({
+              title: 'Invoice number not assigned',
+              description: 'The bill will save, but apply the latest database migration to get sequential numbering.',
+            });
+          } else {
+            billSerial = serial as string;
+          }
+        }
+      }
+
       // receivedNum = how much the customer actually paid right now (can be 0 for pure credit,
       // or a partial amount even on credit mode - e.g. ₹200 upfront on a ₹500 credit sale)
       const receivedNum = receivedAmount !== '' ? Number(receivedAmount) : 0;
@@ -1205,7 +1266,7 @@ export default function RecordSale({
         // this line after both discounts, so it is apportioned rather than
         // recomputed - recomputing taxable x rate would drift by paise.
         const taxableValue = isGstInclusive ? netAfterAll - finalGst : netAfterAll;
-        const split = apportionGst(finalGst, isInterstate);
+        const split = apportionGst(finalGst, effectiveInterstate);
 
         return {
           account_id: profile?.account_id,
@@ -1230,7 +1291,7 @@ export default function RecordSale({
           customer_name: customerName || 'Walk-in Customer',
           customer_phone: customerPhone || null,
           customer_address: customerAddress || null,
-          doctor_name: doctorName || null,
+          doctor_name: isWholesale ? null : (doctorName || null),
           sale_date: billDate,
           prescription_months: prescriptionMonths === '' ? null : Number(prescriptionMonths),
           months_taken: monthsTaken === '' ? null : Number(monthsTaken),
@@ -1242,6 +1303,13 @@ export default function RecordSale({
           sale_type: isWholesale ? 'wholesale' : 'retail',
           wholesale_customer_name: isWholesale ? (customerName.trim() || null) : null,
           wholesale_customer_gstin: isWholesale ? (wholesaleGstin.trim() || null) : null,
+          // Rule 65 and place of supply. Null on retail, so nothing changes there.
+          wholesale_customer_dl: isWholesale ? (wholesaleDl.trim() || null) : null,
+          wholesale_customer_dl_expiry: isWholesale ? (wholesaleDlExpiry || null) : null,
+          buyer_state_code: isWholesale ? (buyerStateCode.length === 2 ? buyerStateCode : null) : null,
+          ship_to_address: isWholesale ? (shipToAddress.trim() || null) : null,
+          bill_serial: billSerial,
+          is_free: false,
         };
       });
 
@@ -1277,7 +1345,7 @@ export default function RecordSale({
               customer_name: customerName || 'Walk-in Customer',
               customer_phone: customerPhone || null,
               customer_address: customerAddress || null,
-              doctor_name: doctorName || null,
+              doctor_name: null,
               sale_date: billDate,
               prescription_months: null,
               months_taken: null,
@@ -1287,6 +1355,15 @@ export default function RecordSale({
               sale_type: 'wholesale',
               wholesale_customer_name: customerName.trim() || null,
               wholesale_customer_gstin: wholesaleGstin.trim() || null,
+              wholesale_customer_dl: wholesaleDl.trim() || null,
+              wholesale_customer_dl_expiry: wholesaleDlExpiry || null,
+              buyer_state_code: buyerStateCode.length === 2 ? buyerStateCode : null,
+              ship_to_address: shipToAddress.trim() || null,
+              bill_serial: billSerial,
+              // Without this a scheme giveaway is indistinguishable from a
+              // genuine zero-value sale, and per-party margin is wrong by
+              // exactly the free quantity.
+              is_free: true,
             }))
         : [];
 
@@ -1402,7 +1479,8 @@ export default function RecordSale({
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, isInterstate, isWholesale, wholesaleGstin]);
+  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
+      wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
   useEffect(() => {
@@ -1850,7 +1928,7 @@ export default function RecordSale({
                       const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
                       setCustomerPhone(digits ? '+91' + digits : '');
                     }}
-                    onKeyDown={enterTo(doctorRef, patientNameRef)}
+                    onKeyDown={enterTo(isWholesale ? addressRef : doctorRef, patientNameRef)}
                     inputMode="numeric"
                     maxLength={10}
                     placeholder="10-digit mobile"
@@ -1859,18 +1937,21 @@ export default function RecordSale({
                 </div>
               </div>
 
-              {/* Doctor */}
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Doctor</span>
-                <input
-                  ref={doctorRef}
-                  value={doctorName}
-                  onChange={e => setDoctorName(e.target.value)}
-                  onKeyDown={enterTo(addressRef, phoneRef)}
-                  placeholder="Name"
-                  className={patientFieldCls}
-                />
-              </div>
+              {/* Doctor - prescription concept, so retail only. A distributor
+                  has no prescriber, and Rule 65 asks for their licence instead. */}
+              {!isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Doctor</span>
+                  <input
+                    ref={doctorRef}
+                    value={doctorName}
+                    onChange={e => setDoctorName(e.target.value)}
+                    onKeyDown={enterTo(addressRef, phoneRef)}
+                    placeholder="Name"
+                    className={patientFieldCls}
+                  />
+                </div>
+              )}
 
               {/* GSTIN - B2B buyer identity, printed on the tax invoice. */}
               {isWholesale && (
@@ -1885,6 +1966,72 @@ export default function RecordSale({
                     title="Buyer GSTIN - printed on the tax invoice"
                     className={cn(patientFieldCls, 'uppercase tracking-wide')}
                   />
+                  {buyerStateCode.length === 2 && sellerStateCode && (
+                    <span
+                      className={cn(
+                        'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                        effectiveInterstate
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-100 text-emerald-800',
+                      )}
+                      title={
+                        effectiveInterstate
+                          ? 'Buyer is in another state, so this invoice is taxed as IGST'
+                          : 'Buyer is in your state, so this invoice is taxed as CGST + SGST'
+                      }
+                    >
+                      {effectiveInterstate ? 'IGST' : 'CGST+SGST'}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Buyer drug licence - Rule 65(4) requires it on a wholesale sale. */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL No</span>
+                  <input
+                    value={wholesaleDl}
+                    onChange={e => setWholesaleDl(e.target.value.toUpperCase().slice(0, 40))}
+                    placeholder="Buyer drug license"
+                    autoComplete="off"
+                    title="Buyer drug license number - required on a wholesale invoice"
+                    className={cn(patientFieldCls, 'uppercase')}
+                  />
+                </div>
+              )}
+
+              {/* Licence validity. A warning, never a block: a mistyped date
+                  must not stop a legitimate sale at the counter. */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL Exp</span>
+                  <input
+                    type="date"
+                    value={wholesaleDlExpiry}
+                    onChange={e => setWholesaleDlExpiry(e.target.value)}
+                    title="Buyer drug license expiry"
+                    className={cn(patientFieldCls, dlExpired && 'ring-1 ring-amber-400 bg-amber-50')}
+                  />
+                  {dlExpired && (
+                    <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                          title="This licence has expired. Supplying against an expired licence is an offence.">
+                      Expired
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Ship-to, when goods go somewhere other than the billing address. */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Ship To</span>
+                  <input
+                    value={shipToAddress}
+                    onChange={e => setShipToAddress(e.target.value)}
+                    placeholder="Only if different from billing address"
+                    className={patientFieldCls}
+                  />
                 </div>
               )}
 
@@ -1895,7 +2042,7 @@ export default function RecordSale({
                   ref={addressRef}
                   value={customerAddress}
                   onChange={e => setCustomerAddress(e.target.value)}
-                  onKeyDown={enterTo(dateRef, doctorRef)}
+                  onKeyDown={enterTo(dateRef, isWholesale ? phoneRef : doctorRef)}
                   placeholder="Area / street"
                   className={patientFieldCls}
                 />

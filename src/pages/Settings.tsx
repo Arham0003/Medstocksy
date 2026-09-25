@@ -56,6 +56,11 @@ interface Account {
   drug_license?: string | null;
   state_code?: string | null;
   is_interstate_billing?: boolean | null;
+  // Seller-side compliance, set once here and read by PrintBill on every
+  // wholesale invoice. Added by 20260925000000_wholesale_compliance.sql.
+  fssai_number?: string | null;
+  dl_form_type?: string | null;
+  drug_license_expiry?: string | null;
 }
 
 // Reusable section header (icon bubble + title + description)
@@ -111,6 +116,7 @@ export default function Settings() {
   // Account-level GST identity. is_interstate_billing decides CGST+SGST vs
   // IGST for every bill - there is no per-bill override by design.
   const [stateCodeState, setStateCodeState] = useState<string>('');
+  const [dlFormTypeState, setDlFormTypeState] = useState<string>('');
   const [interstateState, setInterstateState] = useState<boolean>(false);
   // Wholesale mode. hasPlan decides whether the toggle is shown at all; the
   // toggle itself is what actually unlocks wholesale across the app.
@@ -188,6 +194,8 @@ export default function Settings() {
       // Added by 20260910000000_create_hsn_codes.sql; absent on older databases.
       const accountRaw: any = accountRes.data;
       setStateCodeState(accountRaw?.state_code ?? '');
+      // Added by 20260925000000_wholesale_compliance.sql; absent on older databases.
+      setDlFormTypeState(accountRaw?.dl_form_type ?? '');
       setInterstateState(Boolean(accountRaw?.is_interstate_billing));
     } catch (error: any) {
       toast({
@@ -217,6 +225,8 @@ export default function Settings() {
     const phone = (formData.get('storePhone') as string) || null;
     const gstin = (formData.get('storeGSTIN') as string) || null;
     const drug_license = (formData.get('storeDrugLicense') as string) || null;
+    const drug_license_expiry = (formData.get('storeDrugLicenseExpiry') as string) || null;
+    const fssai_number = (formData.get('storeFssai') as string) || null;
 
     try {
       const { error } = await supabase
@@ -228,6 +238,9 @@ export default function Settings() {
           phone,
           gstin,
           drug_license,
+          drug_license_expiry,
+          fssai_number,
+          dl_form_type: dlFormTypeState || null,
           state_code: stateCodeState || null,
           is_interstate_billing: interstateState,
         } as any)
@@ -240,6 +253,9 @@ export default function Settings() {
           error.message?.includes('phone') ||
           error.message?.includes('gstin') ||
           error.message?.includes('state_code') ||
+          error.message?.includes('fssai_number') ||
+          error.message?.includes('dl_form_type') ||
+          error.message?.includes('drug_license_expiry') ||
           error.message?.includes('is_interstate_billing') ||
           error.message?.includes('manager_name')
         ) {
@@ -499,6 +515,59 @@ export default function Settings() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Printed on every bill as required by pharmacy regulations.
+                    </p>
+                  </div>
+
+                  {/* Licence form type and validity. Rule 65 wants the licence a
+                      wholesaler supplies under to be identifiable on the invoice,
+                      so these are set once here rather than typed per bill. */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <FieldLabel htmlFor="storeDlFormType" icon={ShieldCheck}>Drug License Form</FieldLabel>
+                      <Select value={dlFormTypeState || undefined} onValueChange={setDlFormTypeState}>
+                        <SelectTrigger id="storeDlFormType">
+                          <SelectValue placeholder="Select form type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="20">Form 20 - retail, non-schedule C</SelectItem>
+                          <SelectItem value="20B">Form 20B - wholesale, non-schedule C</SelectItem>
+                          <SelectItem value="21">Form 21 - retail, schedule C</SelectItem>
+                          <SelectItem value="21B">Form 21B - wholesale, schedule C</SelectItem>
+                          <SelectItem value="20G">Form 20G - restricted licence</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Printed beside the licence number on wholesale invoices.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <FieldLabel htmlFor="storeDrugLicenseExpiry" icon={Clock}>Drug License Valid Until</FieldLabel>
+                      <Input
+                        id="storeDrugLicenseExpiry"
+                        name="storeDrugLicenseExpiry"
+                        type="date"
+                        defaultValue={account?.drug_license_expiry || ''}
+                        key={account?.drug_license_expiry || 'dl-exp'}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Shown on wholesale invoices. Renew before this date.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <FieldLabel htmlFor="storeFssai" icon={Fingerprint}>FSSAI License Number</FieldLabel>
+                    <Input
+                      id="storeFssai"
+                      name="storeFssai"
+                      defaultValue={account?.fssai_number || ''}
+                      placeholder="14-digit FSSAI number (optional)"
+                      maxLength={14}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Required on invoices covering nutraceuticals or food products.
+                      Printed on wholesale invoices only when set.
                     </p>
                   </div>
 

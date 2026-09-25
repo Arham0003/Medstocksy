@@ -46,6 +46,8 @@ interface Supplier {
   email: string | null;
   address: string | null;
   gst_number: string | null;
+  /** Supplier drug licence. Added by 20260925000000_wholesale_compliance.sql. */
+  drug_license?: string | null;
   created_at: string | null;
 }
 
@@ -146,7 +148,7 @@ export default function Suppliers() {
 
   // Form state
   const [formData, setFormData] = useState({
-    name: '', contact_person: '', phone: '', email: '', address: '', gst_number: ''
+    name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '', drug_license: ''
   });
 
   const fetchData = async () => {
@@ -301,6 +303,7 @@ export default function Suppliers() {
         email: formData.email.trim() || null,
         address: formData.address.trim() || null,
         gst_number: formData.gst_number.trim() || null,
+        drug_license: formData.drug_license.trim() || null,
       };
       if (editingSupplierId) {
         // UPDATE path
@@ -323,7 +326,7 @@ export default function Suppliers() {
       }
       setIsRegisterOpen(false);
       setEditingSupplierId(null);
-      setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+      setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '', drug_license: '' });
       // Keep the detail dialog showing the updated row
       if (editingSupplierId && selectedSupplier?.id === editingSupplierId) {
         // Local optimistic - fetchData will overwrite with truth
@@ -347,6 +350,7 @@ export default function Suppliers() {
       email: s.email || '',
       address: s.address || '',
       gst_number: s.gst_number || '',
+      drug_license: s.drug_license || '',
     });
     setIsRegisterOpen(true);
   };
@@ -596,11 +600,11 @@ export default function Suppliers() {
           open={isRegisterOpen}
           onOpenChange={(open) => {
             if (!open) {
-              const hasData = formData.name !== '' || formData.phone !== '' || formData.email !== '' || formData.address !== '' || formData.gst_number !== '' || formData.contact_person !== '';
+              const hasData = formData.name !== '' || formData.phone !== '' || formData.email !== '' || formData.address !== '' || formData.gst_number !== '' || formData.contact_person !== '' || formData.drug_license !== '';
               if (!hasData) {
                 setIsRegisterOpen(false);
                 setEditingSupplierId(null);
-                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '', drug_license: '' });
                 return;
               }
               setExitConfirmOpen(true);
@@ -733,6 +737,24 @@ export default function Suppliers() {
                       : isValidGSTIN(formData.gst_number)
                       ? 'Format looks correct.'
                       : "Doesn't match the standard 15-char GSTIN pattern. You can still save it."}
+                  </p>
+                </div>
+
+                {/* Drug licence. Stocking from an unlicensed supplier is the
+                    purchase-side mirror of the Rule 65 obligation on sales. */}
+                <div className="space-y-1.5">
+                  <Label htmlFor="supplier-dl" className="text-sm font-medium">Drug License Number</Label>
+                  <Input
+                    id="supplier-dl"
+                    value={formData.drug_license}
+                    onChange={e => setFormData(p => ({ ...p, drug_license: e.target.value.toUpperCase() }))}
+                    placeholder="e.g. 20B/MH/2024/12345"
+                    maxLength={40}
+                    className="font-mono uppercase"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    The licence this supplier sells under. Recommended for every
+                    pharmaceutical supplier, and worth having on file at inspection.
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -1649,7 +1671,7 @@ export default function Suppliers() {
                 setExitConfirmOpen(false);
                 setIsRegisterOpen(false);
                 setEditingSupplierId(null);
-                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '' });
+                setFormData({ name: '', contact_person: '', phone: '', email: '', address: '', gst_number: '', drug_license: '' });
               }}
             >
               Yes

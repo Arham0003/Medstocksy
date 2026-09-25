@@ -96,6 +96,9 @@ export default function CustomerRelation() {
           .from('sales')
           .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled')
           .eq('account_id', profile?.account_id)
+          // Retail only. Wholesale parties have no refill lifecycle, so they are
+          // permanently out of this screen rather than filtered in the UI.
+          .eq('sale_type', 'retail')
           .not('customer_phone', 'is', null)
           .neq('customer_phone', '')
           .order('created_at', { ascending: false });
@@ -106,6 +109,7 @@ export default function CustomerRelation() {
               .from('sales')
               .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled')
               .eq('account_id', profile?.account_id)
+              .eq('sale_type', 'retail')
               .not('customer_phone', 'is', null)
               .neq('customer_phone', '')
               .order('created_at', { ascending: false });
@@ -154,6 +158,9 @@ export default function CustomerRelation() {
         .from('sales')
         .delete()
         .eq('account_id', profile.account_id)
+        // Scoped to retail: a shared phone number must never let a CRM delete
+        // remove a wholesale tax invoice.
+        .eq('sale_type', 'retail')
         .eq('customer_phone', customerToDelete.phone);
 
       if (error) throw error;

@@ -38,6 +38,13 @@ interface WholesaleSaleRow {
   customer_name: string | null;
   wholesale_customer_name: string | null;
   wholesale_customer_gstin: string | null;
+  cgst_amount?: number | null;
+  sgst_amount?: number | null;
+  igst_amount?: number | null;
+  gst_rate?: number | null;
+  buyer_state_code?: string | null;
+  bill_serial?: string | null;
+  return_type?: string | null;
 }
 
 /** One wholesale invoice, folded up from its sale lines. */
@@ -51,6 +58,18 @@ interface WholesaleBill {
   gst: number;
   total: number;
   payment_mode: string;
+  /** Tax split, kept apart because GSTR-1 Table 4 wants the components. */
+  cgst: number;
+  sgst: number;
+  igst: number;
+  /** Highest rate on the invoice; GSTR-1 wants a rate per line. */
+  rate: number;
+  /** Two-digit buyer state code. */
+  pos: string;
+  /** Sequential number where one was allocated. */
+  serial: string;
+  /** A bill made entirely of reversal rows is a credit note, not an invoice. */
+  isCreditNote: boolean;
 }
 
 export default function WholesaleReports() {
@@ -91,7 +110,14 @@ export default function WholesaleReports() {
           payment_mode,
           customer_name,
           wholesale_customer_name,
-          wholesale_customer_gstin
+          wholesale_customer_gstin,
+          cgst_amount,
+          sgst_amount,
+          igst_amount,
+          gst_rate,
+          buyer_state_code,
+          bill_serial,
+          return_type
         `)
         .eq('sale_type', 'wholesale')
         .order('created_at', { ascending: false });
@@ -128,6 +154,14 @@ export default function WholesaleReports() {
           existing.taxable += taxable;
           existing.gst += gst;
           existing.total += total;
+          existing.cgst += Number(row.cgst_amount) || 0;
+          existing.sgst += Number(row.sgst_amount) || 0;
+          existing.igst += Number(row.igst_amount) || 0;
+          existing.rate = Math.max(existing.rate, Number(row.gst_rate) || 0);
+          if (!existing.pos && row.buyer_state_code) existing.pos = row.buyer_state_code;
+          if (!existing.serial && row.bill_serial) existing.serial = row.bill_serial;
+          // One priced line is enough to make the document an invoice.
+          if (!row.return_type) existing.isCreditNote = false;
         } else {
           grouped.set(key, {
             bill_id: row.bill_id || '',
@@ -139,6 +173,13 @@ export default function WholesaleReports() {
             gst,
             total,
             payment_mode: row.payment_mode || 'cash',
+            cgst: Number(row.cgst_amount) || 0,
+            sgst: Number(row.sgst_amount) || 0,
+            igst: Number(row.igst_amount) || 0,
+            rate: Number(row.gst_rate) || 0,
+            pos: row.buyer_state_code || '',
+            serial: row.bill_serial || '',
+            isCreditNote: !!row.return_type,
           });
         }
       }
@@ -244,7 +285,7 @@ export default function WholesaleReports() {
             exportToCSV(
               filteredBills.map(b => ({
                 Date: b.date,
-                Invoice: b.bill_id.slice(0, 8).toUpperCase(),
+                Invoice: b.serial || b.bill_id.slice(0, 8).toUpperCase(),
                 Customer: b.customer,
                 GSTIN: b.gstin,
                 Items: b.items,
@@ -259,6 +300,41 @@ export default function WholesaleReports() {
         >
           <Download className="h-4 w-4" />
           Export
+        </Button>
+        {/* GSTR-1 Table 4: the B2B section, in the shape the return wants.
+            Column names follow the GST portal's own offline-utility headings so
+            a CA can map it without renaming anything. */}
+        <Button
+          variant="outline"
+          className="flex gap-2 items-center text-base py-2.5 px-4"
+          disabled={filteredBills.length === 0}
+          title="One row per invoice, with the tax split separated, for GSTR-1 Table 4 (B2B)"
+          onClick={() =>
+            exportToCSV(
+              filteredBills.map(b => ({
+                'GSTIN/UIN of Recipient': b.gstin,
+                'Receiver Name': b.customer,
+                'Invoice Number': b.serial || b.bill_id.slice(0, 8).toUpperCase(),
+                'Invoice date': b.date.split('-').reverse().join('-'),
+                'Invoice Value': b.total.toFixed(2),
+                'Place Of Supply': b.pos,
+                'Reverse Charge': 'N',
+                'Applicable % of Tax Rate': '',
+                'Invoice Type': b.isCreditNote ? 'Credit Note' : 'Regular B2B',
+                'E-Commerce GSTIN': '',
+                Rate: b.rate ? b.rate.toFixed(2) : '',
+                'Taxable Value': b.taxable.toFixed(2),
+                'Integrated Tax Amount': b.igst.toFixed(2),
+                'Central Tax Amount': b.cgst.toFixed(2),
+                'State/UT Tax Amount': b.sgst.toFixed(2),
+                'Cess Amount': '0.00',
+              })),
+              'gstr1-table4-b2b'
+            )
+          }
+        >
+          <Download className="h-4 w-4" />
+          GSTR-1 B2B
         </Button>
       </div>
 

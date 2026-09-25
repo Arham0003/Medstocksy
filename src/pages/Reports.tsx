@@ -122,6 +122,11 @@ export default function Reports() {
   const [expiringBatches, setExpiringBatches] = useState<ExpiringBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('7');
+  // Channel filter, opt-in. The default stays 'all' so these totals are exactly
+  // what they were before the filter existed: changing the default would move
+  // numbers the owner already reads, which is a regression even when the new
+  // number is the more useful one. Selecting Retail gives the cleaner figure.
+  const [channel, setChannel] = useState<'retail' | 'wholesale' | 'all'>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isProfitVisible, setIsProfitVisible] = useState(false);
@@ -140,6 +145,11 @@ export default function Reports() {
     try {
       setLoading(true);
       
+      // Applied to every sales query below. 'all' leaves the query untouched,
+      // so it behaves exactly as this page did before the filter existed.
+      const byChannel = <T extends { eq: (col: string, val: string) => T }>(q: T): T =>
+        (channel === 'all' ? q : q.eq('sale_type', channel));
+
       // --- STEP 1: Fetch Sales Data ---
       // Use 'as any' to avoid deep type instantiation errors in complex queries
       let salesQuery = (supabase as any)
@@ -170,7 +180,7 @@ export default function Reports() {
         salesQuery = salesQuery.gte('sale_date', fromDateStr);
       }
 
-      let { data: rawSales, error: salesError } = await salesQuery;
+      let { data: rawSales, error: salesError } = await byChannel(salesQuery);
 
       // Fallback: If newer columns are missing, try a simpler query
       if (salesError && (salesError.message.includes('column') || salesError.message.includes('sale_date'))) {
@@ -193,7 +203,7 @@ export default function Reports() {
           fallbackQuery = fallbackQuery.gte('created_at', fromDateStr);
         }
 
-        const res = await fallbackQuery;
+        const res = await byChannel(fallbackQuery);
         rawSales = res.data;
         salesError = res.error;
       }
@@ -261,7 +271,7 @@ export default function Reports() {
         productSalesQuery = productSalesQuery.gte('sale_date', fromDateStr);
       }
 
-      let { data: productData, error: productError } = await productSalesQuery;
+      let { data: productData, error: productError } = await byChannel(productSalesQuery);
 
       if (productError && productError.message.includes('column')) {
         let fallbackPQ = (supabase as any)
@@ -274,7 +284,7 @@ export default function Reports() {
         } else {
           fallbackPQ = fallbackPQ.gte('created_at', fromDateStr);
         }
-        const res = await fallbackPQ;
+        const res = await byChannel(fallbackPQ);
         productData = res.data;
         productError = res.error;
       }
@@ -295,10 +305,12 @@ export default function Reports() {
 
       // --- STEP 3: Outstanding Credit ---
       try {
-        const { data: allUnsettled, error: unsettledError } = await (supabase as any)
-          .from('sales')
-          .select('total_price, received_amount')
-          .eq('is_settled', false);
+        const { data: allUnsettled, error: unsettledError } = await byChannel(
+          (supabase as any)
+            .from('sales')
+            .select('total_price, received_amount')
+            .eq('is_settled', false),
+        );
 
         if (!unsettledError && allUnsettled) {
           const total = allUnsettled.reduce((sum: number, s: any) => {
@@ -383,7 +395,7 @@ export default function Reports() {
 
   useEffect(() => {
     fetchReports();
-  }, [dateRange, startDate, endDate]);
+  }, [dateRange, startDate, endDate, channel]);
 
   const exportToCSV = (data: any[], filename: string) => {
     const headers = Object.keys(data[0] || {});
@@ -558,6 +570,18 @@ export default function Reports() {
                   <SelectItem value="30">Last 30 days</SelectItem>
                   <SelectItem value="90">Last 90 days</SelectItem>
                   <SelectItem value="custom">Custom range</SelectItem>
+                </SelectContent>
+              </Select>
+              {/* Channel. Defaults to both, so existing totals are unchanged.
+                  Retail-only is the figure to use for retail stock decisions. */}
+              <Select value={channel} onValueChange={(v) => setChannel(v as 'retail' | 'wholesale' | 'all')}>
+                <SelectTrigger className="w-full sm:w-40" title="Which sales these totals cover">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Both channels</SelectItem>
+                  <SelectItem value="retail">Retail only</SelectItem>
+                  <SelectItem value="wholesale">Wholesale only</SelectItem>
                 </SelectContent>
               </Select>
               {dateRange === 'custom' && (

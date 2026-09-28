@@ -1,14 +1,14 @@
 -- ============================================================
--- Migration 1 — HSN Codes Master + Account GST Identity
+-- Migration 1 - HSN Codes Master + Account GST Identity
 -- Plan: Lean Compliance Plan, Phase A / Migration 1
 --
 -- Adds:
---   * public.hsn_codes  — per-account HSN → GST rate lookup (GSTR-1 source of truth)
---   * products.hsn_code — already present in 20260129000000_add_pharmacy_fields.sql,
+--   * public.hsn_codes  - per-account HSN → GST rate lookup (GSTR-1 source of truth)
+--   * products.hsn_code - already present in 20260129000000_add_pharmacy_fields.sql,
 --                         kept here as an idempotent no-op so this file stands alone
 --   * accounts.state_code / accounts.is_interstate_billing
 --
--- Interstate decision (plan Q2): default FALSE — CGST + SGST always.
+-- Interstate decision (plan Q2): default FALSE - CGST + SGST always.
 -- The flag lives at ACCOUNT level, not per sale. Flip it in Settings if the
 -- store starts billing institutions in another state.
 -- ============================================================
@@ -38,7 +38,7 @@ COMMENT ON TABLE  public.hsn_codes            IS 'Per-account HSN master. Single
 COMMENT ON COLUMN public.hsn_codes.gst_rate   IS 'Total GST %. Split 50/50 into CGST+SGST for intra-state, or booked as IGST when the account bills interstate.';
 
 -- ------------------------------------------------------------
--- products.hsn_code — ties a product to its HSN rate.
+-- products.hsn_code - ties a product to its HSN rate.
 -- Already added by 20260129000000_add_pharmacy_fields.sql; no-op there.
 -- products.gst is retained as the fallback rate for products with no HSN.
 -- ------------------------------------------------------------
@@ -57,4 +57,4 @@ ALTER TABLE public.accounts
 COMMENT ON COLUMN public.accounts.state_code            IS 'Two-digit GST state code of the store (e.g. 27 = Maharashtra).';
 COMMENT ON COLUMN public.accounts.is_interstate_billing IS 'FALSE (default) = CGST+SGST on every bill. TRUE = IGST. Account-wide, no per-bill override.';
 
--- HSN seed data is intentionally NOT run here — see supabase/seed_hsn_codes.sql.
+-- HSN seed data is intentionally NOT run here - see supabase/seed_hsn_codes.sql.

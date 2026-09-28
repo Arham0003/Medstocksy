@@ -1,5 +1,5 @@
 -- ============================================================
--- B2 — deduct_fefo()
+-- B2 - deduct_fefo()
 -- Plan: Lean Compliance Plan, Phase B / B2
 --
 -- Consumes stock oldest-expiry-first and reports which batches were hit, at

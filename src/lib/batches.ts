@@ -15,7 +15,7 @@ export interface StockBatch {
  * Days of shelf life a batch must still have to be sellable.
  *
  * 0 keeps the plan's default: block only genuinely expired stock. Raise this
- * to 90 to enforce the Schedule M quarantine window — it is passed straight
+ * to 90 to enforce the Schedule M quarantine window - it is passed straight
  * through to deduct_fefo(), so the UI and the database agree.
  */
 export const EXPIRY_QUARANTINE_DAYS = 90;
@@ -30,7 +30,7 @@ const isoDaysFromNow = (days: number) => {
  * Sellable batches for a product, nearest expiry first (FEFO).
  *
  * Returns [] both when the product genuinely has no batches and when the
- * stock_batches table has not been migrated yet — callers fall back to the
+ * stock_batches table has not been migrated yet - callers fall back to the
  * product-level batch fields in either case, so billing never blocks on this.
  */
 export async function fetchFefoBatches(

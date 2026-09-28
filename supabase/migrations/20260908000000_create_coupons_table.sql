@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS coupons (
 -- Index for fast code lookup
 CREATE INDEX IF NOT EXISTS coupons_code_idx ON coupons (UPPER(code));
 
--- RLS: block all direct client access — only service_role (edge functions) can touch this table
+-- RLS: block all direct client access - only service_role (edge functions) can touch this table
 ALTER TABLE coupons ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "No direct client access" ON coupons

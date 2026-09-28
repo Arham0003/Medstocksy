@@ -1,5 +1,5 @@
 -- ============================================================
--- B3 — Purchase return: ITC reversal + batch ledger
+-- B3 - Purchase return: ITC reversal + batch ledger
 -- Plan: Lean Compliance Plan, Phase B / B3
 --
 -- Two deviations from the plan's draft, both deliberate:

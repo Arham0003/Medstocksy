@@ -279,7 +279,7 @@ export default function CustomerRelation() {
       if (!existing || new Date(existing.lastPurchase || 0) < lastDate) {
         byKey.set(key, { 
           ...candidate, 
-          totalBalance: 0, // placeholder — recalculated after loop
+          totalBalance: 0, // placeholder - recalculated after loop
           allBills: [...(existing?.allBills || []), s] 
         });
       } else {
@@ -420,10 +420,10 @@ export default function CustomerRelation() {
       try {
         if ((navigator as any).canShare(shareData)) {
           await (navigator as any).share(shareData);
-          return; // success — bail out before falling through to wa.me
+          return; // success - bail out before falling through to wa.me
         }
       } catch (err: any) {
-        // User cancelled the share sheet — that's fine, don't fall through
+        // User cancelled the share sheet - that's fine, don't fall through
         if (err?.name === 'AbortError') return;
         // Other share errors fall through to the URL-based fallback below
       }
@@ -492,7 +492,7 @@ export default function CustomerRelation() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Total Customers</p>
-            <p className="text-base font-semibold mt-0.5">{loading ? '—' : customers.length}</p>
+            <p className="text-base font-semibold mt-0.5">{loading ? '-' : customers.length}</p>
           </div>
         </div>
         <div className="rounded-md border bg-card p-3 flex items-center gap-3">
@@ -501,7 +501,7 @@ export default function CustomerRelation() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Refill Due</p>
-            <p className="text-base font-semibold mt-0.5">{loading ? '—' : statusCounts.due}</p>
+            <p className="text-base font-semibold mt-0.5">{loading ? '-' : statusCounts.due}</p>
           </div>
         </div>
         <div className="rounded-md border bg-card p-3 flex items-center gap-3">
@@ -510,7 +510,7 @@ export default function CustomerRelation() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Active Course</p>
-            <p className="text-base font-semibold mt-0.5">{loading ? '—' : statusCounts.active}</p>
+            <p className="text-base font-semibold mt-0.5">{loading ? '-' : statusCounts.active}</p>
           </div>
         </div>
         <div className="rounded-md border bg-card p-3 flex items-center gap-3">
@@ -519,7 +519,7 @@ export default function CustomerRelation() {
           </div>
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Receivables</p>
-            <p className="text-base font-semibold text-orange-700 mt-0.5 truncate">{loading ? '—' : formatINR(totalReceivables)}</p>
+            <p className="text-base font-semibold text-orange-700 mt-0.5 truncate">{loading ? '-' : formatINR(totalReceivables)}</p>
             {customersWithDues > 0 && (
               <p className="text-[10px] text-muted-foreground leading-none">{customersWithDues} customer{customersWithDues === 1 ? '' : 's'}</p>
             )}
@@ -533,7 +533,7 @@ export default function CustomerRelation() {
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <MessageCircle className="h-4 w-4 text-emerald-600" />
             Reminder note
-            <span className="text-xs font-normal text-muted-foreground">— prepended to WhatsApp messages</span>
+            <span className="text-xs font-normal text-muted-foreground">- prepended to WhatsApp messages</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-0 space-y-2">
@@ -862,7 +862,7 @@ export default function CustomerRelation() {
                     {filteredCustomers.map((c) => {
                       const isExpanded = expandedCustomer === c.key;
                       const phoneDigits = normalizePhone(c.phone);
-                      const dueStr = c.nextDueDate ? c.nextDueDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                      const dueStr = c.nextDueDate ? c.nextDueDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
                       const statusClass =
                         c.status === 'due' ? 'bg-red-50 text-red-700 border-red-200'
                         : c.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -880,7 +880,7 @@ export default function CustomerRelation() {
                                 {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                                 <div className="min-w-0">
                                   <p className="font-medium truncate">{c.name}</p>
-                                  <p className="text-xs text-muted-foreground">{c.phone || '—'}</p>
+                                  <p className="text-xs text-muted-foreground">{c.phone || '-'}</p>
                                 </div>
                               </div>
                             </TableCell>
@@ -891,13 +891,13 @@ export default function CustomerRelation() {
                                 </div>
                               )}
                               <p className="text-xs text-muted-foreground">
-                                {c.lastPurchase ? new Date(c.lastPurchase).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                                {c.lastPurchase ? new Date(c.lastPurchase).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-'}
                               </p>
                             </TableCell>
                             <TableCell className="py-2.5 text-center text-sm">
                               {c.prescriptionMonths != null || c.monthsTaken != null
                                 ? `${Math.max(1, c.monthsTaken ?? 1)}/${c.prescriptionMonths ?? 0}m`
-                                : '—'}
+                                : '-'}
                             </TableCell>
                             <TableCell className="hidden lg:table-cell py-2.5 text-sm">{dueStr}</TableCell>
                             <TableCell className="py-2.5 text-center">
@@ -908,7 +908,7 @@ export default function CustomerRelation() {
                             <TableCell className="py-2.5 text-right">
                               {c.totalBalance > 0
                                 ? <span className="font-semibold text-orange-600">{formatINR(c.totalBalance)}</span>
-                                : <span className="text-muted-foreground text-sm">—</span>}
+                                : <span className="text-muted-foreground text-sm">-</span>}
                             </TableCell>
                             <TableCell className="py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-end gap-1">
@@ -940,7 +940,7 @@ export default function CustomerRelation() {
                                       setIsSettleDialogOpen(true);
                                     }}
                                     className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 font-medium"
-                                    title={`Pay dues — ${formatINR(c.totalBalance)} outstanding`}
+                                    title={`Pay dues - ${formatINR(c.totalBalance)} outstanding`}
                                   >
                                     <Wallet className="h-4 w-4" /> Pay dues
                                   </button>
@@ -1011,7 +1011,7 @@ export default function CustomerRelation() {
                                                   <TableCell className="py-2 text-sm">
                                                     {bill.doctor_name
                                                       ? <span className="inline-flex items-center gap-1"><Stethoscope className="h-3 w-3 text-emerald-600" /> {bill.doctor_name}</span>
-                                                      : <span className="text-muted-foreground">—</span>}
+                                                      : <span className="text-muted-foreground">-</span>}
                                                   </TableCell>
                                                   <TableCell className="py-2 text-center">
                                                     <Badge

@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 2 — Stock Batches (FEFO ledger)
+-- Migration 2 - Stock Batches (FEFO ledger)
 -- Plan: Lean Compliance Plan, Phase A / Migration 2
 --
 -- !! TAKE A SUPABASE BACKUP BEFORE RUNNING. !!

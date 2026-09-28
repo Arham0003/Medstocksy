@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+﻿import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/db conn/supabaseClient';
 import { Button } from '@/components/ui/button';
@@ -43,8 +43,8 @@ interface SaleItem {
 
 interface BillData {
     id: string; // bill_id
-    date: string;          // sale_date (date only) — used as the canonical bill date
-    created_at: string;    // full TIMESTAMPTZ from the first row — frozen at creation
+    date: string;          // sale_date (date only) ΓÇö used as the canonical bill date
+    created_at: string;    // full TIMESTAMPTZ from the first row ΓÇö frozen at creation
     account_id: string;
     customer_name: string | null;
     customer_phone: string | null;
@@ -87,7 +87,7 @@ export default function PrintBill() {
     const [billData, setBillData] = useState<BillData | null>(null);
 
     /**
-     * HSN-wise tax summary — the block a GST invoice must carry and the shape
+     * HSN-wise tax summary ΓÇö the block a GST invoice must carry and the shape
      * GSTR-1 wants. Taxable value and tax are summed per HSN + rate pair.
      */
     const hsnSummary = useMemo(() => {
@@ -127,7 +127,7 @@ export default function PrintBill() {
     const [format, setFormat] = useState<'A5' | 'A4' | 'T80'>('A5');
     const [dateOverride, setDateOverride] = useState<string>(''); // YYYY-MM-DD, set once data loads
 
-    // ponytail: @page must live in document.head — browsers ignore it inside DOM nodes
+    // ponytail: @page must live in document.head ΓÇö browsers ignore it inside DOM nodes
     useEffect(() => {
         const FORMATS_STATIC = {
             A5:  'A5 portrait',
@@ -166,7 +166,7 @@ export default function PrintBill() {
     const [removingItemId, setRemovingItemId] = useState<string | null>(null);
     const [editGlobalDiscount, setEditGlobalDiscount] = useState(0);
 
-    // Account-wide tax/currency settings — drives whether new items get GST and how it's calculated
+    // Account-wide tax/currency settings ΓÇö drives whether new items get GST and how it's calculated
     const [taxSettings, setTaxSettings] = useState<{ gst_enabled: boolean; gst_type: 'inclusive' | 'exclusive'; default_gst_rate: number }>({
         gst_enabled: true,
         gst_type: 'exclusive',
@@ -189,7 +189,7 @@ export default function PrintBill() {
         }
     };
 
-    // ─── Actions (shared by buttons and keyboard shortcuts) ───────────────────
+    // ΓöÇΓöÇΓöÇ Actions (shared by buttons and keyboard shortcuts) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     const doEdit = useCallback(async () => {
         if (!billId || !billData) return;
         // Respect the account's configurable sales-edit window (default 24h).
@@ -201,7 +201,7 @@ export default function PrintBill() {
                 .single();
             const v = data?.sales_edit_window_hours;
             if (typeof v === 'number' && v > 0) windowHours = v;
-        } catch { /* column may not exist yet → default 24 */ }
+        } catch { /* column may not exist yet ΓåÆ default 24 */ }
         const ageHours = (Date.now() - new Date(billData.created_at).getTime()) / 3600000;
         if (ageHours > windowHours) {
             toast({
@@ -228,7 +228,7 @@ export default function PrintBill() {
         window.print();
     }, [billId]);
 
-    // P = Print · F2 = Edit · ←/→ = Change paper size
+    // P = Print ┬╖ F2 = Edit ┬╖ ΓåÉ/ΓåÆ = Change paper size
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.ctrlKey || e.altKey || e.metaKey) return; // leave Ctrl+P etc. to the browser
@@ -364,7 +364,7 @@ export default function PrintBill() {
                     .single();
 
                 if (accountError) {
-                    // Column may not exist yet — fall back to base columns
+                    // Column may not exist yet ΓÇö fall back to base columns
                     const retry = await supabase
                         .from('accounts')
                         .select('name, address, phone, gstin')
@@ -438,7 +438,7 @@ export default function PrintBill() {
                     id: billId,
                     account_id: firstItem.account_id,
                     date: firstItem.sale_date || originalCreatedAt || firstItem.created_at,
-                    created_at: originalCreatedAt || firstItem.created_at, // full timestamp — frozen at first save
+                    created_at: originalCreatedAt || firstItem.created_at, // full timestamp ΓÇö frozen at first save
                     customer_name: firstItem.customer_name,
                     customer_phone: firstItem.customer_phone,
                     customer_address: firstItem.customer_address,
@@ -542,7 +542,7 @@ export default function PrintBill() {
 
         setIsAddingItem(true);
         try {
-            // Compute net + GST + total — respects account-level gst_enabled / gst_type
+            // Compute net + GST + total ΓÇö respects account-level gst_enabled / gst_type
             const gross = Math.round(addRate * addQty * 100) / 100;
             // Apply global discount first
             const discAmt = Math.round((gross * editGlobalDiscount) / 100 * 100) / 100;
@@ -632,7 +632,7 @@ export default function PrintBill() {
     const effectiveDate = dateOverride || billData.date;
     const invoiceDate = (() => {
         const d = new Date(effectiveDate);
-        // date-only string → parse as local midnight
+        // date-only string ΓåÆ parse as local midnight
         const [y, m, day] = effectiveDate.slice(0, 10).split('-').map(Number);
         const local = new Date(y, m - 1, day);
         return local.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -677,7 +677,7 @@ export default function PrintBill() {
                         </button>
                     ))}
                 </div>
-                {/* Date override — screen only */}
+                {/* Date override ΓÇö screen only */}
                 <div className="flex items-center gap-1.5">
                     <label htmlFor="bill-date-override" className="text-xs text-muted-foreground font-medium">Bill Date:</label>
                     <input
@@ -793,7 +793,7 @@ export default function PrintBill() {
                             <img src="/medstocksy-logo.png" alt="Logo" style={{ width: '14mm', height: '14mm', objectFit: 'contain', display: 'block', margin: '0 auto 1mm' }} />
                             <div style={{ fontSize: '11pt', fontWeight: 900, letterSpacing: '0.5px' }}>{businessDetails?.name || 'PHARMA'}</div>
                             {businessDetails?.address && <div style={{ fontSize: '7pt', color: '#333' }}>{businessDetails.address}</div>}
-                            {businessDetails?.phone && <div style={{ fontSize: '7pt' }}>📞 {businessDetails.phone}</div>}
+                            {businessDetails?.phone && <div style={{ fontSize: '7pt' }}>≡ƒô₧ {businessDetails.phone}</div>}
                             {businessDetails?.gstin && <div style={{ fontSize: '6.5pt', color: '#555' }}>GSTIN: {businessDetails.gstin}</div>}
                             {businessDetails?.drug_license && <div style={{ fontSize: '6.5pt', color: '#555' }}>DL: {businessDetails.drug_license}</div>}
                         </div>
@@ -803,7 +803,7 @@ export default function PrintBill() {
                         {/* Bill meta */}
                         <div style={{ fontSize: '7pt', marginBottom: '1.5mm' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ fontWeight: 700 }}>BILL OF SUPPLY</span>
+                                <span style={{ fontWeight: 700 }}>TAX INVOICE</span>
                                 <span style={{ fontWeight: 700 }}>{invoiceDate}</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -822,7 +822,7 @@ export default function PrintBill() {
 
                         <div style={{ borderTop: '1px dashed #666', margin: '0 0 1.5mm' }} />
 
-                        {/* Items table — 5 cols only (name wraps, no HSN/Batch/Exp/GST split) */}
+                        {/* Items table ΓÇö 5 cols only (name wraps, no HSN/Batch/Exp/GST split) */}
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #000' }}>
@@ -852,11 +852,11 @@ export default function PrintBill() {
                                             <td style={{ textAlign: 'center', verticalAlign: 'top', paddingTop: '1.5px' }}>
                                                 {item.sub_qty ? `${item.quantity}+${item.sub_qty}` : item.quantity}
                                             </td>
-                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px' }}>₹{mrp.toFixed(2)}</td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px' }}>Γé╣{mrp.toFixed(2)}</td>
                                             <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontSize: '6.5pt' }}>
                                                 {item.discount_percentage ? item.discount_percentage + '%' : '-'}
                                             </td>
-                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontWeight: 700 }}>₹{item.total_price.toFixed(2)}</td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontWeight: 700 }}>Γé╣{item.total_price.toFixed(2)}</td>
                                         </tr>
                                     );
                                 })}
@@ -868,22 +868,22 @@ export default function PrintBill() {
                         {/* Totals */}
                         <div style={{ fontSize: '7.5pt' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span>Subtotal</span><span>₹{billData.subtotal.toFixed(2)}</span>
+                                <span>Subtotal</span><span>Γé╣{billData.subtotal.toFixed(2)}</span>
                             </div>
                             {billData.total_discount > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#0d6e3a' }}>
-                                    <span>Savings</span><span>-₹{billData.total_discount.toFixed(2)}</span>
+                                    <span>Savings</span><span>-Γé╣{billData.total_discount.toFixed(2)}</span>
                                 </div>
                             )}
                             {billData.total_gst > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
-                                    <span>GST</span><span>₹{billData.total_gst.toFixed(2)}</span>
+                                    <span>GST</span><span>Γé╣{billData.total_gst.toFixed(2)}</span>
                                 </div>
                             )}
                         </div>
                         <div style={{ borderTop: '2px solid #000', margin: '1.5mm 0 1mm' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '10pt' }}>
-                            <span>TOTAL</span><span>₹{billData.total_amount.toFixed(2)}</span>
+                            <span>TOTAL</span><span>Γé╣{billData.total_amount.toFixed(2)}</span>
                         </div>
 
                         <div style={{ borderTop: '1px dashed #666', margin: '2mm 0 1.5mm' }} />
@@ -922,7 +922,7 @@ export default function PrintBill() {
 
                         {/* Payment + T&C */}
                         <div style={{ fontSize: '6.5pt', color: '#333', marginBottom: '2mm' }}>
-                            <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> — Received with thanks.</div>
+                            <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> ΓÇö Received with thanks.</div>
                             <div style={{ marginTop: '1mm', color: '#555', fontSize: '6pt' }}>
                                 T&C: Goods once sold will not be taken back. GST incl. in MRP. Subject to local jurisdiction.{' '}
                                 <span style={{ color: '#0d6e3a', fontWeight: 700 }}>Get well soon!</span>
@@ -966,13 +966,13 @@ export default function PrintBill() {
                             </div>
                             {/* Business details */}
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>BILL OF SUPPLY</div>
+                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>TAX INVOICE</div>
                                 <div style={{ fontSize: '10pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
                                     {businessDetails?.name || 'PHARMA'}
                                 </div>
                                 <div style={{ fontSize: '6.5pt', marginTop: '1px', color: '#444', lineHeight: '1.3' }}>
                                     {businessDetails?.address && <div>{businessDetails.address}</div>}
-                                    {businessDetails?.phone && <span>📞 {businessDetails.phone}</span>}
+                                    {businessDetails?.phone && <span>≡ƒô₧ {businessDetails.phone}</span>}
                                     {businessDetails?.gstin && <span style={{ marginLeft: businessDetails?.phone ? '4px' : 0 }}>| GSTIN: {businessDetails.gstin}</span>}
                                     {businessDetails?.drug_license && <span style={{ marginLeft: '4px' }}>| DL: {businessDetails.drug_license}</span>}
                                 </div>
@@ -1152,7 +1152,7 @@ export default function PrintBill() {
                                 <div style={{ marginBottom: '1mm' }}>
                                     <span style={{ fontWeight: 700 }}>Payment: </span>
                                     <span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span>
-                                    <span style={{ marginLeft: '4px', color: '#555' }}>— Received with thanks.</span>
+                                    <span style={{ marginLeft: '4px', color: '#555' }}>ΓÇö Received with thanks.</span>
                                 </div>
                                 <div style={{ fontSize: '6pt', lineHeight: '1.35', color: '#444' }}>
                                     <span style={{ fontWeight: 700 }}>T&C: </span>
@@ -1174,12 +1174,12 @@ export default function PrintBill() {
                                 <tbody>
                                     <tr>
                                         <td style={{ padding: '1px 0', fontWeight: 600, textAlign: 'left' }}>Subtotal</td>
-                                        <td style={{ padding: '1px 0', textAlign: 'right' }}>₹{billData.subtotal.toFixed(2)}</td>
+                                        <td style={{ padding: '1px 0', textAlign: 'right' }}>Γé╣{billData.subtotal.toFixed(2)}</td>
                                     </tr>
                                     {billData.total_discount > 0 && (
                                         <tr>
                                             <td style={{ padding: '1px 0', fontWeight: 600, textAlign: 'left', color: '#0d6e3a' }}>Savings</td>
-                                            <td style={{ padding: '1px 0', textAlign: 'right', color: '#0d6e3a' }}>-₹{billData.total_discount.toFixed(2)}</td>
+                                            <td style={{ padding: '1px 0', textAlign: 'right', color: '#0d6e3a' }}>-Γé╣{billData.total_discount.toFixed(2)}</td>
                                         </tr>
                                     )}
                                     <tr>
@@ -1189,7 +1189,7 @@ export default function PrintBill() {
                                     </tr>
                                     <tr>
                                         <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'left' }}>TOTAL</td>
-                                        <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'right' }}>₹{billData.total_amount.toFixed(2)}</td>
+                                        <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'right' }}>Γé╣{billData.total_amount.toFixed(2)}</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -1215,7 +1215,7 @@ export default function PrintBill() {
                 )}
             </div>
 
-            {/* Edit Bill Dialog — never shown in print */}
+            {/* Edit Bill Dialog ΓÇö never shown in print */}
             <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
                 <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 print:hidden">
                     <DialogHeader className="pr-8 space-y-1">
@@ -1240,10 +1240,10 @@ export default function PrintBill() {
                                             <div className="min-w-0 flex-1">
                                                 <p className="text-sm font-medium truncate">{item.product_name}</p>
                                                 <p className="text-[11px] text-muted-foreground">
-                                                    Qty {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''} · ₹{item.unit_price.toFixed(2)} each
+                                                    Qty {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''} ┬╖ Γé╣{item.unit_price.toFixed(2)} each
                                                 </p>
                                             </div>
-                                            <div className="text-sm font-semibold whitespace-nowrap">₹{item.total_price.toFixed(2)}</div>
+                                            <div className="text-sm font-semibold whitespace-nowrap">Γé╣{item.total_price.toFixed(2)}</div>
                                             <Button
                                                 type="button"
                                                 variant="ghost"
@@ -1276,7 +1276,7 @@ export default function PrintBill() {
                                 <Input
                                     value={productSearch}
                                     onChange={(e) => setProductSearch(e.target.value)}
-                                    placeholder="Search by name…"
+                                    placeholder="Search by nameΓÇª"
                                     className="h-9 pl-8"
                                 />
                                 {productSearch && (
@@ -1293,7 +1293,7 @@ export default function PrintBill() {
                                                 >
                                                     <span className="truncate">{p.name}</span>
                                                     <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                                                        Stk {p.quantity} · ₹{p.selling_price.toFixed(2)}
+                                                        Stk {p.quantity} ┬╖ Γé╣{p.selling_price.toFixed(2)}
                                                     </span>
                                                 </button>
                                             ))}
@@ -1334,7 +1334,7 @@ export default function PrintBill() {
                                                 />
                                             </div>
                                             <div className="space-y-0.5">
-                                                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Rate ₹</Label>
+                                                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Rate Γé╣</Label>
                                                 <Input
                                                     type="number"
                                                     inputMode="decimal"
@@ -1434,14 +1434,14 @@ export default function PrintBill() {
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="cash">💵 Cash</SelectItem>
-                                        <SelectItem value="upi">📱 UPI</SelectItem>
-                                        <SelectItem value="card">💳 Card</SelectItem>
-                                        <SelectItem value="credit">⏳ Credit / Dues</SelectItem>
-                                        <SelectItem value="net_banking">🏦 Net Banking</SelectItem>
-                                        <SelectItem value="wallet">👛 Wallet</SelectItem>
-                                        <SelectItem value="cheque">📝 Cheque</SelectItem>
-                                        <SelectItem value="other">💰 Other</SelectItem>
+                                        <SelectItem value="cash">≡ƒÆ╡ Cash</SelectItem>
+                                        <SelectItem value="upi">≡ƒô▒ UPI</SelectItem>
+                                        <SelectItem value="card">≡ƒÆ│ Card</SelectItem>
+                                        <SelectItem value="credit">ΓÅ│ Credit / Dues</SelectItem>
+                                        <SelectItem value="net_banking">≡ƒÅª Net Banking</SelectItem>
+                                        <SelectItem value="wallet">≡ƒæ¢ Wallet</SelectItem>
+                                        <SelectItem value="cheque">≡ƒô¥ Cheque</SelectItem>
+                                        <SelectItem value="other">≡ƒÆ░ Other</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>

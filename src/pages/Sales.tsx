@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -158,7 +158,7 @@ export default function Sales() {
   // Loading state for recording sale
   const [isRecordingSales, setIsRecordingSales] = useState(false);
 
-  // ─── Save / restore the in-progress sale when nipping to Products to add one ───
+  // ΓöÇΓöÇΓöÇ Save / restore the in-progress sale when nipping to Products to add one ΓöÇΓöÇΓöÇ
   const saveCurrentSaleDraft = () => {
     saveSaleDraft({
       selectedProducts,
@@ -278,7 +278,7 @@ export default function Sales() {
           .order('created_at', { ascending: false })
           .range(from, to);
 
-        // Migration not applied yet → retry without printed_at column
+        // Migration not applied yet ΓåÆ retry without printed_at column
         if (result.error && (result.error.message?.includes('printed_at') || result.error.code === '42703')) {
           let retryQuery = supabase
             .from('sales')
@@ -395,7 +395,7 @@ export default function Sales() {
           .eq('account_id', profile.account_id)
           .single();
 
-        // Column may not exist yet (migration pending) → retry without it.
+        // Column may not exist yet (migration pending) ΓåÆ retry without it.
         if (settingsRes.error && (settingsRes.error.message?.includes('sales_edit_window_hours') || settingsRes.error.code === '42703')) {
           settingsRes = await supabase
             .from('settings')
@@ -670,7 +670,7 @@ export default function Sales() {
 
       // Resolve the FEFO batch per product up front so the sale rows can carry
       // batch_id and the batch's landed cost. This cart screen has no batch
-      // picker — nearest expiry is taken automatically, and the deduction
+      // picker ΓÇö nearest expiry is taken automatically, and the deduction
       // below uses the same rule.
       const fefoTop = new Map<string, StockBatch>();
       if (profile?.account_id) {
@@ -688,7 +688,7 @@ export default function Sales() {
 
         // Use custom price if set, otherwise use product's selling price
         const unitPrice = productPrices[item.id] || product.selling_price;
-        // 1st: Amount = (full strips × rate) + (loose tablets × per-tablet rate)
+        // 1st: Amount = (full strips ├ù rate) + (loose tablets ├ù per-tablet rate)
         const itemSubQty = subQtyMap[item.id];
         const itemPcsPerUnit = pcsPerUnitMap[item.id];
         let grossAmount = unitPrice * item.quantity;
@@ -803,8 +803,8 @@ export default function Sales() {
           if (problems.length > 0) {
             toast({
               variant: 'destructive',
-              title: 'Bill saved — batch ledger out of step',
-              description: problems.slice(0, 3).join(' · '),
+              title: 'Bill saved ΓÇö batch ledger out of step',
+              description: problems.slice(0, 3).join(' ┬╖ '),
             });
           }
         }
@@ -934,7 +934,7 @@ export default function Sales() {
       groups[key].items.push(sale);
       groups[key].total_amount += sale.total_price;
       groups[key].gst_amount += (sale.gst_amount || 0);
-      // Propagate printed_at (any item printed → bill is locked)
+      // Propagate printed_at (any item printed ΓåÆ bill is locked)
       if (sale.printed_at && !groups[key].printed_at) {
         groups[key].printed_at = sale.printed_at;
       }
@@ -958,7 +958,7 @@ export default function Sales() {
     setIsDetailModalOpen(true);
   };
 
-  // ── Edit-lock policy ───────────────────────────────────────
+  // ΓöÇΓöÇ Edit-lock policy ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   // A sale becomes locked (no further edits) when:
   //   1. It has been printed (printed_at IS NOT NULL on any of its rows), OR
   //   2. It is older than the account's configurable edit window (default 24h)
@@ -974,8 +974,8 @@ export default function Sales() {
     return null;
   };
   const lockReasonText = (r: LockReason): string => {
-    if (r === 'printed') return 'Locked — bill has been printed';
-    if (r === 'expired') return `Locked — older than ${editWindowHours} ${editWindowHours === 1 ? 'hour' : 'hours'}`;
+    if (r === 'printed') return 'Locked ΓÇö bill has been printed';
+    if (r === 'expired') return `Locked ΓÇö older than ${editWindowHours} ${editWindowHours === 1 ? 'hour' : 'hours'}`;
     return '';
   };
 
@@ -1044,10 +1044,10 @@ export default function Sales() {
     setIsEditOpen(true);
   };
 
-  // ─── Keyboard navigation for the sales list ───────────────────────────────
-  //  ↑/↓ move · Enter view · E edit · P print · N new · Home/End jump.
-  //  ← deselects the current row and lets Layout's bubble handler focus the sidebar.
-  //  Runs in the CAPTURE phase and stops propagation for ↑/↓/Home/End so the
+  // ΓöÇΓöÇΓöÇ Keyboard navigation for the sales list ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  //  Γåæ/Γåô move ┬╖ Enter view ┬╖ E edit ┬╖ P print ┬╖ N new ┬╖ Home/End jump.
+  //  ΓåÉ deselects the current row and lets Layout's bubble handler focus the sidebar.
+  //  Runs in the CAPTURE phase and stops propagation for Γåæ/Γåô/Home/End so the
   //  global section-nav in Layout never fires while the list is active.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1061,14 +1061,14 @@ export default function Sales() {
 
       const list = groupedSales;
 
-      // ArrowLeft — clear row selection and fall through to Layout's bubble handler
+      // ArrowLeft ΓÇö clear row selection and fall through to Layout's bubble handler
       // so the sidebar gains focus. No stopPropagation: Layout must see this event.
       if (e.key === 'ArrowLeft' && selectedRow >= 0) {
         setSelectedRow(-1);
         return;
       }
 
-      // Movement keys — always intercept so the page doesn't scroll / switch sections.
+      // Movement keys ΓÇö always intercept so the page doesn't scroll / switch sections.
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
         if (!list.length) return;
         e.preventDefault();
@@ -1080,7 +1080,7 @@ export default function Sales() {
         return;
       }
 
-      // Action keys — skip when focus is on a real control so we don't hijack it.
+      // Action keys ΓÇö skip when focus is on a real control so we don't hijack it.
       const onControl = !!t && (t.tagName === 'BUTTON' || t.tagName === 'A' || !!t.closest('button, a, [role="button"], [role="dialog"], [role="menu"]'));
       if (onControl) return;
 
@@ -1097,7 +1097,7 @@ export default function Sales() {
         if (isMobile) setIsDialogOpen(true); else navigate('/sales/new');
       }
     };
-    window.addEventListener('keydown', onKey, true); // capture — beats Layout's window listener
+    window.addEventListener('keydown', onKey, true); // capture ΓÇö beats Layout's window listener
     return () => window.removeEventListener('keydown', onKey, true);
   }, [groupedSales, selectedRow, isDialogOpen, isEditOpen, isDetailModalOpen, isMobile, navigate]);
 
@@ -1110,7 +1110,7 @@ export default function Sales() {
     });
   }, [selectedRow, groupedSales.length]);
 
-  // ── Cart helpers ────────────────────────────────────────────
+  // ΓöÇΓöÇ Cart helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const updateEditCartItem = (lineId: string, patch: Partial<EditCartItem>) => {
     setEditCart(prev => prev.map(it => it.lineId === lineId ? { ...it, ...patch } : it));
   };
@@ -1338,7 +1338,7 @@ export default function Sales() {
     const customerPhone = targetTransaction.customer_phone || "Not provided";
 
     let itemsStr = targetTransaction.items.map(item => 
-      `- ${item.products?.name}: ${item.quantity} ${item.sub_qty ? `(+${item.sub_qty} pcs)` : ''} x ₹${item.unit_price} = ₹${item.total_price}`
+      `- ${item.products?.name}: ${item.quantity} ${item.sub_qty ? `(+${item.sub_qty} pcs)` : ''} x Γé╣${item.unit_price} = Γé╣${item.total_price}`
     ).join('\n');
 
     const content = `
@@ -1350,8 +1350,8 @@ ITEMS:
 ${itemsStr}
 
 ====================
-GST Amount: ₹${(targetTransaction.gst_amount || 0).toFixed(2)}
-Total Amount: ₹${targetTransaction.total_amount.toFixed(2)}
+GST Amount: Γé╣${(targetTransaction.gst_amount || 0).toFixed(2)}
+Total Amount: Γé╣${targetTransaction.total_amount.toFixed(2)}
 
 CUSTOMER DETAILS
 ====================
@@ -1414,7 +1414,7 @@ Thank you for your purchase!
               </Button>
             </DialogTrigger>
           <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[92vh] p-0 overflow-hidden flex flex-col gap-0">
-            {/* Green header — Sale Entry (inspired by the full POS) */}
+            {/* Green header ΓÇö Sale Entry (inspired by the full POS) */}
             <DialogHeader className="shrink-0 bg-gradient-to-r from-emerald-600 to-emerald-500 px-4 py-3 space-y-0.5 text-left pr-12">
               <DialogTitle className="text-white text-base sm:text-lg font-semibold flex items-center gap-2">
                 <ShoppingCart className="h-5 w-5" /> Sale Entry
@@ -1499,7 +1499,7 @@ Thank you for your purchase!
                       className="w-full text-left py-2 px-3 flex items-center gap-2 border-t bg-slate-50 hover:bg-blue-50 text-blue-600 font-medium text-sm sticky bottom-0"
                     >
                       <Plus className="h-4 w-4" />
-                      Add “{productSearchTerm}” as a new product
+                      Add ΓÇ£{productSearchTerm}ΓÇ¥ as a new product
                     </button>
                   </div>
                 )}
@@ -1598,9 +1598,9 @@ Thank you for your purchase!
                                   <span className={cn("font-medium", overstock ? "text-red-600" : "text-emerald-600")}>
                                     Stk: {product.quantity}
                                   </span>
-                                  {overstock && <span className="text-red-600 font-semibold">· exceeds!</span>}
-                                  {isPriceAdjusted && <span className="text-blue-600 font-semibold">· ADJ</span>}
-                                  {isCustomGst && <span className="text-blue-600 font-semibold">· CUST GST</span>}
+                                  {overstock && <span className="text-red-600 font-semibold">┬╖ exceeds!</span>}
+                                  {isPriceAdjusted && <span className="text-blue-600 font-semibold">┬╖ ADJ</span>}
+                                  {isCustomGst && <span className="text-blue-600 font-semibold">┬╖ CUST GST</span>}
                                 </div>
                               </div>
                               {/* Mobile-only remove (desktop has it on the right) */}
@@ -1658,7 +1658,7 @@ Thank you for your purchase!
                                       }
                                     }
                                   }}
-                                  placeholder="—"
+                                  placeholder="ΓÇö"
                                   className="h-8 w-12 text-sm px-1 text-center font-medium"
                                 />
                                 {cartSubQty ? (
@@ -1682,7 +1682,7 @@ Thank you for your purchase!
                             </div>
 
                             <div className="flex flex-col">
-                              <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Rate ₹</span>
+                              <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Rate Γé╣</span>
                               <Input
                                 type="number"
                                 inputMode="decimal"
@@ -1718,9 +1718,9 @@ Thank you for your purchase!
                             {/* Total + (optional) GST sub-line + desktop remove -pushed to the far right */}
                             <div className="ml-auto flex items-center gap-2">
                               <div className="text-right leading-tight">
-                                <div className="text-sm sm:text-base font-bold text-emerald-700">₹{itemTotal.toFixed(2)}</div>
+                                <div className="text-sm sm:text-base font-bold text-emerald-700">Γé╣{itemTotal.toFixed(2)}</div>
                                 {settings?.gst_enabled && itemGstAmount > 0 && (
-                                  <div className="text-[10px] text-muted-foreground leading-none mt-0.5">incl ₹{itemGstAmount.toFixed(2)} GST</div>
+                                  <div className="text-[10px] text-muted-foreground leading-none mt-0.5">incl Γé╣{itemGstAmount.toFixed(2)} GST</div>
                                 )}
                               </div>
                               <button
@@ -1742,7 +1742,7 @@ Thank you for your purchase!
                   </div>
 
                   {/* Mobile: spreadsheet-style billing table (ref: classic billing software).
-                      Columns mirror the laptop line: Product · Batch · Qty · Pcs · Rate · Amount.
+                      Columns mirror the laptop line: Product ┬╖ Batch ┬╖ Qty ┬╖ Pcs ┬╖ Rate ┬╖ Amount.
                       Horizontally scrollable so the dense grid never crushes on small screens. */}
                   <div className="md:hidden -mx-1 overflow-x-auto rounded-md border border-slate-300 max-h-[420px] overflow-y-auto">
                     <table className="w-full min-w-[540px] border-collapse text-xs">
@@ -1775,14 +1775,14 @@ Thank you for your purchase!
                                 <div className="font-semibold text-slate-900 leading-snug break-words">{product.name}</div>
                                 <div className="text-[10px] leading-none mt-0.5 flex flex-wrap items-center gap-x-1">
                                   <span className={cn("font-medium", overstock ? "text-red-600" : "text-emerald-600")}>Stk {product.quantity}</span>
-                                  {overstock && <span className="text-red-600 font-semibold">· exceeds!</span>}
-                                  {isPriceAdjusted && <span className="text-blue-600 font-semibold">· ADJ</span>}
-                                  {isCustomGst && <span className="text-blue-600 font-semibold">· GST*</span>}
+                                  {overstock && <span className="text-red-600 font-semibold">┬╖ exceeds!</span>}
+                                  {isPriceAdjusted && <span className="text-blue-600 font-semibold">┬╖ ADJ</span>}
+                                  {isCustomGst && <span className="text-blue-600 font-semibold">┬╖ GST*</span>}
                                 </div>
                               </td>
                               {/* Batch */}
                               <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-slate-600 break-words">
-                                {product.batch_number || '—'}
+                                {product.batch_number || 'ΓÇö'}
                               </td>
                               {/* Qty (strips) */}
                               <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
@@ -1820,7 +1820,7 @@ Thank you for your purchase!
                                         }
                                       }
                                     }}
-                                    placeholder="—"
+                                    placeholder="ΓÇö"
                                     className="h-7 w-9 text-xs px-0.5 text-center font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
                                   />
                                   {cartSubQty ? (
@@ -1845,7 +1845,7 @@ Thank you for your purchase!
                               </td>
                               {/* Amount */}
                               <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-right leading-tight">
-                                <div className="font-bold text-emerald-700 tabular-nums">₹{itemTotal.toFixed(2)}</div>
+                                <div className="font-bold text-emerald-700 tabular-nums">Γé╣{itemTotal.toFixed(2)}</div>
                                 {settings?.gst_enabled && itemGstAmount > 0 && (
                                   <div className="text-[9px] text-slate-400 leading-none">+{itemGstAmount.toFixed(2)}</div>
                                 )}
@@ -1890,7 +1890,7 @@ Thank you for your purchase!
                   />
                 </div>
 
-                {/* Row 2: Phone (full width — payment mode moved to the finalize bar) */}
+                {/* Row 2: Phone (full width ΓÇö payment mode moved to the finalize bar) */}
                 <div className="space-y-1">
                   <Label htmlFor="customerPhone" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Phone</Label>
                   <Input
@@ -1971,7 +1971,7 @@ Thank you for your purchase!
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Subtotal</span>
-                      <span>₹{orderTotals.subtotal.toFixed(2)}</span>
+                      <span>Γé╣{orderTotals.subtotal.toFixed(2)}</span>
                     </div>
 
                     {/* Discount Section */}
@@ -1992,18 +1992,18 @@ Thank you for your purchase!
                       {discountPercentage > 0 && (
                         <div className="flex justify-between text-red-600">
                           <span>Discount ({discountPercentage}%)</span>
-                          <span>-₹{orderTotals.discountAmount.toFixed(2)}</span>
+                          <span>-Γé╣{orderTotals.discountAmount.toFixed(2)}</span>
                         </div>
                       )}
                     </div>
 
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">GST</span>
-                      <span>₹{orderTotals.gstAmount.toFixed(2)}</span>
+                      <span>Γé╣{orderTotals.gstAmount.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between font-bold text-lg border-t pt-2.5 mt-1">
                       <span>Total</span>
-                      <span className="text-green-600">₹{orderTotals.grandTotal.toFixed(2)}</span>
+                      <span className="text-green-600">Γé╣{orderTotals.grandTotal.toFixed(2)}</span>
                     </div>
                   </div>
                 </Card>
@@ -2011,14 +2011,14 @@ Thank you for your purchase!
 
               </div>{/* end scrollable body */}
 
-              {/* Sticky finalize bar — payment chips + total + actions (POS style) */}
+              {/* Sticky finalize bar ΓÇö payment chips + total + actions (POS style) */}
               <div className="shrink-0 border-t bg-white px-3 sm:px-4 py-2.5 space-y-2">
                 <div className="grid grid-cols-4 gap-1.5">
                   {[
-                    { v: 'cash', icon: '💵', label: 'Cash' },
-                    { v: 'upi', icon: '📱', label: 'UPI' },
-                    { v: 'card', icon: '💳', label: 'Card' },
-                    { v: 'credit', icon: '🧾', label: 'Credit' },
+                    { v: 'cash', icon: '≡ƒÆ╡', label: 'Cash' },
+                    { v: 'upi', icon: '≡ƒô▒', label: 'UPI' },
+                    { v: 'card', icon: '≡ƒÆ│', label: 'Card' },
+                    { v: 'credit', icon: '≡ƒº╛', label: 'Credit' },
                   ].map(m => (
                     <button
                       key={m.v}
@@ -2039,7 +2039,7 @@ Thank you for your purchase!
                 <div className="flex items-center gap-2">
                   <div className="flex flex-col leading-tight">
                     <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payable</span>
-                    <span className="text-xl font-bold text-emerald-700">₹{orderTotals.grandTotal.toFixed(2)}</span>
+                    <span className="text-xl font-bold text-emerald-700">Γé╣{orderTotals.grandTotal.toFixed(2)}</span>
                   </div>
                   <Button
                     type="button"
@@ -2072,7 +2072,7 @@ Thank you for your purchase!
                     className="h-11 gap-2 px-5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white font-semibold"
                   >
                     <ShoppingCart className="h-4 w-4" />
-                    {isRecordingSales ? 'Recording…' : 'Finalize'}
+                    {isRecordingSales ? 'RecordingΓÇª' : 'Finalize'}
                   </Button>
                 </div>
               </div>
@@ -2102,7 +2102,7 @@ Thank you for your purchase!
                 {loading ? 'Loading...' : `${totalSales} transaction${totalSales === 1 ? '' : 's'} found`}
               </CardDescription>
               <div className="hidden md:flex flex-wrap items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
-                {[['↑↓', 'Move'], ['Enter', 'View'], ['E', 'Edit'], ['P', 'Print'], ['N', 'New']].map(([k, l]) => (
+                {[['ΓåæΓåô', 'Move'], ['Enter', 'View'], ['E', 'Edit'], ['P', 'Print'], ['N', 'New']].map(([k, l]) => (
                   <span key={k} className="inline-flex items-center gap-1">
                     <kbd className="px-1 rounded border bg-muted font-semibold">{k}</kbd>{l}
                   </span>
@@ -2230,12 +2230,12 @@ Thank you for your purchase!
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-sm font-medium truncate">{group.customer_name}</p>
-                            <p className="text-base font-bold text-green-700 whitespace-nowrap">₹{group.total_amount.toFixed(2)}</p>
+                            <p className="text-base font-bold text-green-700 whitespace-nowrap">Γé╣{group.total_amount.toFixed(2)}</p>
                           </div>
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[11px] text-muted-foreground">
                             {group.customer_phone && <span>{group.customer_phone}</span>}
-                            <span>· {group.items.length} item{group.items.length === 1 ? '' : 's'}</span>
-                            <span>· {new Date(group.sale_date || group.created_at).toLocaleDateString()}</span>
+                            <span>┬╖ {group.items.length} item{group.items.length === 1 ? '' : 's'}</span>
+                            <span>┬╖ {new Date(group.sale_date || group.created_at).toLocaleDateString()}</span>
                             <Badge variant="outline" className={`h-5 text-[10px] capitalize ${paymentClass}`}>
                               {paymentMode}
                             </Badge>
@@ -2300,10 +2300,10 @@ Thank you for your purchase!
                               <div className="min-w-0 flex-1">
                                 <span className="truncate">{item.products?.name}</span>
                                 <span className="text-muted-foreground text-xs ml-1">
-                                  × {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''}
+                                  ├ù {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''}
                                 </span>
                               </div>
-                              <span className="font-medium whitespace-nowrap">₹{item.total_price.toFixed(2)}</span>
+                              <span className="font-medium whitespace-nowrap">Γé╣{item.total_price.toFixed(2)}</span>
                             </div>
                           ))}
                         </div>
@@ -2361,9 +2361,9 @@ Thank you for your purchase!
                                 })()}
                               </div>
                             </TableCell>
-                            <TableCell className="hidden lg:table-cell py-2.5 text-sm">{group.customer_phone || '—'}</TableCell>
+                            <TableCell className="hidden lg:table-cell py-2.5 text-sm">{group.customer_phone || 'ΓÇö'}</TableCell>
                             <TableCell className="hidden md:table-cell py-2.5 text-center text-sm">{group.items.length}</TableCell>
-                            <TableCell className="py-2.5 text-right font-semibold text-green-700">₹{group.total_amount.toFixed(2)}</TableCell>
+                            <TableCell className="py-2.5 text-right font-semibold text-green-700">Γé╣{group.total_amount.toFixed(2)}</TableCell>
                             <TableCell className="hidden lg:table-cell py-2.5 text-center">
                               <Badge variant="outline" className={`text-[10px] capitalize h-5 ${paymentClass}`}>
                                 {paymentMode}
@@ -2430,8 +2430,8 @@ Thank you for your purchase!
                                               {item.quantity}
                                               {item.sub_qty ? <span className="text-xs text-blue-600 ml-1">+{item.sub_qty}</span> : null}
                                             </TableCell>
-                                            <TableCell className="py-2 text-right text-sm">₹{item.unit_price.toFixed(2)}</TableCell>
-                                            <TableCell className="py-2 text-right text-sm font-medium">₹{item.total_price.toFixed(2)}</TableCell>
+                                            <TableCell className="py-2 text-right text-sm">Γé╣{item.unit_price.toFixed(2)}</TableCell>
+                                            <TableCell className="py-2 text-right text-sm font-medium">Γé╣{item.total_price.toFixed(2)}</TableCell>
                                           </TableRow>
                                         ))}
                                       </TableBody>
@@ -2532,7 +2532,7 @@ Thank you for your purchase!
         </CardContent>
       </Card>
 
-      {/* ── Edit Sale Dialog -full edit (cart + customer + payment) ── */}
+      {/* ΓöÇΓöÇ Edit Sale Dialog -full edit (cart + customer + payment) ΓöÇΓöÇ */}
       <Dialog
         open={isEditOpen}
         onOpenChange={(open) => {
@@ -2580,7 +2580,7 @@ Thank you for your purchase!
             onSubmit={handleSaveEdit}
             className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-5 py-3 sm:py-4 space-y-4"
           >
-            {/* ─── Items section ─── */}
+            {/* ΓöÇΓöÇΓöÇ Items section ΓöÇΓöÇΓöÇ */}
             <section className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-[10px] sm:text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
@@ -2614,7 +2614,7 @@ Thank you for your purchase!
                                   <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">New</Badge>
                                 )}
                                 {it.pcs_per_unit > 1 && (
-                                  <span className="text-[10px] text-muted-foreground">· {it.pcs_per_unit}/strip</span>
+                                  <span className="text-[10px] text-muted-foreground">┬╖ {it.pcs_per_unit}/strip</span>
                                 )}
                               </div>
                               {/* Inline editable fields */}
@@ -2643,7 +2643,7 @@ Thank you for your purchase!
                                   </div>
                                 )}
                                 <div className="space-y-0.5">
-                                  <Label className="text-[10px] uppercase tracking-wide text-slate-500">Rate (₹)</Label>
+                                  <Label className="text-[10px] uppercase tracking-wide text-slate-500">Rate (Γé╣)</Label>
                                   <Input
                                     type="number"
                                     step="0.01"
@@ -2668,13 +2668,13 @@ Thank you for your purchase!
                                 <div className="space-y-0.5 col-span-2 sm:col-span-1">
                                   <Label className="text-[10px] uppercase tracking-wide text-slate-500">Line total</Label>
                                   <div className="h-8 px-2 flex items-center font-semibold tabular-nums text-slate-900 border rounded-md bg-slate-50/50">
-                                    ₹{lineTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                    Γé╣{lineTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                   </div>
                                 </div>
                               </div>
                               {overStock && (
                                 <p className="text-[10px] text-red-600 mt-1 flex items-center gap-1">
-                                  ⚠ {units.toFixed(2)} units requested, only {avail.toFixed(2)} available
+                                  ΓÜá {units.toFixed(2)} units requested, only {avail.toFixed(2)} available
                                 </p>
                               )}
                             </div>
@@ -2718,7 +2718,7 @@ Thank you for your purchase!
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate font-medium">{p.name}</span>
                           <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                            ₹{Number(p.selling_price).toLocaleString('en-IN')} · Stock: {p.quantity}
+                            Γé╣{Number(p.selling_price).toLocaleString('en-IN')} ┬╖ Stock: {p.quantity}
                           </span>
                         </div>
                         {p.batch_number && (
@@ -2736,7 +2736,7 @@ Thank you for your purchase!
               </div>
             </section>
 
-            {/* ─── Customer & payment ─── */}
+            {/* ΓöÇΓöÇΓöÇ Customer & payment ΓöÇΓöÇΓöÇ */}
             <section className="space-y-2">
               <div className="flex items-center gap-2 text-[10px] sm:text-[11px] uppercase tracking-wider text-slate-500 font-semibold pb-1 border-b border-slate-100">
                 <Receipt className="h-3 w-3" />
@@ -2788,21 +2788,21 @@ Thank you for your purchase!
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cash">💵 Cash</SelectItem>
-                      <SelectItem value="upi">📱 UPI</SelectItem>
-                      <SelectItem value="card">💳 Card</SelectItem>
-                      <SelectItem value="credit">⏳ Credit / Dues</SelectItem>
-                      <SelectItem value="net_banking">🏦 Net Banking</SelectItem>
-                      <SelectItem value="wallet">👛 Wallet</SelectItem>
-                      <SelectItem value="cheque">📝 Cheque</SelectItem>
-                      <SelectItem value="other">💰 Other</SelectItem>
+                      <SelectItem value="cash">≡ƒÆ╡ Cash</SelectItem>
+                      <SelectItem value="upi">≡ƒô▒ UPI</SelectItem>
+                      <SelectItem value="card">≡ƒÆ│ Card</SelectItem>
+                      <SelectItem value="credit">ΓÅ│ Credit / Dues</SelectItem>
+                      <SelectItem value="net_banking">≡ƒÅª Net Banking</SelectItem>
+                      <SelectItem value="wallet">≡ƒæ¢ Wallet</SelectItem>
+                      <SelectItem value="cheque">≡ƒô¥ Cheque</SelectItem>
+                      <SelectItem value="other">≡ƒÆ░ Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
             </section>
 
-            {/* ─── Totals card ─── */}
+            {/* ΓöÇΓöÇΓöÇ Totals card ΓöÇΓöÇΓöÇ */}
             <div className="rounded-lg border-2 border-blue-200 bg-gradient-to-br from-blue-50/70 to-blue-50/20 px-3 py-2 sm:py-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-[10px] uppercase tracking-wider font-semibold text-blue-700/80">
@@ -2811,16 +2811,16 @@ Thank you for your purchase!
                 <div className="flex items-center gap-3 sm:gap-4 tabular-nums">
                   <div className="text-right">
                     <div className="text-[10px] uppercase text-slate-500">Subtotal</div>
-                    <div className="text-sm font-medium text-slate-900">₹{editCartTotals.net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                    <div className="text-sm font-medium text-slate-900">Γé╣{editCartTotals.net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] uppercase text-slate-500">GST</div>
-                    <div className="text-sm font-medium text-slate-900">₹{editCartTotals.gst.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                    <div className="text-sm font-medium text-slate-900">Γé╣{editCartTotals.gst.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
                   </div>
                   <div className="text-right border-l border-blue-200/70 pl-3 sm:pl-4">
                     <div className="text-[10px] uppercase text-blue-700/80 font-semibold">Total</div>
                     <div className="text-base sm:text-xl font-bold text-blue-700">
-                      ₹{editCartTotals.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      Γé╣{editCartTotals.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -2894,12 +2894,12 @@ Thank you for your purchase!
                       <div>
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Total Amount</p>
                         <p className="text-2xl font-bold text-green-700 leading-tight mt-0.5">
-                          ₹{selectedTransaction.total_amount.toFixed(2)}
+                          Γé╣{selectedTransaction.total_amount.toFixed(2)}
                         </p>
                       </div>
                       {(selectedTransaction.gst_amount || 0) > 0 && (
                         <p className="text-[11px] text-muted-foreground mb-0.5">
-                          incl. ₹{(selectedTransaction.gst_amount || 0).toFixed(2)} GST
+                          incl. Γé╣{(selectedTransaction.gst_amount || 0).toFixed(2)} GST
                         </p>
                       )}
                     </div>
@@ -2921,7 +2921,7 @@ Thank you for your purchase!
                     </div>
                     <div className="rounded-md border p-3">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">GST</p>
-                      <p className="text-sm font-medium mt-0.5">₹{(selectedTransaction.gst_amount || 0).toFixed(2)}</p>
+                      <p className="text-sm font-medium mt-0.5">Γé╣{(selectedTransaction.gst_amount || 0).toFixed(2)}</p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">{(selectedTransaction.gst_amount || 0) > 0 ? 'tax included' : 'no tax'}</p>
                     </div>
                   </div>
@@ -2945,13 +2945,13 @@ Thank you for your purchase!
                           <TableBody>
                             {selectedTransaction.items.map((item, idx) => (
                               <TableRow key={idx}>
-                                <TableCell className="py-2 text-sm">{item.products?.name || '—'}</TableCell>
+                                <TableCell className="py-2 text-sm">{item.products?.name || 'ΓÇö'}</TableCell>
                                 <TableCell className="py-2 text-sm text-center">
                                   {item.quantity}
                                   {item.sub_qty ? <span className="text-[10px] text-blue-600 ml-1">+{item.sub_qty}</span> : null}
                                 </TableCell>
-                                <TableCell className="hidden sm:table-cell py-2 text-sm text-right">₹{item.unit_price.toFixed(2)}</TableCell>
-                                <TableCell className="py-2 text-sm text-right font-medium">₹{item.total_price.toFixed(2)}</TableCell>
+                                <TableCell className="hidden sm:table-cell py-2 text-sm text-right">Γé╣{item.unit_price.toFixed(2)}</TableCell>
+                                <TableCell className="py-2 text-sm text-right font-medium">Γé╣{item.total_price.toFixed(2)}</TableCell>
                               </TableRow>
                             ))}
                           </TableBody>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -31,12 +31,12 @@ export default function SalesBilling() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // ─── Shared data (fetched once, passed to every tab) ─────────────────────
+  // ΓöÇΓöÇΓöÇ Shared data (fetched once, passed to every tab) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const [products, setProducts] = useState<Product[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
 
-  // ─── Tab sessions ────────────────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ Tab sessions ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const { sessions, activeId, setActiveId, addSession, addSessionWithData, closeSession, updateMeta } = useBillSessions();
   const [pendingClose, setPendingClose] = useState<BillSession | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -68,7 +68,7 @@ export default function SalesBilling() {
     return () => { cancelled = true; };
   }, [profile?.account_id, toast]);
 
-  // ─── Edit a finalized bill: ?edit=<billId> opens it here, pre-filled ───────
+  // ΓöÇΓöÇΓöÇ Edit a finalized bill: ?edit=<billId> opens it here, pre-filled ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   useEffect(() => {
     const editId = searchParams.get('edit');
     if (!editId || editHandled.current || dataLoading) return;
@@ -144,7 +144,7 @@ export default function SalesBilling() {
   // (No refresh warning needed -every open bill is saved to localStorage and
   //  restored automatically, so a refresh or app reopen loses nothing.)
 
-  // ─── Handlers ────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ Handlers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const handleAddTab = useCallback(() => {
     if (!addSession()) {
       toast({ variant: 'destructive', title: 'Limit reached', description: 'Maximum 5 parallel bills allowed at a time.' });
@@ -159,13 +159,13 @@ export default function SalesBilling() {
 
   const handleCompleted = useCallback((sessionId: string, billId: string) => {
     if (sessions.length <= 1) {
-      // Only bill open → identical to the original single-bill flow.
+      // Only bill open ΓåÆ identical to the original single-bill flow.
       navigate(`/print-bill/${billId}`);
     } else {
-      // Other bills are open → don't unmount them. Print in a new tab, close this one.
+      // Other bills are open ΓåÆ don't unmount them. Print in a new tab, close this one.
       window.open(`/print-bill/${billId}`, '_blank', 'noopener');
       closeSession(sessionId);
-      toast({ title: 'Bill completed ✓', description: 'Print opened in a new tab. Your other bills are preserved.' });
+      toast({ title: 'Bill completed Γ£ô', description: 'Print opened in a new tab. Your other bills are preserved.' });
     }
   }, [sessions.length, navigate, closeSession, toast]);
 
@@ -173,7 +173,7 @@ export default function SalesBilling() {
     setProducts(prev => (prev.some(x => x.id === p.id) ? prev : [p, ...prev]));
   }, []);
 
-  // ─── Switch bills: number keys 1–5 and arrow keys ───────────────────────
+  // ΓöÇΓöÇΓöÇ Switch bills: number keys 1ΓÇô5 and arrow keys ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   // Guarded so it never fires while typing in a form field (so entering a
   // quantity like "2" isn't hijacked). Tab / Shift+Tab still work natively.
   useEffect(() => {
@@ -184,14 +184,14 @@ export default function SalesBilling() {
         return; // don't steal keystrokes from form fields or buttons
       }
 
-      // 1–5 → jump straight to that bill
+      // 1ΓÇô5 ΓåÆ jump straight to that bill
       if (/^[1-5]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1;
         if (sessions[idx]) { e.preventDefault(); setActiveId(sessions[idx].id); }
         return;
       }
 
-      // ← ↑ previous · → ↓ next
+      // ΓåÉ Γåæ previous ┬╖ ΓåÆ Γåô next
       if (['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.key)) {
         if (sessions.length < 2) return;
         const idx = sessions.findIndex(s => s.id === activeId);
@@ -210,7 +210,7 @@ export default function SalesBilling() {
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-100">
-      {/* ══════ TAB BAR -browser-style tabs (active tab connects to content below) ══════ */}
+      {/* ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ TAB BAR -browser-style tabs (active tab connects to content below) ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */}
       <div className="shrink-0 flex items-end gap-1 bg-muted px-1.5 pt-1.5 border-b border-border">
         {/* Tab strip -tabs shrink to fit, no scrollbar */}
         <div role="tablist" aria-label="Open bills" className="flex items-end gap-0.5 overflow-hidden flex-1 min-w-0">
@@ -294,7 +294,7 @@ export default function SalesBilling() {
         </div>
       </div>
 
-      {/* ══════ BILL INSTANCES (all mounted, only active visible) ══════ */}
+      {/* ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ BILL INSTANCES (all mounted, only active visible) ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */}
       <div className="relative flex-1">
         {sessions.map(s => {
           const isActive = s.id === activeId;
@@ -316,14 +316,14 @@ export default function SalesBilling() {
         })}
       </div>
 
-      {/* ══════ CLOSE CONFIRMATION ══════ */}
+      {/* ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ CLOSE CONFIRMATION ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */}
       <AlertDialog open={!!pendingClose} onOpenChange={o => { if (!o) setPendingClose(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Discard this bill?</AlertDialogTitle>
             <AlertDialogDescription>
               This will discard {pendingClose?.meta?.itemCount ?? 0} item(s) for{' '}
-              <strong>{pendingClose?.meta?.customerName || `Bill ${pendingClose?.seq}`}</strong>. This can’t be undone.
+              <strong>{pendingClose?.meta?.customerName || `Bill ${pendingClose?.seq}`}</strong>. This canΓÇÖt be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -1,5 +1,5 @@
 -- ============================================================
--- B4 — Sales return routing by return_type
+-- B4 - Sales return routing by return_type
 -- Plan: Lean Compliance Plan, Phase B / B4
 --
 -- A salable return rejoins sellable stock. An expired or damaged return must

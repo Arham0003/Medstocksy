@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -104,7 +104,7 @@ export default function Settings() {
   const [gstTypeState, setGstTypeState] = useState<'exclusive' | 'inclusive'>('exclusive');
   const [gstEnabledState, setGstEnabledState] = useState<boolean>(false);
   // Account-level GST identity. is_interstate_billing decides CGST+SGST vs
-  // IGST for every bill — there is no per-bill override by design.
+  // IGST for every bill ΓÇö there is no per-bill override by design.
   const [stateCodeState, setStateCodeState] = useState<string>('');
   const [interstateState, setInterstateState] = useState<boolean>(false);
 
@@ -245,7 +245,7 @@ export default function Settings() {
 
     try {
       // Core columns always exist; the optional ones need later migrations.
-      // gst_type is in core — it exists since the earliest migrations and must always be saved.
+      // gst_type is in core ΓÇö it exists since the earliest migrations and must always be saved.
       // sales_edit_window_hours was added later and is the only truly optional field.
       const core: any = {
         currency,
@@ -262,7 +262,7 @@ export default function Settings() {
         .eq('account_id', profile?.account_id);
 
       if (error) {
-        // A newer column (gst_type / sales_edit_window_hours) may not exist yet → save the core fields.
+        // A newer column (gst_type / sales_edit_window_hours) may not exist yet ΓåÆ save the core fields.
         const { error: retryError } = await supabase
           .from('settings')
           .update(core)
@@ -456,7 +456,7 @@ export default function Settings() {
                       <SelectContent className="max-h-72">
                         {GST_STATE_CODES.map((s) => (
                           <SelectItem key={s.code} value={s.code}>
-                            {s.code} — {s.name}
+                            {s.code} ΓÇö {s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -470,7 +470,7 @@ export default function Settings() {
                     <div className="space-y-1">
                       <FieldLabel htmlFor="interstateBilling" icon={Receipt}>Interstate billing (IGST)</FieldLabel>
                       <p className="text-xs text-muted-foreground">
-                        Off — every bill is taxed as CGST + SGST. Turn this on only if you
+                        Off ΓÇö every bill is taxed as CGST + SGST. Turn this on only if you
                         invoice hospitals or institutions in another state; all bills then
                         carry IGST instead.
                       </p>
@@ -491,7 +491,7 @@ export default function Settings() {
                       {saving ? (
                         <div className="flex items-center gap-2">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                          Saving…
+                          SavingΓÇª
                         </div>
                       ) : (
                         'Save Store Info'
@@ -561,7 +561,7 @@ export default function Settings() {
                     </p>
                   </div>
 
-                  {/* GST enable — big clickable toggle card */}
+                  {/* GST enable ΓÇö big clickable toggle card */}
                   <button
                     type="button"
                     role="switch"
@@ -692,7 +692,7 @@ export default function Settings() {
                       {saving ? (
                         <div className="flex items-center gap-2">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                          Saving…
+                          SavingΓÇª
                         </div>
                       ) : (
                         'Save Tax Settings'
@@ -758,7 +758,7 @@ export default function Settings() {
                     <div className="rounded-lg bg-white border border-violet-100 p-3 text-sm text-slate-700 whitespace-pre-wrap min-h-[64px]">
                       {settings?.whatsapp_custom_note?.trim()
                         ? settings.whatsapp_custom_note
-                        : <span className="italic text-muted-foreground">No custom note set — messages will start with the bill summary.</span>}
+                        : <span className="italic text-muted-foreground">No custom note set ΓÇö messages will start with the bill summary.</span>}
                     </div>
                   </div>
 
@@ -771,7 +771,7 @@ export default function Settings() {
                       {saving ? (
                         <div className="flex items-center gap-2">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                          Saving…
+                          SavingΓÇª
                         </div>
                       ) : (
                         'Save Notifications'
@@ -821,7 +821,7 @@ export default function Settings() {
                       <Store className="h-3.5 w-3.5" />
                       Store
                     </div>
-                    <p className="text-sm font-medium text-slate-900 truncate">{account?.name || '—'}</p>
+                    <p className="text-sm font-medium text-slate-900 truncate">{account?.name || 'ΓÇö'}</p>
                   </div>
                   <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">

@@ -146,7 +146,7 @@ export default function Auth() {
           ? 'Set a new password'
           : 'Welcome back',
     subtitle: isSignUp
-      ? 'Set up your pharmacy in minutes — no card required.'
+      ? 'Set up your pharmacy in minutes - no card required.'
       : isResetPassword
         ? "Enter your email and we'll send you a reset link."
         : isUpdatePassword
@@ -171,7 +171,7 @@ export default function Auth() {
       </div>
 
       <div className="relative z-10 grid lg:grid-cols-2 min-h-[calc(100vh/0.9)]">
-        {/* ============ LEFT — Brand showcase (desktop only) ============ */}
+        {/* ============ LEFT - Brand showcase (desktop only) ============ */}
         <aside className="hidden lg:flex flex-col justify-between p-12 xl:p-16">
           {/* Brand */}
           <div className="flex items-center gap-3">
@@ -191,7 +191,7 @@ export default function Auth() {
                 </span>
               </h1>
               <p className="text-lg text-slate-600 dark:text-slate-400">
-                Inventory, GST billing, customers and reports — one fast, modern platform built for Indian pharmacies.
+                Inventory, GST billing, customers and reports - one fast, modern platform built for Indian pharmacies.
               </p>
             </div>
 
@@ -219,7 +219,7 @@ export default function Auth() {
           </p>
         </aside>
 
-        {/* ============ RIGHT — Auth form ============ */}
+        {/* ============ RIGHT - Auth form ============ */}
         <main className="flex items-center justify-center p-4 sm:p-6 lg:p-10">
           <div className="w-full max-w-md">
             {/* Mobile brand (hidden on desktop where the left panel shows it) */}

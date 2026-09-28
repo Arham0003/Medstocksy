@@ -66,7 +66,7 @@ export interface GstSplit {
 /**
  * Split a tax amount into CGST/SGST or IGST.
  *
- * The store's `is_interstate_billing` flag decides which, account-wide —
+ * The store's `is_interstate_billing` flag decides which, account-wide -
  * there is deliberately no per-bill override. SGST absorbs the odd paise so
  * CGST + SGST always adds back to the total exactly; the same rule is
  * applied in the SQL functions.
@@ -91,7 +91,7 @@ export const splitGst = (
  * Apportion a tax amount that has already been calculated.
  *
  * Use this rather than splitGst wherever the tax is derived from a
- * discounted line total — recomputing taxable x rate there would drift from
+ * discounted line total - recomputing taxable x rate there would drift from
  * the figure actually charged. SGST absorbs the odd paise, matching the SQL.
  */
 export const apportionGst = (taxAmount: number, isInterstate = false) => {
@@ -152,9 +152,9 @@ export const daysToExpiry = (expiry: string | Date | null | undefined): number |
 
 /** Compact MM/YYYY expiry, the form printed on a medicine pack. */
 export const formatExpiryShort = (expiry: string | Date | null | undefined): string => {
-  if (!expiry) return '—';
+  if (!expiry) return '-';
   const d = new Date(expiry);
-  if (Number.isNaN(d.getTime())) return '—';
+  if (Number.isNaN(d.getTime())) return '-';
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 };
 
@@ -174,16 +174,16 @@ export const expiryStatus = (expiry: string | Date | null | undefined): ExpirySt
 };
 
 /**
- * GST Calculation Utility — Medstocksy
+ * GST Calculation Utility - Medstocksy
  *
  * Indian GST Standard (matches MARG ERP, Tally Prime, Busy, Zoho Books):
  *
- * EXCLUSIVE  — entered price is BEFORE tax
+ * EXCLUSIVE  - entered price is BEFORE tax
  *   taxable  = price
  *   gst      = taxable × rate / 100
  *   total    = taxable + gst
  *
- * INCLUSIVE  — entered price ALREADY contains tax
+ * INCLUSIVE  - entered price ALREADY contains tax
  *   taxable  = price / (1 + rate / 100)
  *   gst      = price − taxable  =  (price × rate) / (100 + rate)
  *   total    = price  (customer pays exactly the entered price)

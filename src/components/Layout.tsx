@@ -68,7 +68,11 @@ function getInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-const AppSidebar = memo(({ accountName, userName, focusedIndex }: { accountName: string; userName: string; focusedIndex: number | null }) => {
+const AppSidebar = memo(({ accountName, userName, focusedIndex }: {
+  accountName: string;
+  userName: string;
+  focusedIndex: number | null;
+}) => {
   const { signOut } = useAuth();
   const location = useLocation();
 
@@ -112,8 +116,8 @@ const AppSidebar = memo(({ accountName, userName, focusedIndex }: { accountName:
                           <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
                         </div>
                         <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap ml-2">
-                          {shortcutKey}
-                        </span>
+                            {shortcutKey}
+                          </span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -266,7 +270,7 @@ export default function Layout() {
       }
 
       // ponytail: ArrowLeft focuses sidebar from anywhere (if not defaultPrevented); when focused, Up/Down move highlight, Right/Enter open and enter section
-      // Guard: only activate on top-level routes — sub-pages (/sales/new etc.) own ← for their own navigation.
+      // Guard: only activate on top-level routes - sub-pages (/sales/new etc.) own ← for their own navigation.
       const isTopLevelForNav = ownerNavItems.some((item) => item.href === location.pathname);
       if (!e.defaultPrevented && e.key === 'ArrowLeft' && focusedIndex === null && isTopLevelForNav) {
         e.preventDefault();
@@ -299,7 +303,7 @@ export default function Layout() {
         }
       }
 
-      // ponytail: skip number nav shortcuts on sub-pages (e.g. /sales/new) — only apply to top-level routes
+      // ponytail: skip number nav shortcuts on sub-pages (e.g. /sales/new) - only apply to top-level routes
       const isTopLevel = ownerNavItems.some((item) => item.href === location.pathname);
       if (!isTopLevel) return;
 
@@ -366,7 +370,11 @@ export default function Layout() {
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <AppSidebar accountName={accountName} userName={userName} focusedIndex={focusedIndex} />
+        <AppSidebar
+          accountName={accountName}
+          userName={userName}
+          focusedIndex={focusedIndex}
+        />
         <main className="flex-1 flex flex-col min-w-0">
           <header className="border-b px-3 sm:px-4 py-2 bg-background sticky top-0 z-10 flex items-center gap-2 sm:gap-3">
             <SidebarTrigger className="h-9 w-9 shrink-0" />

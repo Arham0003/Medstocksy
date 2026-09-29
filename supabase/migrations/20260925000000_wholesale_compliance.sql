@@ -200,10 +200,14 @@ COMMENT ON FUNCTION public.next_invoice_number IS
 --     wholesale invoice was previously reversed as CGST + SGST whenever the
 --     account-wide flag was off, which unbalanced both sides of the return
 -- ---------------------------------------------------------------------------
+-- The signature must match the existing function exactly, defaults included.
+-- CREATE OR REPLACE cannot remove a parameter default (42P13), so dropping
+-- DEFAULT 'salable' here would fail against any database that already has
+-- 20260910400000 or APPLY_ALL_compliance.sql applied.
 CREATE OR REPLACE FUNCTION public.record_sales_return(
   p_sale_id     uuid,
   p_quantity    numeric,
-  p_return_type text,
+  p_return_type text DEFAULT 'salable',
   p_reason      text DEFAULT NULL
 )
 RETURNS uuid

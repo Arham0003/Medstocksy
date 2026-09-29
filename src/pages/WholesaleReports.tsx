@@ -45,6 +45,7 @@ interface WholesaleSaleRow {
   buyer_state_code?: string | null;
   bill_serial?: string | null;
   return_type?: string | null;
+  is_free?: boolean | null;
 }
 
 /** One wholesale invoice, folded up from its sale lines. */
@@ -70,6 +71,8 @@ interface WholesaleBill {
   serial: string;
   /** A bill made entirely of reversal rows is a credit note, not an invoice. */
   isCreditNote: boolean;
+  /** Units given away under a scheme. Invisible until sales.is_free existed. */
+  freeUnits: number;
 }
 
 export default function WholesaleReports() {
@@ -97,9 +100,14 @@ export default function WholesaleReports() {
 
       // Same shape as Reports.tsx, with the one difference that defines this
       // page: only wholesale rows. Account scoping comes from RLS.
-      let query = db
-        .from('sales')
-        .select(`
+      // Same shape as Reports.tsx, with the one difference that defines this
+      // page: only wholesale rows. Account scoping comes from RLS.
+      //
+      // Spelled as a cascade rather than one select. The compliance columns
+      // arrive with 20260925000000, and asking for a column that does not exist
+      // fails the whole query, which would leave this page blank on a database
+      // that has not been migrated yet. Widest set first, narrowing on failure.
+      const BASE_COLS = `
           bill_id,
           quantity,
           total_price,
@@ -111,29 +119,48 @@ export default function WholesaleReports() {
           customer_name,
           wholesale_customer_name,
           wholesale_customer_gstin,
+          return_type`;
+      const GST_SPLIT_COLS = `,
           cgst_amount,
           sgst_amount,
           igst_amount,
-          gst_rate,
+          gst_rate`;
+      const COMPLIANCE_COLS = `,
           buyer_state_code,
           bill_serial,
-          return_type
-        `)
-        .eq('sale_type', 'wholesale')
-        .order('created_at', { ascending: false });
+          is_free`;
 
       const days = parseInt(dateRange) || 30;
       const fromDate = new Date();
       fromDate.setDate(fromDate.getDate() - days);
       const fromDateStr = fromDate.toISOString().split('T')[0];
 
-      if (dateRange === 'custom' && startDate && endDate) {
-        query = query.gte('sale_date', startDate).lte('sale_date', endDate);
-      } else {
-        query = query.gte('sale_date', fromDateStr);
+      let data: unknown[] | null = null;
+      let error: { message?: string } | null = null;
+
+      for (const cols of [
+        BASE_COLS + GST_SPLIT_COLS + COMPLIANCE_COLS,
+        BASE_COLS + GST_SPLIT_COLS,
+        BASE_COLS,
+      ]) {
+        let query = db
+          .from('sales')
+          .select(cols)
+          .eq('sale_type', 'wholesale')
+          .order('created_at', { ascending: false });
+
+        if (dateRange === 'custom' && startDate && endDate) {
+          query = query.gte('sale_date', startDate).lte('sale_date', endDate);
+        } else {
+          query = query.gte('sale_date', fromDateStr);
+        }
+
+        const res = await query;
+        data = res.data;
+        error = res.error;
+        if (!error) break;
       }
 
-      const { data, error } = await query;
       if (error) throw error;
 
       // Fold the sale lines into one row per invoice.
@@ -160,6 +187,7 @@ export default function WholesaleReports() {
           existing.rate = Math.max(existing.rate, Number(row.gst_rate) || 0);
           if (!existing.pos && row.buyer_state_code) existing.pos = row.buyer_state_code;
           if (!existing.serial && row.bill_serial) existing.serial = row.bill_serial;
+          if (row.is_free) existing.freeUnits += Number(row.quantity) || 0;
           // One priced line is enough to make the document an invoice.
           if (!row.return_type) existing.isCreditNote = false;
         } else {
@@ -180,6 +208,7 @@ export default function WholesaleReports() {
             pos: row.buyer_state_code || '',
             serial: row.bill_serial || '',
             isCreditNote: !!row.return_type,
+            freeUnits: row.is_free ? Number(row.quantity) || 0 : 0,
           });
         }
       }
@@ -289,6 +318,7 @@ export default function WholesaleReports() {
                 Customer: b.customer,
                 GSTIN: b.gstin,
                 Items: b.items,
+                'Free Units': b.freeUnits,
                 Taxable: b.taxable.toFixed(2),
                 GST: b.gst.toFixed(2),
                 Total: b.total.toFixed(2),
@@ -484,6 +514,7 @@ export default function WholesaleReports() {
                     <TableHead>Customer</TableHead>
                     <TableHead className="hidden md:table-cell">GSTIN</TableHead>
                     <TableHead className="text-center">Items</TableHead>
+                    <TableHead className="text-center hidden lg:table-cell" title="Units given away under a scheme">Free</TableHead>
                     <TableHead className="text-right">Taxable</TableHead>
                     <TableHead className="text-right">GST</TableHead>
                     <TableHead className="text-right">Total</TableHead>
@@ -495,12 +526,26 @@ export default function WholesaleReports() {
                   {filteredBills.map(b => (
                     <TableRow key={b.bill_id || `${b.date}-${b.customer}`}>
                       <TableCell className="whitespace-nowrap">{b.date}</TableCell>
-                      <TableCell className="font-mono text-xs uppercase">{b.bill_id.slice(0, 8) || '-'}</TableCell>
+                      <TableCell className="font-mono text-xs uppercase">
+                        {/* The sequential number is the one that matters for
+                            filing; older bills fall back to their UUID stub. */}
+                        {b.serial || b.bill_id.slice(0, 8) || '-'}
+                        {b.isCreditNote && (
+                          <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-800 normal-case">
+                            Credit note
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="font-medium max-w-[180px] truncate" title={b.customer}>
                         {b.customer}
                       </TableCell>
                       <TableCell className="hidden md:table-cell font-mono text-xs">{b.gstin || '-'}</TableCell>
                       <TableCell className="text-center tabular-nums">{b.items}</TableCell>
+                      <TableCell className="text-center tabular-nums hidden lg:table-cell">
+                        {b.freeUnits > 0
+                          ? <span className="font-semibold text-violet-700">{b.freeUnits}</span>
+                          : <span className="text-muted-foreground">-</span>}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">₹{b.taxable.toFixed(2)}</TableCell>
                       <TableCell className="text-right tabular-nums">₹{b.gst.toFixed(2)}</TableCell>
                       <TableCell className="text-right tabular-nums font-semibold">₹{b.total.toFixed(2)}</TableCell>

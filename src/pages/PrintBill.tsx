@@ -368,7 +368,7 @@ export default function PrintBill() {
             const WHOLESALE_COLS = ', sale_type, wholesale_customer_name, wholesale_customer_gstin';
             // Compliance columns arrive with 20260925000000; the cascade below
             // drops them first so a bill still prints on an un-migrated database.
-            const COMPLIANCE_COLS = ', wholesale_customer_dl, wholesale_customer_dl_expiry, buyer_state_code, ship_to_address, bill_serial, return_type';
+            const COMPLIANCE_COLS = ', wholesale_customer_dl, wholesale_customer_dl_expiry, buyer_state_code, ship_to_address, bill_serial, return_type, is_free';
 
             // db (untyped client): a column list built at runtime defeats
             // PostgREST's generated row typing; rows are re-mapped by hand below.
@@ -444,9 +444,14 @@ export default function PrintBill() {
                         selling_price: item.products?.selling_price || item.unit_price,
                         taxable_value: item.taxable_value ?? null,
                         gst_rate: item.gst_rate ?? null,
-                        // A scheme line: zero rate AND zero value. Both checks so a
-                        // genuine ₹0-value discounted line is never mistaken for free.
-                        is_free: Number(item.unit_price) === 0 && Number(item.total_price) === 0,
+                        // sales.is_free is written by the billing screen and is the
+                        // authority. The zero-rate heuristic below is only for rows
+                        // written before that column existed: without it a fully
+                        // discounted line, or a sample, would print as FREE and drop
+                        // out of the subtotal.
+                        is_free: item.is_free != null
+                            ? !!item.is_free
+                            : Number(item.unit_price) === 0 && Number(item.total_price) === 0,
                         cgst_amount: item.cgst_amount ?? null,
                         sgst_amount: item.sgst_amount ?? null,
                         igst_amount: item.igst_amount ?? null,

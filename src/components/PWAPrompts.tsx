@@ -88,7 +88,7 @@ export default function PWAPrompts() {
     const dismissedUntil = parseInt(localStorage.getItem(INSTALL_DISMISSED_KEY) || '0', 10);
     if (Date.now() < dismissedUntil) return;
 
-    // iOS doesn't support beforeinstallprompt — show the manual hint instead
+    // iOS doesn't support beforeinstallprompt - show the manual hint instead
     if (isIOSDevice()) {
       const t = setTimeout(() => {
         setIosHint(true);
@@ -167,7 +167,7 @@ export default function PWAPrompts() {
               Tap <Share className="h-3 w-3 inline" /> Share, then <strong>Add to Home Screen</strong>.
             </span>
           ) : (
-            'Open it like a regular app — works offline, no browser tabs.'
+            'Open it like a regular app. Works offline, no browser tabs.'
           )}
         </div>
       </div>

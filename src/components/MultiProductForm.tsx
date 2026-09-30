@@ -57,6 +57,7 @@ interface ProductRow {
   free: string;         // free qty
   low_stock: string;    // low stock alert threshold (defaults to '10')
   mrp: string;          // max retail price → maps to selling_price
+  wholesale_price: string; // B2B rate → maps to products.wholesale_price
   rate: string;         // purchase rate   → maps to purchase_price
   disc_pct: string;     // line discount %
   gst: string;          // GST %
@@ -111,6 +112,7 @@ const makeRow = (defaultGst = 18): ProductRow => ({
   free: '',
   low_stock: '10',
   mrp: '',
+  wholesale_price: '',
   rate: '',
   disc_pct: '',
   gst: String(defaultGst),
@@ -129,6 +131,18 @@ const expiryToDate = (input: string): string | null => {
   const year = y.length === 2 ? `20${y}` : y;
   return `${year}-${m.padStart(2, '0')}-01`;
 };
+
+/** Months of shelf life left, or null when the expiry is blank or unparseable. */
+const monthsOfShelfLife = (input: string): number | null => {
+  const iso = expiryToDate(input);
+  if (!iso) return null;
+  const [y, m] = iso.split('-').map(Number);
+  const now = new Date();
+  return (y - now.getFullYear()) * 12 + (m - (now.getMonth() + 1));
+};
+
+/** Inward stock below this has to be confirmed before it is accepted. */
+const SHORT_EXPIRY_MONTHS = 6;
 
 /** Automatically insert '/' after MM when typing digits for MM/YY */
 const formatExpiryInput = (val: string, prev: string): string => {
@@ -177,9 +191,9 @@ const PRESET_CATEGORIES = [
 ];
 
 // 17 visible columns + row# col + delete col (19 cols total)
-// # | PRODUCT | CATEGORY | HSN | BATCH | EXPIRY | QTY | PCS | FREE | LOW STOCK | MRP | RATE | DISC% | GST% | MARGIN | AMOUNT | ✕
+// # | PRODUCT | CATEGORY | HSN | BATCH | EXPIRY | QTY | PCS | FREE | LOW STOCK | MRP | W.PRICE | RATE | DISC% | GST% | MARGIN | AMOUNT | ✕
 const ROW_COLS =
-  'grid-cols-[22px_1.8fr_0.75fr_0.52fr_0.68fr_0.55fr_0.44fr_0.42fr_0.42fr_0.48fr_0.65fr_0.65fr_0.5fr_0.5fr_0.55fr_0.68fr_26px]';
+  'grid-cols-[22px_1.8fr_0.75fr_0.52fr_0.68fr_0.55fr_0.44fr_0.42fr_0.42fr_0.48fr_0.65fr_0.65fr_0.65fr_0.5fr_0.5fr_0.55fr_0.68fr_26px]';
 
 // ─── SupplierPicker ───────────────────────────────────────────────────────────
 // Reused as-is for the invoice header. Portal-based dropdown to avoid clipping.
@@ -741,7 +755,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           value={row.hsn_code}
                           onChange={e => updateRow(row.tempId, { hsn_code: e.target.value })}
                           onKeyDown={e => handleEnterNav(e, idx, 'hsn_code')}
-                          placeholder="—"
+                          placeholder="-"
                           className={cardInputCls}
                         />
                       </div>
@@ -778,11 +792,30 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           onKeyDown={e => handleEnterNav(e, idx, 'expiry_date')}
                           placeholder="MM/YY"
                           maxLength={5}
-                          className={cn(cardInputCls, 'font-mono text-center')}
+                          title={
+                            (() => {
+                              const left = monthsOfShelfLife(row.expiry_date);
+                              if (left === null) return undefined;
+                              if (left < 0) return 'This batch has already expired';
+                              if (left < SHORT_EXPIRY_MONTHS) return `Only ${left} month(s) of shelf life left`;
+                              return undefined;
+                            })()
+                          }
+                          className={cn(
+                            cardInputCls,
+                            'font-mono text-center',
+                            (() => {
+                              const left = monthsOfShelfLife(row.expiry_date);
+                              if (left === null) return '';
+                              if (left < 0) return 'border-red-400 bg-red-50 text-red-900';
+                              if (left < SHORT_EXPIRY_MONTHS) return 'border-amber-400 bg-amber-50 text-amber-900';
+                              return '';
+                            })(),
+                          )}
                         />
                       </div>
                       <div className="flex flex-col gap-0.5">
-                        <FieldLabel>Qty</FieldLabel>
+                        <FieldLabel>Strips</FieldLabel>
                         <Input
                           ref={el => setFieldRef(row.tempId, 'quantity', el)}
                           type="text" inputMode="decimal"
@@ -794,14 +827,14 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                         />
                       </div>
                       <div className="flex flex-col gap-0.5">
-                        <FieldLabel>Pcs/Strip</FieldLabel>
+                        <FieldLabel>Pcs</FieldLabel>
                         <Input
                           ref={el => setFieldRef(row.tempId, 'pcs_per_unit', el)}
                           type="text" inputMode="decimal"
                           value={row.pcs_per_unit}
                           onChange={e => updateRow(row.tempId, { pcs_per_unit: e.target.value.replace(/[^0-9]/g, '') })}
                           onKeyDown={e => handleEnterNav(e, idx, 'pcs_per_unit')}
-                          placeholder="—"
+                          placeholder="-"
                           className={cn(cardInputCls, 'text-center')}
                         />
                       </div>
@@ -833,7 +866,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                     </div>
 
                     {/* Card Strip 3: Pricing & Tax (preserving exact MRP and Rate names/fields!) */}
-                    <div className="px-2.5 py-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 items-end bg-slate-50/40">
+                    <div className="px-2.5 py-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 items-end bg-slate-50/40">
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel>MRP</FieldLabel>
                         <Input
@@ -844,6 +877,21 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           onKeyDown={e => handleEnterNav(e, idx, 'mrp')}
                           placeholder="0.00"
                           className={cn(cardInputCls, 'text-right')}
+                        />
+                      </div>
+                      {/* W.Price - B2B rate, mirrored onto products.wholesale_price.
+                          Optional: leave blank and wholesale billing falls back to MRP. */}
+                      <div className="flex flex-col gap-0.5">
+                        <FieldLabel>W.Price</FieldLabel>
+                        <Input
+                          ref={el => setFieldRef(row.tempId, 'wholesale_price', el)}
+                          type="text" inputMode="decimal"
+                          value={row.wholesale_price}
+                          onChange={e => updateRow(row.tempId, { wholesale_price: e.target.value.replace(/[^0-9.]/g, '') })}
+                          onKeyDown={e => handleEnterNav(e, idx, 'wholesale_price')}
+                          placeholder="0.00"
+                          title="Wholesale price - default rate on wholesale bills"
+                          className={cn(cardInputCls, 'text-right text-violet-900')}
                         />
                       </div>
                       <div className="flex flex-col gap-0.5">
@@ -890,13 +938,13 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                             row.marginPct < 0 ? 'text-rose-600' : 'text-slate-700',
                           )}
                         >
-                          {row.mrp || row.rate ? `${row.marginPct.toFixed(2)}%` : '—'}
+                          {row.mrp || row.rate ? `${row.marginPct.toFixed(2)}%` : '-'}
                         </div>
                       </div>
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel>Amount</FieldLabel>
                         <div className="h-7 flex items-center justify-end pr-2 text-xs text-slate-900 tabular-nums select-none font-bold border border-transparent rounded bg-white/60">
-                          {row.finalAmount > 0 ? `₹${row.finalAmount.toFixed(2)}` : '—'}
+                          {row.finalAmount > 0 ? `₹${row.finalAmount.toFixed(2)}` : '-'}
                         </div>
                       </div>
                     </div>
@@ -975,7 +1023,7 @@ export const MultiProductForm = ({
   // Enter-key field order within a row (last field triggers row commit + new row)
   const ENTER_FIELDS = [
     'name', 'manufacturer', 'category', 'hsn_code', 'batch_number', 'expiry_date',
-    'quantity', 'pcs_per_unit', 'free', 'low_stock', 'mrp', 'rate', 'disc_pct', 'gst',
+    'quantity', 'pcs_per_unit', 'free', 'low_stock', 'mrp', 'wholesale_price', 'rate', 'disc_pct', 'gst',
   ] as const;
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -1065,6 +1113,7 @@ export const MultiProductForm = ({
         pcs_per_unit: match.pcs_per_unit ? String(match.pcs_per_unit) : '',
         low_stock: match.low_stock_threshold ? String(match.low_stock_threshold) : '10',
         mrp: match.selling_price ? String(match.selling_price) : '',
+        wholesale_price: match.wholesale_price ? String(match.wholesale_price) : '',
         rate: match.purchase_price ? String(match.purchase_price) : '',
         gst: match.gst ? String(match.gst) : String(defaultGstRate),
         batch_number: match.batch_number || '',
@@ -1282,6 +1331,26 @@ export const MultiProductForm = ({
       }
     }
 
+    // Short-dated, not expired: confirm rather than block. Accepting stock with
+    // four months left can be a deliberate commercial decision; silently booking
+    // it in is what causes the write-off nobody saw coming.
+    if (!silent) {
+      const shortDated = toSave
+        .map(r => ({ name: r.name, left: monthsOfShelfLife(r.expiry_date) }))
+        .filter(r => r.left !== null && r.left >= 0 && r.left < SHORT_EXPIRY_MONTHS);
+
+      if (shortDated.length > 0) {
+        const lines = shortDated
+          .map(r => `${r.name}: ${r.left} month(s) left`)
+          .join('\n');
+        const ok = window.confirm(
+          `${shortDated.length} item(s) arrive with less than ${SHORT_EXPIRY_MONTHS} months of shelf life:\n\n` +
+          `${lines}\n\nAccept this stock anyway?`,
+        );
+        if (!ok) return;
+      }
+    }
+
     isSavingLockRef.current = true;
     setIsSaving(true);
     try {
@@ -1301,6 +1370,7 @@ export const MultiProductForm = ({
           pcs_per_unit: parseInt(r.pcs_per_unit) || null,
           freeQty: r.freeQty,
           mrpNum: r.mrpNum || null,
+          wholesale_price: parseFloat(r.wholesale_price) || null,
           rateNum: r.rateNum || null,
           discPct: r.discPct || 0,
           gstRate: r.gstRate || 0,
@@ -1734,7 +1804,7 @@ export const MultiProductForm = ({
       </Dialog>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          F2 — NEW INVOICE CONFIRMATION
+          F2 - NEW INVOICE CONFIRMATION
       ════════════════════════════════════════════════════════════════════ */}
       <Dialog open={f2ConfirmOpen} onOpenChange={setF2ConfirmOpen}>
         <DialogContent
@@ -1840,7 +1910,7 @@ export const MultiProductForm = ({
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="text-amber-600 border-amber-200">
-                        New — will be set in header
+                        New - will be set in header
                       </Badge>
                     )}
                   </div>
@@ -1887,16 +1957,16 @@ export const MultiProductForm = ({
                                 <div className="text-[10px] text-muted-foreground">{it.manufacturer}</div>
                               )}
                             </td>
-                            <td className="p-2 text-center text-slate-600">{it.hsn_code || '—'}</td>
-                            <td className="p-2 text-center text-slate-600">{it.batch_number || '—'}</td>
+                            <td className="p-2 text-center text-slate-600">{it.hsn_code || '-'}</td>
+                            <td className="p-2 text-center text-slate-600">{it.batch_number || '-'}</td>
                             <td className="p-2 text-center text-slate-600">
-                              {it.expiry_date ? it.expiry_date.slice(0, 7) : '—'}
+                              {it.expiry_date ? it.expiry_date.slice(0, 7) : '-'}
                             </td>
-                            <td className="p-2 text-center font-medium">{it.quantity || '—'}</td>
-                            <td className="p-2 text-center">{it.gst ? `${it.gst}%` : '—'}</td>
-                            <td className="p-2 text-right text-slate-600">{it.purchase_price || '—'}</td>
+                            <td className="p-2 text-center font-medium">{it.quantity || '-'}</td>
+                            <td className="p-2 text-center">{it.gst ? `${it.gst}%` : '-'}</td>
+                            <td className="p-2 text-right text-slate-600">{it.purchase_price || '-'}</td>
                             <td className="p-2 text-right font-semibold text-emerald-700">
-                              {it.selling_price || '—'}
+                              {it.selling_price || '-'}
                             </td>
                           </tr>
                         );

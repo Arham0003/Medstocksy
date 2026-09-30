@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 3 — GST split on sales + ITC columns on purchase returns
+-- Migration 3 - GST split on sales + ITC columns on purchase returns
 -- Plan: Lean Compliance Plan, Phase A / Migration 3
 --
 -- GSTR-1 needs taxable value and the CGST/SGST (or IGST) split stored per

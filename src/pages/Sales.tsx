@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { TableSkeleton } from '@/components/TableSkeleton';
-import { Plus, ShoppingCart, Package, Eye, Search, Printer, Download, ChevronDown, ChevronRight, Receipt, MoreVertical, Pencil, X, Lock, Filter } from 'lucide-react';
+import { Plus, ShoppingCart, Package, Eye, Search, Printer, Download, ChevronDown, ChevronRight, Receipt, MoreVertical, Pencil, X, Lock, Filter, Building2, Diamond } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from '@/hooks/useAuth';
@@ -23,6 +23,8 @@ import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft
 import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
 import { apportionGst } from '@/lib/gst';
 import { db } from '@/lib/supabaseLoose';
+import { useWholesaleAccess } from '@/hooks/useWholesaleAccess';
+import { PremiumUpgradeDialog } from '@/components/PremiumUpgradeDialog';
 
 interface Product {
   id: string;
@@ -85,6 +87,28 @@ export default function Sales() {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { toast } = useToast();
+  // Wholesale entry point. hasPlan = subscribed; isActive = subscribed AND the
+  // Settings toggle is on. Both false until `wholesaleLoading` clears.
+  const {
+    hasPlan: wholesalePlan,
+    isActive: wholesaleActive,
+    loading: wholesaleLoading,
+  } = useWholesaleAccess();
+  const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
+
+  const handleWholesaleClick = () => {
+    if (wholesaleLoading) return;              // answer not in yet
+    if (!wholesalePlan) { setShowUpgradeDialog(true); return; }  // no plan → sell it
+    if (!wholesaleActive) {                    // plan, but the toggle is off
+      toast({
+        title: 'Wholesale mode is off',
+        description: 'Turn on Wholesale Mode in Settings → Tax & Currency to start B2B billing.',
+      });
+      navigate('/settings');
+      return;
+    }
+    navigate('/wholesale');
+  };
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -670,7 +694,7 @@ export default function Sales() {
 
       // Resolve the FEFO batch per product up front so the sale rows can carry
       // batch_id and the batch's landed cost. This cart screen has no batch
-      // picker — nearest expiry is taken automatically, and the deduction
+      // picker - nearest expiry is taken automatically, and the deduction
       // below uses the same rule.
       const fefoTop = new Map<string, StockBatch>();
       if (profile?.account_id) {
@@ -803,7 +827,7 @@ export default function Sales() {
           if (problems.length > 0) {
             toast({
               variant: 'destructive',
-              title: 'Bill saved — batch ledger out of step',
+              title: 'Bill saved - batch ledger out of step',
               description: problems.slice(0, 3).join(' · '),
             });
           }
@@ -974,8 +998,8 @@ export default function Sales() {
     return null;
   };
   const lockReasonText = (r: LockReason): string => {
-    if (r === 'printed') return 'Locked — bill has been printed';
-    if (r === 'expired') return `Locked — older than ${editWindowHours} ${editWindowHours === 1 ? 'hour' : 'hours'}`;
+    if (r === 'printed') return 'Locked - bill has been printed';
+    if (r === 'expired') return `Locked - older than ${editWindowHours} ${editWindowHours === 1 ? 'hour' : 'hours'}`;
     return '';
   };
 
@@ -1061,14 +1085,14 @@ export default function Sales() {
 
       const list = groupedSales;
 
-      // ArrowLeft — clear row selection and fall through to Layout's bubble handler
+      // ArrowLeft - clear row selection and fall through to Layout's bubble handler
       // so the sidebar gains focus. No stopPropagation: Layout must see this event.
       if (e.key === 'ArrowLeft' && selectedRow >= 0) {
         setSelectedRow(-1);
         return;
       }
 
-      // Movement keys — always intercept so the page doesn't scroll / switch sections.
+      // Movement keys - always intercept so the page doesn't scroll / switch sections.
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
         if (!list.length) return;
         e.preventDefault();
@@ -1080,7 +1104,7 @@ export default function Sales() {
         return;
       }
 
-      // Action keys — skip when focus is on a real control so we don't hijack it.
+      // Action keys - skip when focus is on a real control so we don't hijack it.
       const onControl = !!t && (t.tagName === 'BUTTON' || t.tagName === 'A' || !!t.closest('button, a, [role="button"], [role="dialog"], [role="menu"]'));
       if (onControl) return;
 
@@ -1097,7 +1121,7 @@ export default function Sales() {
         if (isMobile) setIsDialogOpen(true); else navigate('/sales/new');
       }
     };
-    window.addEventListener('keydown', onKey, true); // capture — beats Layout's window listener
+    window.addEventListener('keydown', onKey, true); // capture - beats Layout's window listener
     return () => window.removeEventListener('keydown', onKey, true);
   }, [groupedSales, selectedRow, isDialogOpen, isEditOpen, isDetailModalOpen, isMobile, navigate]);
 
@@ -1383,6 +1407,31 @@ Thank you for your purchase!
             Record and manage sales transactions
           </p>
         </div>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+        {/* Wholesale billing - 💎 while locked, straight through once unlocked.
+            Hidden entirely while the entitlement check is still in flight so it
+            never flickers from locked to unlocked. */}
+        {!wholesaleLoading && (
+          <Button
+            variant="outline"
+            onClick={handleWholesaleClick}
+            title={
+              !wholesalePlan
+                ? 'Premium feature - upgrade to the Wholesale plan'
+                : !wholesaleActive
+                ? 'Turn on Wholesale Mode in Settings'
+                : 'Open wholesale billing'
+            }
+            className="text-base sm:text-lg py-3 px-4 sm:px-6 gap-2 border-violet-200 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+          >
+            {(!wholesalePlan || !wholesaleActive) && (
+              <Diamond className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+            )}
+            <Building2 className="h-4 w-4 shrink-0" />
+            <span>Wholesale Sales</span>
+          </Button>
+        )}
+
         {/* Desktop: Navigate to full-page billing. Mobile: Open dialog */}
         {isMobile ? (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -1414,7 +1463,7 @@ Thank you for your purchase!
               </Button>
             </DialogTrigger>
           <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[92vh] p-0 overflow-hidden flex flex-col gap-0">
-            {/* Green header — Sale Entry (inspired by the full POS) */}
+            {/* Green header - Sale Entry (inspired by the full POS) */}
             <DialogHeader className="shrink-0 bg-gradient-to-r from-emerald-600 to-emerald-500 px-4 py-3 space-y-0.5 text-left pr-12">
               <DialogTitle className="text-white text-base sm:text-lg font-semibold flex items-center gap-2">
                 <ShoppingCart className="h-5 w-5" /> Sale Entry
@@ -1658,7 +1707,7 @@ Thank you for your purchase!
                                       }
                                     }
                                   }}
-                                  placeholder="—"
+                                  placeholder="-"
                                   className="h-8 w-12 text-sm px-1 text-center font-medium"
                                 />
                                 {cartSubQty ? (
@@ -1782,7 +1831,7 @@ Thank you for your purchase!
                               </td>
                               {/* Batch */}
                               <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-slate-600 break-words">
-                                {product.batch_number || '—'}
+                                {product.batch_number || '-'}
                               </td>
                               {/* Qty (strips) */}
                               <td className="px-0.5 py-1 border-r border-slate-200 align-middle">
@@ -1820,7 +1869,7 @@ Thank you for your purchase!
                                         }
                                       }
                                     }}
-                                    placeholder="—"
+                                    placeholder="-"
                                     className="h-7 w-9 text-xs px-0.5 text-center font-medium border-0 bg-transparent rounded-none focus-visible:ring-1 focus-visible:ring-inset"
                                   />
                                   {cartSubQty ? (
@@ -1890,7 +1939,7 @@ Thank you for your purchase!
                   />
                 </div>
 
-                {/* Row 2: Phone (full width — payment mode moved to the finalize bar) */}
+                {/* Row 2: Phone (full width - payment mode moved to the finalize bar) */}
                 <div className="space-y-1">
                   <Label htmlFor="customerPhone" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Phone</Label>
                   <Input
@@ -2011,7 +2060,7 @@ Thank you for your purchase!
 
               </div>{/* end scrollable body */}
 
-              {/* Sticky finalize bar — payment chips + total + actions (POS style) */}
+              {/* Sticky finalize bar - payment chips + total + actions (POS style) */}
               <div className="shrink-0 border-t bg-white px-3 sm:px-4 py-2.5 space-y-2">
                 <div className="grid grid-cols-4 gap-1.5">
                   {[
@@ -2091,7 +2140,10 @@ Thank you for your purchase!
             <span className="text-xs bg-white/20 px-2 py-0.5 rounded border border-white/30 opacity-90 hidden sm:inline-block">F2</span>
           </Button>
         )}
+        </div>
       </div>
+
+      <PremiumUpgradeDialog open={showUpgradeDialog} onOpenChange={setShowUpgradeDialog} />
 
       <Card>
         <CardHeader className="pb-3">
@@ -2361,7 +2413,7 @@ Thank you for your purchase!
                                 })()}
                               </div>
                             </TableCell>
-                            <TableCell className="hidden lg:table-cell py-2.5 text-sm">{group.customer_phone || '—'}</TableCell>
+                            <TableCell className="hidden lg:table-cell py-2.5 text-sm">{group.customer_phone || '-'}</TableCell>
                             <TableCell className="hidden md:table-cell py-2.5 text-center text-sm">{group.items.length}</TableCell>
                             <TableCell className="py-2.5 text-right font-semibold text-green-700">₹{group.total_amount.toFixed(2)}</TableCell>
                             <TableCell className="hidden lg:table-cell py-2.5 text-center">
@@ -2945,7 +2997,7 @@ Thank you for your purchase!
                           <TableBody>
                             {selectedTransaction.items.map((item, idx) => (
                               <TableRow key={idx}>
-                                <TableCell className="py-2 text-sm">{item.products?.name || '—'}</TableCell>
+                                <TableCell className="py-2 text-sm">{item.products?.name || '-'}</TableCell>
                                 <TableCell className="py-2 text-sm text-center">
                                   {item.quantity}
                                   {item.sub_qty ? <span className="text-[10px] text-blue-600 ml-1">+{item.sub_qty}</span> : null}

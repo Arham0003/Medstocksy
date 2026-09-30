@@ -5,7 +5,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const SUPABASE_PUBLISHABLE_KEY = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
 
 if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-  // ponytail: log instead of throw — a module-level throw silently blanks the
+  // ponytail: log instead of throw - a module-level throw silently blanks the
   // entire lazy chunk (Sales, SalesBilling…) in production when env vars are
   // missing from the hosting dashboard. Queries will still fail with auth
   // errors, which are surfaced via toasts. Set VITE_SUPABASE_URL and

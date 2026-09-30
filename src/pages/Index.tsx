@@ -176,7 +176,7 @@ const Index = () => {
         </p>
       </div>
 
-      {/* Hero KPI row — the 4 headline metrics */}
+      {/* Hero KPI row - the 4 headline metrics */}
       <section>
         <div className="flex items-end justify-between mb-4">
           <div>
@@ -229,7 +229,7 @@ const Index = () => {
           </div>
         </div>
         <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-3">
-          {/* Chart — left (spans 2 cols on desktop) */}
+          {/* Chart - left (spans 2 cols on desktop) */}
           <Card className="lg:col-span-2 shadow-sm border-slate-200">
             <CardHeader>
               <div className="flex items-center gap-2">
@@ -280,7 +280,7 @@ const Index = () => {
             </CardContent>
           </Card>
 
-          {/* Activity feed — right */}
+          {/* Activity feed - right */}
           <Card className="shadow-sm border-slate-200">
             <CardHeader>
               <div className="flex items-center gap-2">

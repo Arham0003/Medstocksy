@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/db conn/supabaseClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,8 @@ import { Loader2, ArrowLeft, Printer, Pencil, Plus, Trash2, Search } from 'lucid
 import { cn } from '@/lib/utils';
 
 import { db } from '@/lib/supabaseLoose';
-import { calcGst } from '@/lib/gst';
+import { calcGst, stateNameForCode } from '@/lib/gst';
+import { amountInWordsINR } from '@/lib/utils';
 
 interface SaleItem {
     id: string;
@@ -39,12 +40,14 @@ interface SaleItem {
     sgst_amount?: number | null;
     igst_amount?: number | null;
     hsn_code_stored?: string | null;
+    /** Scheme line: given away at ₹0, shown but never added to the invoice value. */
+    is_free?: boolean;
 }
 
 interface BillData {
     id: string; // bill_id
-    date: string;          // sale_date (date only) — used as the canonical bill date
-    created_at: string;    // full TIMESTAMPTZ from the first row — frozen at creation
+    date: string;          // sale_date (date only) - used as the canonical bill date
+    created_at: string;    // full TIMESTAMPTZ from the first row - frozen at creation
     account_id: string;
     customer_name: string | null;
     customer_phone: string | null;
@@ -58,6 +61,20 @@ interface BillData {
     payment_mode: string;
     received_amount: number;
     discount_percentage: number;
+    /** 'retail' (default) or 'wholesale' - drives the B2B invoice bits. */
+    sale_type?: string | null;
+    wholesale_customer_name?: string | null;
+    wholesale_customer_gstin?: string | null;
+    /** Rule 65(4): the buyer's drug licence, as recorded when the sale was made. */
+    wholesale_customer_dl?: string | null;
+    wholesale_customer_dl_expiry?: string | null;
+    /** Two-digit GST state code of the buyer. Place of supply on a B2B invoice. */
+    buyer_state_code?: string | null;
+    ship_to_address?: string | null;
+    /** Sequential number required by CGST Rule 46, e.g. WS/26-27/00001. */
+    bill_serial?: string | null;
+    /** True when every line is a reversal, so the bill prints as a credit note. */
+    is_credit_note?: boolean;
 }
 
 // Lightweight product type for the add-item search list
@@ -77,6 +94,12 @@ interface BusinessDetails {
     phone: string | null;
     gstin: string | null;
     drug_license: string | null;
+    /** Two-digit GST state code - printed as the place of supply on B2B invoices. */
+    state_code?: string | null;
+    /** Seller compliance, set once in Settings and read here on every print. */
+    fssai_number?: string | null;
+    dl_form_type?: string | null;
+    drug_license_expiry?: string | null;
 }
 
 export default function PrintBill() {
@@ -87,7 +110,7 @@ export default function PrintBill() {
     const [billData, setBillData] = useState<BillData | null>(null);
 
     /**
-     * HSN-wise tax summary — the block a GST invoice must carry and the shape
+     * HSN-wise tax summary - the block a GST invoice must carry and the shape
      * GSTR-1 wants. Taxable value and tax are summed per HSN + rate pair.
      */
     const hsnSummary = useMemo(() => {
@@ -124,10 +147,18 @@ export default function PrintBill() {
         return Array.from(buckets.values()).sort((a, b) => a.hsn.localeCompare(b.hsn));
     }, [billData]);
     const [businessDetails, setBusinessDetails] = useState<BusinessDetails | null>(null);
-    const [format, setFormat] = useState<'A5' | 'A4' | 'T80'>('A5');
+    // ?format=A4|T80 comes from the wholesale print picker; retail keeps A5.
+    const [searchParams] = useSearchParams();
+    const [format, setFormat] = useState<'A5' | 'A4' | 'T80'>(() => {
+        const requested = searchParams.get('format');
+        return requested === 'A4' || requested === 'T80' || requested === 'A5' ? requested : 'A5';
+    });
+    // A wholesale invoice defaults to A4 (it needs the room), unless the URL
+    // already asked for a specific paper.
+    const formatAutoSet = useRef(false);
     const [dateOverride, setDateOverride] = useState<string>(''); // YYYY-MM-DD, set once data loads
 
-    // ponytail: @page must live in document.head — browsers ignore it inside DOM nodes
+    // ponytail: @page must live in document.head - browsers ignore it inside DOM nodes
     useEffect(() => {
         const FORMATS_STATIC = {
             A5:  'A5 portrait',
@@ -166,7 +197,7 @@ export default function PrintBill() {
     const [removingItemId, setRemovingItemId] = useState<string | null>(null);
     const [editGlobalDiscount, setEditGlobalDiscount] = useState(0);
 
-    // Account-wide tax/currency settings — drives whether new items get GST and how it's calculated
+    // Account-wide tax/currency settings - drives whether new items get GST and how it's calculated
     const [taxSettings, setTaxSettings] = useState<{ gst_enabled: boolean; gst_type: 'inclusive' | 'exclusive'; default_gst_rate: number }>({
         gst_enabled: true,
         gst_type: 'exclusive',
@@ -332,19 +363,27 @@ export default function PrintBill() {
             // GST-split columns arrive with 20260910200000. Retry without them
             // so a bill still prints on a database that has not been migrated.
             const GST_SPLIT_COLS = ', taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount, hsn_code';
+            // Wholesale columns arrive with 20260918000000; same degrade-on-miss
+            // approach as the GST-split set above.
+            const WHOLESALE_COLS = ', sale_type, wholesale_customer_name, wholesale_customer_gstin';
+            // Compliance columns arrive with 20260925000000; the cascade below
+            // drops them first so a bill still prints on an un-migrated database.
+            const COMPLIANCE_COLS = ', wholesale_customer_dl, wholesale_customer_dl_expiry, buyer_state_code, ship_to_address, bill_serial, return_type, is_free';
 
             // db (untyped client): a column list built at runtime defeats
             // PostgREST's generated row typing; rows are re-mapped by hand below.
-            let { data: salesData, error: salesError } = await db.from('sales')
-                .select(BASE_COLS + GST_SPLIT_COLS)
-                .eq('bill_id', billId);
-
-            if (salesError) {
-                const retry = await db.from('sales')
-                    .select(BASE_COLS)
-                    .eq('bill_id', billId);
-                salesData = retry.data;
-                salesError = retry.error;
+            let salesData: Record<string, unknown>[] | null = null;
+            let salesError: { message?: string } | null = null;
+            for (const cols of [
+                BASE_COLS + GST_SPLIT_COLS + WHOLESALE_COLS + COMPLIANCE_COLS,
+                BASE_COLS + GST_SPLIT_COLS + WHOLESALE_COLS,
+                BASE_COLS + GST_SPLIT_COLS,
+                BASE_COLS,
+            ]) {
+                const res = await db.from('sales').select(cols).eq('bill_id', billId);
+                salesData = res.data;
+                salesError = res.error;
+                if (!salesError) break;
             }
 
                 if (salesError) throw salesError;
@@ -357,22 +396,20 @@ export default function PrintBill() {
 
                 // Fetch business details (drug_license added by migration; retry without it on older DBs)
                 const accountId = itemsData[0].account_id;
-                let { data: accountData, error: accountError } = await supabase
-                    .from('accounts')
-                    .select('name, address, phone, gstin, drug_license')
-                    .eq('id', accountId)
-                    .single();
-
-                if (accountError) {
-                    // Column may not exist yet — fall back to base columns
-                    const retry = await supabase
-                        .from('accounts')
-                        .select('name, address, phone, gstin')
-                        .eq('id', accountId)
-                        .single();
-                    accountData = retry.data;
-                    if (retry.error) console.error('Error fetching business details:', retry.error);
+                // Widest set first, narrowing on failure, so a bill still prints
+                // against a database that has not taken the later migrations.
+                let accountData: unknown = null;
+                let accountError: { message?: string } | null = null;
+                for (const cols of [
+                    'name, address, phone, gstin, drug_license, state_code, fssai_number, dl_form_type, drug_license_expiry',
+                    'name, address, phone, gstin, drug_license, state_code',
+                    'name, address, phone, gstin',
+                ]) {
+                    const res = await supabase.from('accounts').select(cols).eq('id', accountId).single();
+                    accountError = res.error;
+                    if (!res.error) { accountData = res.data; break; }
                 }
+                if (!accountData) console.error('Error fetching business details:', accountError);
                 setBusinessDetails(accountData as any);
 
                 // Aggregate bill data
@@ -407,6 +444,14 @@ export default function PrintBill() {
                         selling_price: item.products?.selling_price || item.unit_price,
                         taxable_value: item.taxable_value ?? null,
                         gst_rate: item.gst_rate ?? null,
+                        // sales.is_free is written by the billing screen and is the
+                        // authority. The zero-rate heuristic below is only for rows
+                        // written before that column existed: without it a fully
+                        // discounted line, or a sample, would print as FREE and drop
+                        // out of the subtotal.
+                        is_free: item.is_free != null
+                            ? !!item.is_free
+                            : Number(item.unit_price) === 0 && Number(item.total_price) === 0,
                         cgst_amount: item.cgst_amount ?? null,
                         sgst_amount: item.sgst_amount ?? null,
                         igst_amount: item.igst_amount ?? null,
@@ -415,6 +460,7 @@ export default function PrintBill() {
                 });
 
                 const subtotal = items.reduce((sum, item) => {
+                    if (item.is_free) return sum; // given away - no invoice value
                     const effectiveQty = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
                         ? item.quantity + (item.sub_qty / item.pcs_per_unit)
                         : (item.quantity || 1);
@@ -438,7 +484,7 @@ export default function PrintBill() {
                     id: billId,
                     account_id: firstItem.account_id,
                     date: firstItem.sale_date || originalCreatedAt || firstItem.created_at,
-                    created_at: originalCreatedAt || firstItem.created_at, // full timestamp — frozen at first save
+                    created_at: originalCreatedAt || firstItem.created_at, // full timestamp - frozen at first save
                     customer_name: firstItem.customer_name,
                     customer_phone: firstItem.customer_phone,
                     customer_address: firstItem.customer_address,
@@ -451,6 +497,17 @@ export default function PrintBill() {
                     payment_mode: firstItem.payment_mode || 'Cash',
                     received_amount: firstItem.received_amount || total_amount,
                     discount_percentage: firstItem.discount_percentage || 0,
+                    sale_type: firstItem.sale_type ?? 'retail',
+                    wholesale_customer_name: firstItem.wholesale_customer_name ?? null,
+                    wholesale_customer_gstin: firstItem.wholesale_customer_gstin ?? null,
+                    wholesale_customer_dl: firstItem.wholesale_customer_dl ?? null,
+                    wholesale_customer_dl_expiry: firstItem.wholesale_customer_dl_expiry ?? null,
+                    buyer_state_code: firstItem.buyer_state_code ?? null,
+                    ship_to_address: firstItem.ship_to_address ?? null,
+                    bill_serial: firstItem.bill_serial ?? null,
+                    // A bill made entirely of reversal rows is a credit note, and
+                    // has to say so: GST wants the document type on its face.
+                    is_credit_note: salesData.every((r) => !!(r as Record<string, unknown>).return_type),
                 });
                 // Seed the date picker with the bill's stored date
                 const rawDate = firstItem.sale_date || originalCreatedAt || firstItem.created_at;
@@ -467,6 +524,14 @@ export default function PrintBill() {
     useEffect(() => {
         fetchBillDetails();
     }, [fetchBillDetails]);
+
+    // Wholesale bills need the A4 grid (free-qty column + HSN summary).
+    const isWholesaleBill = billData?.sale_type === 'wholesale';
+    useEffect(() => {
+        if (!isWholesaleBill || formatAutoSet.current) return;
+        formatAutoSet.current = true;
+        if (!searchParams.get('format')) setFormat('A4');
+    }, [isWholesaleBill, searchParams]);
 
     // Remove a single line item: restore stock, then delete the row
     const handleRemoveItem = async (item: SaleItem) => {
@@ -542,7 +607,7 @@ export default function PrintBill() {
 
         setIsAddingItem(true);
         try {
-            // Compute net + GST + total — respects account-level gst_enabled / gst_type
+            // Compute net + GST + total - respects account-level gst_enabled / gst_type
             const gross = Math.round(addRate * addQty * 100) / 100;
             // Apply global discount first
             const discAmt = Math.round((gross * editGlobalDiscount) / 100 * 100) / 100;
@@ -677,7 +742,7 @@ export default function PrintBill() {
                         </button>
                     ))}
                 </div>
-                {/* Date override — screen only */}
+                {/* Date override - screen only */}
                 <div className="flex items-center gap-1.5">
                     <label htmlFor="bill-date-override" className="text-xs text-muted-foreground font-medium">Bill Date:</label>
                     <input
@@ -795,6 +860,11 @@ export default function PrintBill() {
                             {businessDetails?.address && <div style={{ fontSize: '7pt', color: '#333' }}>{businessDetails.address}</div>}
                             {businessDetails?.phone && <div style={{ fontSize: '7pt' }}>📞 {businessDetails.phone}</div>}
                             {businessDetails?.gstin && <div style={{ fontSize: '6.5pt', color: '#555' }}>GSTIN: {businessDetails.gstin}</div>}
+                            {isWholesaleBill && billData.wholesale_customer_gstin && (
+                                <div style={{ fontSize: '6.5pt', color: '#555' }}>
+                                    Buyer GSTIN: {billData.wholesale_customer_gstin}
+                                </div>
+                            )}
                             {businessDetails?.drug_license && <div style={{ fontSize: '6.5pt', color: '#555' }}>DL: {businessDetails.drug_license}</div>}
                         </div>
 
@@ -803,7 +873,7 @@ export default function PrintBill() {
                         {/* Bill meta */}
                         <div style={{ fontSize: '7pt', marginBottom: '1.5mm' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ fontWeight: 700 }}>BILL OF SUPPLY</span>
+                                <span style={{ fontWeight: 700 }}>TAX INVOICE</span>
                                 <span style={{ fontWeight: 700 }}>{invoiceDate}</span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -822,7 +892,7 @@ export default function PrintBill() {
 
                         <div style={{ borderTop: '1px dashed #666', margin: '0 0 1.5mm' }} />
 
-                        {/* Items table — 5 cols only (name wraps, no HSN/Batch/Exp/GST split) */}
+                        {/* Items table - 5 cols only (name wraps, no HSN/Batch/Exp/GST split) */}
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid #000' }}>
@@ -842,7 +912,10 @@ export default function PrintBill() {
                                     return (
                                         <tr key={item.id}>
                                             <td style={{ paddingTop: '1.5px', wordBreak: 'break-word' }}>
-                                                <div style={{ fontWeight: 700 }}>{index + 1}. {item.product_name}</div>
+                                                <div style={{ fontWeight: 700 }}>
+                                                    {index + 1}. {item.product_name}
+                                                    {item.is_free && <span style={{ fontSize: '6.5pt', fontWeight: 700 }}> (FREE)</span>}
+                                                </div>
                                                 {item.batch_number && item.batch_number !== '-' && (
                                                     <div style={{ fontSize: '6.5pt', color: '#555' }}>
                                                         Batch: {item.batch_number}{item.expiry && item.expiry !== '-' ? ` | Exp: ${item.expiry}` : ''}
@@ -922,7 +995,7 @@ export default function PrintBill() {
 
                         {/* Payment + T&C */}
                         <div style={{ fontSize: '6.5pt', color: '#333', marginBottom: '2mm' }}>
-                            <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> — Received with thanks.</div>
+                            <div><span style={{ fontWeight: 700 }}>Payment: </span><span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span> - Received with thanks.</div>
                             <div style={{ marginTop: '1mm', color: '#555', fontSize: '6pt' }}>
                                 T&C: Goods once sold will not be taken back. GST incl. in MRP. Subject to local jurisdiction.{' '}
                                 <span style={{ color: '#0d6e3a', fontWeight: 700 }}>Get well soon!</span>
@@ -966,7 +1039,9 @@ export default function PrintBill() {
                             </div>
                             {/* Business details */}
                             <div style={{ flex: 1 }}>
-                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>BILL OF SUPPLY</div>
+                                <div style={{ fontSize: '6pt', color: '#555', fontWeight: 600, marginBottom: '0px', letterSpacing: '0.3px' }}>
+                                    {billData.is_credit_note ? 'CREDIT NOTE' : 'TAX INVOICE'}
+                                </div>
                                 <div style={{ fontSize: '10pt', fontWeight: 800, color: '#1a3a5c', lineHeight: '1.1', textTransform: 'uppercase' }}>
                                     {businessDetails?.name || 'PHARMA'}
                                 </div>
@@ -974,7 +1049,25 @@ export default function PrintBill() {
                                     {businessDetails?.address && <div>{businessDetails.address}</div>}
                                     {businessDetails?.phone && <span>📞 {businessDetails.phone}</span>}
                                     {businessDetails?.gstin && <span style={{ marginLeft: businessDetails?.phone ? '4px' : 0 }}>| GSTIN: {businessDetails.gstin}</span>}
-                                    {businessDetails?.drug_license && <span style={{ marginLeft: '4px' }}>| DL: {businessDetails.drug_license}</span>}
+                                    {businessDetails?.drug_license && (
+                                        <span style={{ marginLeft: '4px' }}>
+                                            | DL{businessDetails?.dl_form_type ? ' (Form ' + businessDetails.dl_form_type + ')' : ''}: {businessDetails.drug_license}
+                                            {isWholesaleBill && businessDetails?.drug_license_expiry
+                                                ? ' valid to ' + new Date(businessDetails.drug_license_expiry).toLocaleDateString('en-IN')
+                                                : ''}
+                                        </span>
+                                    )}
+                                    {isWholesaleBill && businessDetails?.fssai_number && (
+                                        <div>FSSAI: {businessDetails.fssai_number}</div>
+                                    )}
+                                    {isWholesaleBill && businessDetails?.state_code && (
+                                        <div>
+                                            State: {businessDetails.state_code}
+                                            {stateNameForCode(businessDetails.state_code)
+                                                ? ` - ${stateNameForCode(businessDetails.state_code)}`
+                                                : ''}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -983,7 +1076,9 @@ export default function PrintBill() {
                         <div style={{ flex: '1', padding: '1.5mm' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1mm' }}>
                                 <div style={{ fontSize: '9pt', fontWeight: 700, color: '#1a3a5c' }}>
-                                    Invoice/{invoiceNumber}
+                                    {/* The sequential series once it exists; older bills keep the
+                                        short form of their UUID so they still print. */}
+                                    {billData.bill_serial || 'Invoice/' + invoiceNumber}
                                 </div>
                                 <div style={{ fontSize: '7.5pt', fontWeight: 600, textAlign: 'right' }}>
                                     {invoiceDate}
@@ -1012,6 +1107,42 @@ export default function PrintBill() {
                                         <span>{billData.doctor_name}</span>
                                     </div>
                                 )}
+                                {/* Buyer GSTIN - mandatory on a B2B tax invoice */}
+                                {isWholesaleBill && billData.wholesale_customer_gstin && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>GSTIN:</span>
+                                        <span style={{ fontWeight: 600 }}>{billData.wholesale_customer_gstin}</span>
+                                    </div>
+                                )}
+                                {/* Rule 65(4): the buyer's licence belongs on the invoice. */}
+                                {isWholesaleBill && billData.wholesale_customer_dl && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>DL NO:</span>
+                                        <span style={{ fontWeight: 600 }}>
+                                            {billData.wholesale_customer_dl}
+                                            {billData.wholesale_customer_dl_expiry
+                                                ? ' (valid to ' + new Date(billData.wholesale_customer_dl_expiry).toLocaleDateString('en-IN') + ')'
+                                                : ''}
+                                        </span>
+                                    </div>
+                                )}
+                                {isWholesaleBill && billData.buyer_state_code && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>POS:</span>
+                                        <span>
+                                            {billData.buyer_state_code}
+                                            {stateNameForCode(billData.buyer_state_code)
+                                                ? ' - ' + stateNameForCode(billData.buyer_state_code)
+                                                : ''}
+                                        </span>
+                                    </div>
+                                )}
+                                {isWholesaleBill && billData.ship_to_address && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>SHIP TO:</span>
+                                        <span>{billData.ship_to_address}</span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -1028,6 +1159,7 @@ export default function PrintBill() {
                                 <th style={{ width: '10%' }}>Batch</th>
                                 <th style={{ width: '6%' }}>Exp</th>
                                 <th style={{ width: '5%' }}>Qty</th>
+                                {isWholesaleBill && <th style={{ width: '4%' }}>Free</th>}
                                 <th style={{ width: '7%' }}>MRP</th>
                                 <th style={{ width: '7%' }}>Rate</th>
                                 <th style={{ width: '5%', fontSize: '7pt' }}>Dis%</th>
@@ -1063,19 +1195,31 @@ export default function PrintBill() {
                                 return (
                                     <tr key={item.id}>
                                         <td style={{ textAlign: 'center' }}>{index + 1}</td>
-                                        <td style={{ textAlign: 'left', fontWeight: 600, wordWrap: 'break-word' }}>{item.product_name}</td>
+                                        <td style={{ textAlign: 'left', fontWeight: 600, wordWrap: 'break-word' }}>
+                                            {item.product_name}
+                                            {item.is_free && (
+                                                <span style={{ marginLeft: '2mm', fontSize: '5.5pt', fontWeight: 700, color: '#6d28d9', border: '0.5px solid #6d28d9', borderRadius: '2px', padding: '0 1mm' }}>
+                                                    FREE
+                                                </span>
+                                            )}
+                                        </td>
                                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.hsn}</td>
                                         <td style={{ textAlign: 'center', textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.batch_number}</td>
                                         <td style={{ textAlign: 'center' }}>{item.expiry}</td>
                                         <td style={{ textAlign: 'center' }}>
-                                            {item.sub_qty ? (
+                                            {item.is_free ? '-' : item.sub_qty ? (
                                                 <span>{item.quantity}<span style={{ fontSize: '0.8em', color: '#1565c0' }}>+{item.sub_qty}</span></span>
                                             ) : (
                                                 item.quantity
                                             )}
                                         </td>
+                                        {isWholesaleBill && (
+                                            <td style={{ textAlign: 'center', fontWeight: 700, color: '#6d28d9' }}>
+                                                {item.is_free ? item.quantity : '-'}
+                                            </td>
+                                        )}
                                         <td style={{ textAlign: 'right' }}>{mrp.toFixed(2)}</td>
-                                        <td style={{ textAlign: 'right' }}>{rate.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'right' }}>{item.is_free ? '0.00' : rate.toFixed(2)}</td>
                                         <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>{item.discount_percentage ? item.discount_percentage + '%' : '-'}</td>
                                         <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? igstAmt.toFixed(2) : (cgstAmt > 0 ? cgstAmt.toFixed(2) : '-')}</td>
                                         <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? '-' : (sgstAmt > 0 ? sgstAmt.toFixed(2) : '-')}</td>
@@ -1088,6 +1232,7 @@ export default function PrintBill() {
                                 <tr key={`empty-${i}`}>
                                     <td style={{ height: '14px' }}>&nbsp;</td>
                                     <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                                    {isWholesaleBill && <td></td>}
                                 </tr>
                             ))}
                         </tbody>
@@ -1149,21 +1294,47 @@ export default function PrintBill() {
                         {/* Left: Payment Mode + Terms */}
                         <div style={{ flex: '1.3', borderRight: '1px solid #444', padding: '1.5mm', fontSize: '6.5pt', lineHeight: '1.4', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                             <div>
+                                {/* Total in words - a tax invoice has to state it */}
+                                {isWholesaleBill && (
+                                    <div style={{ marginBottom: '1mm', fontSize: '6.5pt', lineHeight: '1.3' }}>
+                                        <span style={{ fontWeight: 700 }}>Amount in words: </span>
+                                        <span style={{ fontStyle: 'italic' }}>{amountInWordsINR(billData.total_amount)}</span>
+                                    </div>
+                                )}
                                 <div style={{ marginBottom: '1mm' }}>
                                     <span style={{ fontWeight: 700 }}>Payment: </span>
                                     <span style={{ textTransform: 'capitalize' }}>{billData.payment_mode}</span>
-                                    <span style={{ marginLeft: '4px', color: '#555' }}>— Received with thanks.</span>
+                                    <span style={{ marginLeft: '4px', color: '#555' }}>- Received with thanks.</span>
                                 </div>
                                 <div style={{ fontSize: '6pt', lineHeight: '1.35', color: '#444' }}>
                                     <span style={{ fontWeight: 700 }}>T&C: </span>
-                                    Goods once sold will not be taken back. GST included in MRP. Subject to local jurisdiction.{' '}
-                                    <span style={{ color: '#0d6e3a', fontWeight: 600 }}>Get well soon!</span>
+                                    {isWholesaleBill ? (
+                                        <>
+                                            Goods once sold will not be taken back. Subject to local jurisdiction. E&amp;OE.
+                                            {/* Warranty under sections 18 and 19 of the Drugs and Cosmetics
+                                                Act 1940. The wholesale invoice is the document that carries it. */}
+                                            <div style={{ marginTop: '0.8mm', fontSize: '5.5pt', lineHeight: '1.3', color: '#333' }}>
+                                                <span style={{ fontWeight: 700 }}>Warranty: </span>
+                                                We hereby declare that the drugs supplied under this invoice do not contravene
+                                                in any way the provisions of Section 18 of the Drugs and Cosmetics Act, 1940, and
+                                                the Rules made thereunder, and the warranty under Section 19(3) of the said Act
+                                                is hereby given.
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            Goods once sold will not be taken back. GST included in MRP. Subject to local jurisdiction.{' '}
+                                            <span style={{ color: '#0d6e3a', fontWeight: 600 }}>Get well soon!</span>
+                                        </>
+                                    )}
                                 </div>
                             </div>
                             {/* Authorized Signatory */}
                             <div style={{ paddingRight: '1mm' }}>
-                                <div style={{ borderTop: '0.5px solid #666', width: '24mm', textAlign: 'center', paddingTop: '1mm' }}>
-                                    <span style={{ fontSize: '6pt', color: '#555' }}>Auth Sign</span>
+                                <div style={{ borderTop: '0.5px solid #666', width: isWholesaleBill ? '30mm' : '24mm', textAlign: 'center', paddingTop: '1mm' }}>
+                                    <span style={{ fontSize: '6pt', color: '#555' }}>
+                                        {isWholesaleBill ? 'Authorised Signatory' : 'Auth Sign'}
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -1215,7 +1386,7 @@ export default function PrintBill() {
                 )}
             </div>
 
-            {/* Edit Bill Dialog — never shown in print */}
+            {/* Edit Bill Dialog - never shown in print */}
             <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
                 <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 print:hidden">
                     <DialogHeader className="pr-8 space-y-1">

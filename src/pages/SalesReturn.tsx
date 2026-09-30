@@ -179,7 +179,7 @@ export default function SalesReturn() {
             const totalReturnAmount = (selectedSale.total_price * returnQuantity) / effectiveQty;
 
             // record_sales_return books the reversal, splits the GST credit
-            // and decides — from return_type — whether the goods rejoin
+            // and decides - from return_type - whether the goods rejoin
             // sellable stock. Expired and damaged never do.
             const { error } = await db.rpc('record_sales_return', {
                 p_sale_id: selectedSale.id,
@@ -191,7 +191,7 @@ export default function SalesReturn() {
             if (error) {
                 // The RPC ships with 20260910400000. Until that migration is
                 // applied it does not exist, and a return must not simply
-                // fail — fall back to the raw negative-row insert this screen
+                // fail - fall back to the raw negative-row insert this screen
                 // used before. Stock routing by return_type needs the trigger
                 // patch, so on this path everything restores stock as it
                 // always did; the reason still records what came back.
@@ -227,7 +227,7 @@ export default function SalesReturn() {
                     title: 'Return processed (legacy mode)',
                     description: returnType === 'salable'
                         ? `Refunded ₹${totalReturnAmount.toFixed(2)}. Stock restored.`
-                        : `Refunded ₹${totalReturnAmount.toFixed(2)}. Note: stock was restored — write-off routing needs the compliance migrations.`,
+                        : `Refunded ₹${totalReturnAmount.toFixed(2)}. Note: stock was restored - write-off routing needs the compliance migrations.`,
                 });
 
                 setIsReturnDialogOpen(false);
@@ -243,7 +243,7 @@ export default function SalesReturn() {
                 title: "Return processed",
                 description: returnType === 'salable'
                     ? `Refunded ₹${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Stock restored.`
-                    : `Refunded ₹${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Written off as ${returnType} — stock not restored.`,
+                    : `Refunded ₹${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Written off as ${returnType} - stock not restored.`,
             });
 
             // Reset form and close dialog
@@ -297,7 +297,7 @@ export default function SalesReturn() {
     const reasonIsFromPreset = REASON_PRESETS.includes(returnReason);
 
     // Suggest "Expired" when the goods being handed back are past their date.
-    // Only a suggestion — the counter can still mark them salable, because
+    // Only a suggestion - the counter can still mark them salable, because
     // the customer may be returning stock bought long before it expired.
     useEffect(() => {
         if (!selectedSale) return;
@@ -365,7 +365,7 @@ export default function SalesReturn() {
                     </div>
                     <div className="min-w-0">
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Eligible Sales</p>
-                        <p className="text-base font-semibold mt-0.5">{loading ? '—' : stats.eligibleSales}</p>
+                        <p className="text-base font-semibold mt-0.5">{loading ? '-' : stats.eligibleSales}</p>
                     </div>
                 </div>
                 <div className="rounded-md border bg-card p-3 flex items-center gap-3">
@@ -374,7 +374,7 @@ export default function SalesReturn() {
                     </div>
                     <div className="min-w-0">
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Returns Processed</p>
-                        <p className="text-base font-semibold mt-0.5">{loading ? '—' : stats.returnsProcessed}</p>
+                        <p className="text-base font-semibold mt-0.5">{loading ? '-' : stats.returnsProcessed}</p>
                     </div>
                 </div>
                 <div className="rounded-md border bg-card p-3 flex items-center gap-3">
@@ -383,7 +383,7 @@ export default function SalesReturn() {
                     </div>
                     <div className="min-w-0">
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Refund Amount</p>
-                        <p className="text-base font-semibold text-red-700 mt-0.5 truncate">{loading ? '—' : formatINR(stats.totalRefund)}</p>
+                        <p className="text-base font-semibold text-red-700 mt-0.5 truncate">{loading ? '-' : formatINR(stats.totalRefund)}</p>
                     </div>
                 </div>
                 <div className="rounded-md border bg-card p-3 flex items-center gap-3">
@@ -392,12 +392,12 @@ export default function SalesReturn() {
                     </div>
                     <div className="min-w-0">
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Returns Today</p>
-                        <p className="text-base font-semibold mt-0.5">{loading ? '—' : stats.returnsToday}</p>
+                        <p className="text-base font-semibold mt-0.5">{loading ? '-' : stats.returnsToday}</p>
                     </div>
                 </div>
             </div>
 
-            {/* Sales available for return — primary action area */}
+            {/* Sales available for return - primary action area */}
             <Card>
                 <CardHeader className="pb-3">
                     <CardTitle className="text-lg font-semibold">Sales Available for Return</CardTitle>
@@ -514,7 +514,7 @@ export default function SalesReturn() {
                 </CardContent>
             </Card>
 
-            {/* Recent Returns — secondary, shown below */}
+            {/* Recent Returns - secondary, shown below */}
             {returns.length > 0 && (
                 <Card>
                     <CardHeader className="pb-3">
@@ -570,7 +570,7 @@ export default function SalesReturn() {
                                                 <TableCell className="py-2.5 font-medium">{r.products?.name}</TableCell>
                                                 <TableCell className="hidden lg:table-cell py-2.5 text-sm">{r.sales?.customer_name || 'Walk-in'}</TableCell>
                                                 <TableCell className="py-2.5 text-sm text-center">{r.return_quantity}</TableCell>
-                                                <TableCell className="hidden lg:table-cell py-2.5 text-sm text-muted-foreground italic">{r.reason || '—'}</TableCell>
+                                                <TableCell className="hidden lg:table-cell py-2.5 text-sm text-muted-foreground italic">{r.reason || '-'}</TableCell>
                                                 <TableCell className="py-2.5 text-right font-semibold text-red-600">−{formatINR(r.return_amount)}</TableCell>
                                                 <TableCell className="hidden md:table-cell py-2.5 text-sm">{new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</TableCell>
                                             </TableRow>
@@ -679,7 +679,7 @@ export default function SalesReturn() {
                                 </div>
                             </div>
 
-                            {/* Return type — decides whether stock comes back */}
+                            {/* Return type - decides whether stock comes back */}
                             <div className="space-y-1.5">
                                 <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                                     Condition of returned goods
@@ -710,7 +710,7 @@ export default function SalesReturn() {
                                 </div>
                                 {returnType !== 'salable' && (
                                     <p className="text-[11px] text-amber-700">
-                                        The customer is refunded, but these units stay out of stock — they cannot legally be resold.
+                                        The customer is refunded, but these units stay out of stock - they cannot legally be resold.
                                     </p>
                                 )}
                             </div>
@@ -758,7 +758,7 @@ export default function SalesReturn() {
                                 <p className="text-[11px] text-muted-foreground mt-2">
                                     {returnType === 'salable'
                                         ? `Stock for ${selectedSale.products?.name} will be restored by ${returnQuantity} unit${returnQuantity === 1 ? '' : 's'}.`
-                                        : `${returnQuantity} unit${returnQuantity === 1 ? '' : 's'} of ${selectedSale.products?.name} will be written off — stock is not restored.`}
+                                        : `${returnQuantity} unit${returnQuantity === 1 ? '' : 's'} of ${selectedSale.products?.name} will be written off - stock is not restored.`}
                                 </p>
                             </div>
 

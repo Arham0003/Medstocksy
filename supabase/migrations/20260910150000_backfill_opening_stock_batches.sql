@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 2b — Freeze existing stock as an "Opening Stock" batch
+-- Migration 2b - Freeze existing stock as an "Opening Stock" batch
 -- Plan Q1, option A (fresh start).
 --
 -- Every product currently holding stock gets exactly ONE batch row carrying

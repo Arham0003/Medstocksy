@@ -1,5 +1,5 @@
 -- ============================================================
--- adjust_batch_stock() — shared batch-ledger helper
+-- adjust_batch_stock() - shared batch-ledger helper
 -- Supporting function for B3 (purchase returns) and B4 (sales returns).
 --
 -- Deliberately forgiving: if a product has no batch rows yet (legacy stock

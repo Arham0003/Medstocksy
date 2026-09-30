@@ -108,7 +108,7 @@ interface ExpiringBatch {
   products: { name: string; category: string | null } | null;
 }
 
-/** Schedule M quarantine window — how far ahead the expiry report looks. */
+/** Schedule M quarantine window - how far ahead the expiry report looks. */
 const EXPIRY_HORIZON_DAYS = 90;
 
 export default function Reports() {
@@ -122,6 +122,11 @@ export default function Reports() {
   const [expiringBatches, setExpiringBatches] = useState<ExpiringBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('7');
+  // Channel filter, opt-in. The default stays 'all' so these totals are exactly
+  // what they were before the filter existed: changing the default would move
+  // numbers the owner already reads, which is a regression even when the new
+  // number is the more useful one. Selecting Retail gives the cleaner figure.
+  const [channel, setChannel] = useState<'retail' | 'wholesale' | 'all'>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [isProfitVisible, setIsProfitVisible] = useState(false);
@@ -140,6 +145,11 @@ export default function Reports() {
     try {
       setLoading(true);
       
+      // Applied to every sales query below. 'all' leaves the query untouched,
+      // so it behaves exactly as this page did before the filter existed.
+      const byChannel = <T extends { eq: (col: string, val: string) => T }>(q: T): T =>
+        (channel === 'all' ? q : q.eq('sale_type', channel));
+
       // --- STEP 1: Fetch Sales Data ---
       // Use 'as any' to avoid deep type instantiation errors in complex queries
       let salesQuery = (supabase as any)
@@ -170,7 +180,7 @@ export default function Reports() {
         salesQuery = salesQuery.gte('sale_date', fromDateStr);
       }
 
-      let { data: rawSales, error: salesError } = await salesQuery;
+      let { data: rawSales, error: salesError } = await byChannel(salesQuery);
 
       // Fallback: If newer columns are missing, try a simpler query
       if (salesError && (salesError.message.includes('column') || salesError.message.includes('sale_date'))) {
@@ -193,7 +203,7 @@ export default function Reports() {
           fallbackQuery = fallbackQuery.gte('created_at', fromDateStr);
         }
 
-        const res = await fallbackQuery;
+        const res = await byChannel(fallbackQuery);
         rawSales = res.data;
         salesError = res.error;
       }
@@ -261,7 +271,7 @@ export default function Reports() {
         productSalesQuery = productSalesQuery.gte('sale_date', fromDateStr);
       }
 
-      let { data: productData, error: productError } = await productSalesQuery;
+      let { data: productData, error: productError } = await byChannel(productSalesQuery);
 
       if (productError && productError.message.includes('column')) {
         let fallbackPQ = (supabase as any)
@@ -274,7 +284,7 @@ export default function Reports() {
         } else {
           fallbackPQ = fallbackPQ.gte('created_at', fromDateStr);
         }
-        const res = await fallbackPQ;
+        const res = await byChannel(fallbackPQ);
         productData = res.data;
         productError = res.error;
       }
@@ -295,10 +305,12 @@ export default function Reports() {
 
       // --- STEP 3: Outstanding Credit ---
       try {
-        const { data: allUnsettled, error: unsettledError } = await (supabase as any)
-          .from('sales')
-          .select('total_price, received_amount')
-          .eq('is_settled', false);
+        const { data: allUnsettled, error: unsettledError } = await byChannel(
+          (supabase as any)
+            .from('sales')
+            .select('total_price, received_amount')
+            .eq('is_settled', false),
+        );
 
         if (!unsettledError && allUnsettled) {
           const total = allUnsettled.reduce((sum: number, s: any) => {
@@ -383,7 +395,7 @@ export default function Reports() {
 
   useEffect(() => {
     fetchReports();
-  }, [dateRange, startDate, endDate]);
+  }, [dateRange, startDate, endDate, channel]);
 
   const exportToCSV = (data: any[], filename: string) => {
     const headers = Object.keys(data[0] || {});
@@ -436,7 +448,7 @@ export default function Reports() {
   const totalCredit = useMemo(() =>
     salesData.reduce((sum, day) => {
       return sum + day.sales_details.reduce((sSum, s: any) => {
-        if (s.is_settled) return sSum; // fully settled — no balance owed
+        if (s.is_settled) return sSum; // fully settled - no balance owed
         const balance = Number(s.total_price || 0) - Number(s.received_amount || 0);
         return sSum + (balance > 0.01 ? balance : 0); // ignore floating-point dust
       }, 0);
@@ -538,7 +550,7 @@ export default function Reports() {
         </DropdownMenu>
       </div>
 
-      {/* Filter bar — date range */}
+      {/* Filter bar - date range */}
       <Card className="border-slate-200">
         <CardContent className="p-3 sm:p-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
@@ -558,6 +570,18 @@ export default function Reports() {
                   <SelectItem value="30">Last 30 days</SelectItem>
                   <SelectItem value="90">Last 90 days</SelectItem>
                   <SelectItem value="custom">Custom range</SelectItem>
+                </SelectContent>
+              </Select>
+              {/* Channel. Defaults to both, so existing totals are unchanged.
+                  Retail-only is the figure to use for retail stock decisions. */}
+              <Select value={channel} onValueChange={(v) => setChannel(v as 'retail' | 'wholesale' | 'all')}>
+                <SelectTrigger className="w-full sm:w-40" title="Which sales these totals cover">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Both channels</SelectItem>
+                  <SelectItem value="retail">Retail only</SelectItem>
+                  <SelectItem value="wholesale">Wholesale only</SelectItem>
                 </SelectContent>
               </Select>
               {dateRange === 'custom' && (
@@ -592,7 +616,7 @@ export default function Reports() {
         </CardContent>
       </Card>
 
-      {/* ═══ Section: At a glance — KPI cards ═══ */}
+      {/* ═══ Section: At a glance - KPI cards ═══ */}
       <section>
         <div className="flex items-end justify-between mb-4">
           <div>
@@ -622,7 +646,7 @@ export default function Reports() {
             variant="primary"
             description="Total quantity moved"
           />
-          {/* Profit card — keeps show/hide toggle */}
+          {/* Profit card - keeps show/hide toggle */}
           <Card className="relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:-translate-y-1 border border-emerald-200">
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-50 to-white opacity-50" />
             <CardHeader className="relative flex flex-row items-center justify-between space-y-0 pb-2">
@@ -907,7 +931,7 @@ export default function Reports() {
                                             </span>
                                           </TableCell>
                                           <TableCell className={`hidden md:table-cell font-bold ${hasDue ? 'text-orange-600' : 'text-green-600'}`}>
-                                            {hasDue ? `₹${balance.toFixed(2)}` : '—'}
+                                            {hasDue ? `₹${balance.toFixed(2)}` : '-'}
                                           </TableCell>
                                         </TableRow>
                                       );
@@ -1077,20 +1101,20 @@ export default function Reports() {
                   Purchase Returns
                 </CardTitle>
                 <CardDescription>
-                  Products returned to suppliers in this period — {purchaseReturns.length} return(s)
+                  Products returned to suppliers in this period - {purchaseReturns.length} return(s)
                 </CardDescription>
               </div>
               <Button
                 variant="outline"
                 onClick={() => exportToCSV(purchaseReturns.map(r => ({
                   Date: r.return_date,
-                  Supplier: r.suppliers?.name ?? '—',
-                  Product: r.products?.name ?? '—',
-                  Category: r.products?.category ?? '—',
+                  Supplier: r.suppliers?.name ?? '-',
+                  Product: r.products?.name ?? '-',
+                  Category: r.products?.category ?? '-',
                   Quantity: r.quantity,
                   'Return Amount': r.return_amount,
-                  Reason: r.reason ?? '—',
-                  Batch: r.batch_number ?? '—',
+                  Reason: r.reason ?? '-',
+                  Batch: r.batch_number ?? '-',
                 })), 'purchase-returns-report')}
                 disabled={purchaseReturns.length === 0}
               >
@@ -1125,13 +1149,13 @@ export default function Reports() {
                         {new Date(r.return_date).toLocaleDateString('en-IN')}
                       </TableCell>
                       <TableCell>
-                        <div className="font-medium">{r.suppliers?.name ?? '—'}</div>
+                        <div className="font-medium">{r.suppliers?.name ?? '-'}</div>
                         {r.suppliers?.supplier_code && (
                           <div className="text-xs text-muted-foreground font-mono">{r.suppliers.supplier_code}</div>
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="font-medium">{r.products?.name ?? '—'}</div>
+                        <div className="font-medium">{r.products?.name ?? '-'}</div>
                         {r.products?.category && (
                           <div className="text-xs text-muted-foreground">{r.products.category}</div>
                         )}
@@ -1141,7 +1165,7 @@ export default function Reports() {
                         ₹{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[180px] truncate">
-                        {r.reason ?? <span className="italic opacity-40">—</span>}
+                        {r.reason ?? <span className="italic opacity-40">-</span>}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1173,11 +1197,11 @@ export default function Reports() {
                 <Button
                   variant="outline"
                   onClick={() => exportToCSV(expiringBatches.map(b => ({
-                    Product: b.products?.name ?? '—',
-                    Category: b.products?.category ?? '—',
+                    Product: b.products?.name ?? '-',
+                    Category: b.products?.category ?? '-',
                     Batch: b.batch_number,
                     Expiry: b.expiry_date,
-                    'Days Left': daysToExpiry(b.expiry_date) ?? '—',
+                    'Days Left': daysToExpiry(b.expiry_date) ?? '-',
                     Quantity: b.qty_available,
                     'Cost/Unit': b.effective_cost,
                     'Value at Cost': Number(b.qty_available) * Number(b.effective_cost || 0),
@@ -1206,7 +1230,7 @@ export default function Reports() {
                     const status = expiryStatus(b.expiry_date);
                     return (
                       <TableRow key={b.id}>
-                        <TableCell className="font-medium">{b.products?.name ?? '—'}</TableCell>
+                        <TableCell className="font-medium">{b.products?.name ?? '-'}</TableCell>
                         <TableCell className="uppercase text-sm">{b.batch_number}</TableCell>
                         <TableCell className="text-sm">{formatExpiryShort(b.expiry_date)}</TableCell>
                         <TableCell className="text-center">

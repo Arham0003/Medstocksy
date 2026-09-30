@@ -9,7 +9,7 @@ export interface HsnCode {
 }
 
 /**
- * The account's HSN master — the source of truth for GST rate on GSTR-1.
+ * The account's HSN master - the source of truth for GST rate on GSTR-1.
  *
  * Fails soft: if the hsn_codes table has not been migrated yet the hook
  * returns an empty list and the caller falls back to a manually typed rate,

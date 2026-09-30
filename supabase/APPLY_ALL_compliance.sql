@@ -32,16 +32,16 @@ BEGIN;
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- Migration 1 — HSN Codes Master + Account GST Identity
+-- Migration 1 - HSN Codes Master + Account GST Identity
 -- Plan: Lean Compliance Plan, Phase A / Migration 1
 --
 -- Adds:
---   * public.hsn_codes  — per-account HSN → GST rate lookup (GSTR-1 source of truth)
---   * products.hsn_code — already present in 20260129000000_add_pharmacy_fields.sql,
+--   * public.hsn_codes  - per-account HSN → GST rate lookup (GSTR-1 source of truth)
+--   * products.hsn_code - already present in 20260129000000_add_pharmacy_fields.sql,
 --                         kept here as an idempotent no-op so this file stands alone
 --   * accounts.state_code / accounts.is_interstate_billing
 --
--- Interstate decision (plan Q2): default FALSE — CGST + SGST always.
+-- Interstate decision (plan Q2): default FALSE - CGST + SGST always.
 -- The flag lives at ACCOUNT level, not per sale. Flip it in Settings if the
 -- store starts billing institutions in another state.
 -- ============================================================
@@ -71,7 +71,7 @@ COMMENT ON TABLE  public.hsn_codes            IS 'Per-account HSN master. Single
 COMMENT ON COLUMN public.hsn_codes.gst_rate   IS 'Total GST %. Split 50/50 into CGST+SGST for intra-state, or booked as IGST when the account bills interstate.';
 
 -- ------------------------------------------------------------
--- products.hsn_code — ties a product to its HSN rate.
+-- products.hsn_code - ties a product to its HSN rate.
 -- Already added by 20260129000000_add_pharmacy_fields.sql; no-op there.
 -- products.gst is retained as the fallback rate for products with no HSN.
 -- ------------------------------------------------------------
@@ -90,7 +90,7 @@ ALTER TABLE public.accounts
 COMMENT ON COLUMN public.accounts.state_code            IS 'Two-digit GST state code of the store (e.g. 27 = Maharashtra).';
 COMMENT ON COLUMN public.accounts.is_interstate_billing IS 'FALSE (default) = CGST+SGST on every bill. TRUE = IGST. Account-wide, no per-bill override.';
 
--- HSN seed data is intentionally NOT run here — see supabase/seed_hsn_codes.sql.
+-- HSN seed data is intentionally NOT run here - see supabase/seed_hsn_codes.sql.
 
 -- ---------------------------------------------------------------------
 -- STEP 2/10  stock_batches FEFO ledger
@@ -98,7 +98,7 @@ COMMENT ON COLUMN public.accounts.is_interstate_billing IS 'FALSE (default) = CG
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- Migration 2 — Stock Batches (FEFO ledger)
+-- Migration 2 - Stock Batches (FEFO ledger)
 -- Plan: Lean Compliance Plan, Phase A / Migration 2
 --
 -- !! TAKE A SUPABASE BACKUP BEFORE RUNNING. !!
@@ -195,7 +195,7 @@ COMMENT ON COLUMN public.stock_batches.source         IS 'purchase = normal inwa
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- Migration 2b — Freeze existing stock as an "Opening Stock" batch
+-- Migration 2b - Freeze existing stock as an "Opening Stock" batch
 -- Plan Q1, option A (fresh start).
 --
 -- Every product currently holding stock gets exactly ONE batch row carrying
@@ -263,7 +263,7 @@ END $$;
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- Migration 3 — GST split on sales + ITC columns on purchase returns
+-- Migration 3 - GST split on sales + ITC columns on purchase returns
 -- Plan: Lean Compliance Plan, Phase A / Migration 3
 --
 -- GSTR-1 needs taxable value and the CGST/SGST (or IGST) split stored per
@@ -313,7 +313,7 @@ COMMENT ON COLUMN public.purchase_returns.gst_amount IS 'Input tax credit to be 
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- B1 (adapted) — add_stock_batch()
+-- B1 (adapted) - add_stock_batch()
 -- Plan: Lean Compliance Plan, Phase B / B1
 --
 -- The plan patches a record_purchase() RPC. This codebase has no purchase
@@ -482,7 +482,7 @@ COMMENT ON FUNCTION public.add_stock_batch IS
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- B2 — deduct_fefo()
+-- B2 - deduct_fefo()
 -- Plan: Lean Compliance Plan, Phase B / B2
 --
 -- Consumes stock oldest-expiry-first and reports which batches were hit, at
@@ -585,7 +585,7 @@ COMMENT ON FUNCTION public.deduct_fefo IS
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- adjust_batch_stock() — shared batch-ledger helper
+-- adjust_batch_stock() - shared batch-ledger helper
 -- Supporting function for B3 (purchase returns) and B4 (sales returns).
 --
 -- Deliberately forgiving: if a product has no batch rows yet (legacy stock
@@ -682,7 +682,7 @@ COMMENT ON FUNCTION public.adjust_batch_stock IS
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- B3 — Purchase return: ITC reversal + batch ledger
+-- B3 - Purchase return: ITC reversal + batch ledger
 -- Plan: Lean Compliance Plan, Phase B / B3
 --
 -- Two deviations from the plan's draft, both deliberate:
@@ -936,7 +936,7 @@ GRANT EXECUTE ON FUNCTION public.void_purchase_return  TO authenticated;
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- B4 — Sales return routing by return_type
+-- B4 - Sales return routing by return_type
 -- Plan: Lean Compliance Plan, Phase B / B4
 --
 -- A salable return rejoins sellable stock. An expired or damaged return must
@@ -1143,7 +1143,7 @@ COMMENT ON FUNCTION public.record_sales_return IS
 -- ---------------------------------------------------------------------
 
 -- ============================================================
--- One-time DML — seed common pharma HSN codes for every account.
+-- One-time DML - seed common pharma HSN codes for every account.
 -- Run AFTER 20260910000000_create_hsn_codes.sql, in the Supabase SQL editor.
 -- Safe to re-run: ON CONFLICT DO NOTHING keeps owner edits intact.
 --

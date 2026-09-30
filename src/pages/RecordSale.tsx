@@ -12,12 +12,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search, X, Save, ChevronDown, ChevronUp, Trash2,
   HelpCircle, ArrowLeft, CreditCard, Banknote, Smartphone, Receipt,
-  CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Zap
+  CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Zap, Diamond
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { calcGst } from '@/lib/gst';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
-import { BILL_DATA_PREFIX, clearBillData } from '@/hooks/useBillSessions';
+import { billDataPrefix, clearBillData } from '@/hooks/useBillSessions';
 import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
 import { apportionGst, expiryStatus, formatExpiryShort } from '@/lib/gst';
 import { db } from '@/lib/supabaseLoose';
@@ -28,6 +28,8 @@ export interface Product {
   name: string;
   quantity: number;
   selling_price: number;
+  /** B2B rate set during purchase entry. NULL → wholesale bills fall back to selling_price. */
+  wholesale_price?: number | null;
   gst: number | null;
   hsn_code?: string | null;
   batch_number?: string | null;
@@ -46,7 +48,7 @@ export interface Settings {
 // Props are all optional so <RecordSale/> still works standalone. The tab
 // container (SalesBilling) injects shared data + wires tab behaviour.
 export interface RecordSaleProps {
-  /** When false, this instance is a hidden background tab — global shortcuts are ignored. */
+  /** When false, this instance is a hidden background tab - global shortcuts are ignored. */
   isActive?: boolean;
   /** Rendered inside the tab container (absolute) vs. standalone full-screen (fixed). */
   embedded?: boolean;
@@ -60,8 +62,14 @@ export interface RecordSaleProps {
   onCompleted?: (billId: string) => void;
   /** Bubbles a freshly quick-added product up so the container can share it across tabs. */
   onProductCreated?: (product: Product) => void;
-  /** localStorage key (the session id) — persists this bill's contents across refresh/reopen. */
+  /** localStorage key (the session id) - persists this bill's contents across refresh/reopen. */
   persistKey?: string;
+  /**
+   * 'wholesale' switches on the B2B bill: wholesale_price as the default rate,
+   * a Free Qty column, the buyer GSTIN field, and sale_type='wholesale' on save.
+   * Defaults to 'retail' so every existing caller is unchanged.
+   */
+  mode?: 'retail' | 'wholesale';
 }
 
 interface BillRow {
@@ -80,6 +88,8 @@ interface BillRow {
   gst: number;
   discount: number;
   amount: number;
+  /** Scheme/free quantity - given away, never billed. Wholesale only. */
+  freeQty: number;
   // FEFO batch tracking. batchOptions is what the counter can pick from,
   // nearest expiry first; batchId is the one actually being sold.
   batchId: string | null;
@@ -104,6 +114,7 @@ const EMPTY_ROW = (): BillRow => ({
   gst: 0,
   discount: 0,
   amount: 0,
+  freeQty: 0,
   batchId: null,
   batchExpiryIso: '',
   cogsRate: 0,
@@ -161,7 +172,9 @@ export default function RecordSale({
   onCompleted,
   onProductCreated,
   persistKey,
+  mode = 'retail',
 }: RecordSaleProps = {}) {
+  const isWholesale = mode === 'wholesale';
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -171,7 +184,7 @@ export default function RecordSale({
   const [hydrated] = useState<any>(() => {
     if (!persistKey) return null;
     try {
-      const raw = localStorage.getItem(BILL_DATA_PREFIX + persistKey);
+      const raw = localStorage.getItem(billDataPrefix(mode === 'wholesale' ? 'wholesale' : undefined) + persistKey);
       return raw ? JSON.parse(raw) : null;
     } catch { return null; }
   });
@@ -203,10 +216,20 @@ export default function RecordSale({
   const [customerPhone, setCustomerPhone] = useState(hydrated?.customerPhone ?? '');
   const [customerAddress, setCustomerAddress] = useState(hydrated?.customerAddress ?? '');
   const [doctorName, setDoctorName] = useState(hydrated?.doctorName ?? '');
+  // B2B buyer GSTIN. Held per-instance (not lifted to the tab container) so
+  // each of the parallel bills keeps its own buyer.
+  const [wholesaleGstin, setWholesaleGstin] = useState<string>(hydrated?.wholesaleGstin ?? '');
+  // Rule 65(4): a wholesale sale must record the buyer's drug licence. Both are
+  // snapshots on the sale row, so renaming a buyer later never rewrites history.
+  const [wholesaleDl, setWholesaleDl] = useState<string>(hydrated?.wholesaleDl ?? '');
+  const [wholesaleDlExpiry, setWholesaleDlExpiry] = useState<string>(hydrated?.wholesaleDlExpiry ?? '');
+  const [shipToAddress, setShipToAddress] = useState<string>(hydrated?.shipToAddress ?? '');
+  // The seller's own state code decides CGST+SGST against IGST per buyer.
+  const [sellerStateCode, setSellerStateCode] = useState<string>('');
   const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
   const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>(hydrated?.prescriptionMonths ?? '');
   const [monthsTaken, setMonthsTaken] = useState<number | ''>(hydrated?.monthsTaken ?? 1);
-  // When set, this bill is being EDITED — save replaces the finalized bill of this id.
+  // When set, this bill is being EDITED - save replaces the finalized bill of this id.
   const [editBillId] = useState<string | null>(() => hydrated?.editBillId ?? null);
 
   // ─── CRM Retrieve Dialog ─────────────────────────────────────────────────
@@ -390,7 +413,7 @@ export default function RecordSale({
     const fetch = async () => {
       try {
         const [prodRes, settingsRes] = await Promise.all([
-          supabase.from('products').select('id, name, quantity, selling_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer'),
+          supabase.from('products').select('id, name, quantity, selling_price, wholesale_price, gst, hsn_code, batch_number, expiry_date, pcs_per_unit, category, manufacturer'),
           profile?.account_id
             ? supabase.from('settings').select('gst_enabled, default_gst_rate, gst_type').eq('account_id', profile.account_id).single()
             : Promise.resolve({ data: null, error: null }),
@@ -403,10 +426,11 @@ export default function RecordSale({
         if (profile?.account_id) {
           const { data: acct } = await db
             .from('accounts')
-            .select('is_interstate_billing')
+            .select('is_interstate_billing, state_code')
             .eq('id', profile.account_id)
             .single();
           setIsInterstate(Boolean(acct?.is_interstate_billing));
+          setSellerStateCode(String((acct as any)?.state_code ?? ''));
         }
       } catch (err: any) {
         toast({ variant: 'destructive', title: 'Error loading data', description: err.message });
@@ -451,7 +475,7 @@ export default function RecordSale({
 
       const { data: allRows } = (await allQuery) as { data: any[] | null };
 
-      // Step 3: group by product_id — count purchases, keep latest details
+      // Step 3: group by product_id - count purchases, keep latest details
       const productMap = new Map<string, CrmBillItem>();
       if (allRows) {
         // rows are newest-first; first hit per product = most recent details
@@ -598,7 +622,7 @@ export default function RecordSale({
    * nearest expiry (FEFO). Addressed by uid rather than index because the
    * fetch is async and rows can shift while it is in flight.
    *
-   * Silent when the product has no batches — the row keeps the
+   * Silent when the product has no batches - the row keeps the
    * product-level batch/expiry, so an account still on aggregate stock
    * bills exactly as it did before.
    */
@@ -678,6 +702,7 @@ export default function RecordSale({
           gst: item.gst,
           discount: item.discount,
           amount: 0,
+          freeQty: 0,
           batchId: null,
           batchExpiryIso: '',
           cogsRate: 0,
@@ -794,10 +819,12 @@ export default function RecordSale({
       expiry: product.expiry_date ? product.expiry_date.substring(0, 7) : '',
       hsn: product.hsn_code || '',
       mrp: product.selling_price,
-      rate: product.selling_price,
+      // Wholesale bills open at the B2B rate; products without one fall back to MRP.
+      rate: isWholesale ? (product.wholesale_price ?? product.selling_price) : product.selling_price,
       gst: gstRate,
 
       pcsPerUnit: product.pcs_per_unit || 10,
+      freeQty: 0,
       batchId: null,
       batchExpiryIso: '',
       cogsRate: 0,
@@ -819,7 +846,7 @@ export default function RecordSale({
     });
     // Move the cursor to the first editable field of this row (Batch → Qty → …).
     setTimeout(() => focusField(uid || '', 'qty'), 90);
-  }, [updateRow, settings, rows, focusField, loadBatchesForRow]);
+  }, [updateRow, settings, rows, focusField, loadBatchesForRow, isWholesale]);
 
   // ─── Inline product search (inside each grid row) ─────────────────────────
   const handleProductSearchKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>, rowIndex: number) => {
@@ -900,13 +927,14 @@ export default function RecordSale({
       expiry: product.expiry_date ? product.expiry_date.substring(0, 7) : '',
       hsn: product.hsn_code || '',
       mrp: product.selling_price,
-      rate: product.selling_price,
+      rate: isWholesale ? (product.wholesale_price ?? product.selling_price) : product.selling_price,
       gst: gstRate,
       pcsPerUnit: product.pcs_per_unit ?? 0,
       qty: 1,
       subQty: '',
       discount: 0,
       amount: 0,
+      freeQty: 0,
       batchId: null,
       batchExpiryIso: '',
       cogsRate: 0,
@@ -923,7 +951,7 @@ export default function RecordSale({
     setMasterDropdownOpen(false);
     setMasterHighlight(0);
     setTimeout(() => focusField(newRow.uid, 'qty'), 80);
-  }, [settings, focusField, loadBatchesForRow]);
+  }, [settings, focusField, loadBatchesForRow, isWholesale]);
 
   // ─── Master search keyboard handler ─────────────────────────────────────
   const handleMasterSearchKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -1008,7 +1036,7 @@ export default function RecordSale({
     if (paymentMode !== 'credit') {
       setReceivedAmount(totals.grandTotal);
     } else {
-      // Only set to 0 when switching TO credit mode — handled by the paymentMode change below
+      // Only set to 0 when switching TO credit mode - handled by the paymentMode change below
     }
   }, [totals.grandTotal]);
 
@@ -1031,18 +1059,40 @@ export default function RecordSale({
     onMetaChangeRef.current?.({ itemCount, customerName: customerName.trim(), dirty });
   }, [rows, customerName, customerPhone]);
 
+  // Buyer state code is the first two digits of their GSTIN. For a wholesale
+  // bill this, not the account-wide toggle, decides the tax split: the same
+  // pharmacy can sell intrastate one minute and interstate the next.
+  const buyerStateCode = useMemo(
+    () => (isWholesale ? wholesaleGstin.trim().slice(0, 2) : ''),
+    [isWholesale, wholesaleGstin],
+  );
+
+  const effectiveInterstate = useMemo(() => {
+    if (!isWholesale) return isInterstate;
+    if (buyerStateCode.length !== 2 || !sellerStateCode) return isInterstate;
+    return buyerStateCode !== sellerStateCode;
+  }, [isWholesale, isInterstate, buyerStateCode, sellerStateCode]);
+
+  // Warning only, never a hard block: a mistyped expiry must not stop a
+  // legitimate sale at the counter.
+  const dlExpired = useMemo(() => {
+    if (!isWholesale || !wholesaleDlExpiry) return false;
+    return wholesaleDlExpiry < new Date().toISOString().slice(0, 10);
+  }, [isWholesale, wholesaleDlExpiry]);
+
   // ─── Persist this bill's contents locally (survives refresh / app reopen) ─
   useEffect(() => {
     if (!persistKey) return;
     try {
-      localStorage.setItem(BILL_DATA_PREFIX + persistKey, JSON.stringify({
+      localStorage.setItem(billDataPrefix(isWholesale ? 'wholesale' : undefined) + persistKey, JSON.stringify({
         customerName, customerPhone, customerAddress, doctorName, billDate,
         prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
-        editBillId,
+        editBillId, wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress,
       }));
     } catch { /* ignore quota errors */ }
   }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
-      prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount]);
+      prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
+      wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress, isWholesale]);
 
   // ─── Quick Add: add a freshly created product straight into this bill ────
   const handleQuickAddSaved = useCallback((product: Product, qty: number) => {
@@ -1060,13 +1110,14 @@ export default function RecordSale({
       expiry: product.expiry_date ? product.expiry_date.substring(0, 7) : '',
       hsn: product.hsn_code || '',
       mrp: product.selling_price,
-      rate: product.selling_price,
+      rate: isWholesale ? (product.wholesale_price ?? product.selling_price) : product.selling_price,
       gst: gstRate,
       pcsPerUnit: product.pcs_per_unit ?? 0,
       qty,
       subQty: '',
       discount: 0,
       amount: 0,
+      freeQty: 0,
       batchId: null,
       batchExpiryIso: '',
       cogsRate: 0,
@@ -1080,7 +1131,7 @@ export default function RecordSale({
     });
     void loadBatchesForRow(newRow.uid, product.id);
     setTimeout(() => focusField(newRow.uid, 'qty'), 80);
-  }, [settings, onProductCreated, focusField, loadBatchesForRow]);
+  }, [settings, onProductCreated, focusField, loadBatchesForRow, isWholesale]);
 
   // ─── Handle Save ──────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
@@ -1090,6 +1141,28 @@ export default function RecordSale({
       return;
     }
     if (isSaving) return;
+
+    // A tax invoice must name its buyer, and a GSTIN - when given - must be
+    // well formed, because it is printed on the invoice and feeds GSTR-1.
+    if (isWholesale) {
+      if (!customerName.trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'Buyer name required',
+          description: 'A wholesale tax invoice must name the buyer.',
+        });
+        return;
+      }
+      const gstin = wholesaleGstin.trim();
+      if (gstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstin)) {
+        toast({
+          variant: 'destructive',
+          title: 'Invalid GSTIN',
+          description: 'Enter a valid 15-character GSTIN, or leave it blank.',
+        });
+        return;
+      }
+    }
 
     // Validation for Credit sales
     if (paymentMode === 'credit') {
@@ -1110,8 +1183,40 @@ export default function RecordSale({
       const billId = editBillId || crypto.randomUUID();
       const isGstInclusive = settings?.gst_type === 'inclusive';
 
+      // CGST Rule 46 wants a unique sequential number per financial year, and a
+      // UUID is neither sequential nor within the 16-character limit. The serial
+      // is display-only: bill_id stays the key, so nothing downstream changes.
+      //
+      // Allocated here rather than after the insert because it has to appear on
+      // every row of the bill. Editing reuses the number already on the invoice;
+      // re-numbering a filed invoice would be the actual compliance breach.
+      let billSerial: string | null = null;
+      if (isWholesale) {
+        if (editBillId) {
+          const { data: existing } = await db.from('sales')
+            .select('bill_serial').eq('bill_id', editBillId).limit(1).maybeSingle();
+          billSerial = existing?.bill_serial ?? null;
+        }
+        if (!billSerial) {
+          const { data: serial, error: serialErr } = await db
+            .rpc('next_invoice_number', { p_series: 'WS' });
+          if (serialErr) {
+            // A missing function means the migration has not been applied yet.
+            // The bill is still lawful in every other respect, so save it and
+            // say what is missing rather than refusing the sale.
+            console.warn('[Medstocksy] next_invoice_number unavailable:', serialErr.message);
+            toast({
+              title: 'Invoice number not assigned',
+              description: 'The bill will save, but apply the latest database migration to get sequential numbering.',
+            });
+          } else {
+            billSerial = serial as string;
+          }
+        }
+      }
+
       // receivedNum = how much the customer actually paid right now (can be 0 for pure credit,
-      // or a partial amount even on credit mode — e.g. ₹200 upfront on a ₹500 credit sale)
+      // or a partial amount even on credit mode - e.g. ₹200 upfront on a ₹500 credit sale)
       const receivedNum = receivedAmount !== '' ? Number(receivedAmount) : 0;
 
       // Settled = fully paid (applies to ALL modes including credit with full upfront payment)
@@ -1150,18 +1255,18 @@ export default function RecordSale({
         // - Full payment → match total_price exactly to avoid rounding dust
         let rowReceivedAmount = 0;
         if (isFullPayment) {
-          rowReceivedAmount = totalPriceRounded; // Paid in full — match total exactly
+          rowReceivedAmount = totalPriceRounded; // Paid in full - match total exactly
         } else if (receivedNum > 0 && totals.grandTotal > 0) {
-          // Partial payment — distribute proportionally across rows
+          // Partial payment - distribute proportionally across rows
           rowReceivedAmount = receivedNum * (finalTotal / totals.grandTotal);
         }
         // else receivedNum === 0 → rowReceivedAmount stays 0 (pure credit, nothing paid)
 
         // GST breakup for GSTR-1. finalGst is the tax actually charged on
         // this line after both discounts, so it is apportioned rather than
-        // recomputed — recomputing taxable x rate would drift by paise.
+        // recomputed - recomputing taxable x rate would drift by paise.
         const taxableValue = isGstInclusive ? netAfterAll - finalGst : netAfterAll;
-        const split = apportionGst(finalGst, isInterstate);
+        const split = apportionGst(finalGst, effectiveInterstate);
 
         return {
           account_id: profile?.account_id,
@@ -1186,7 +1291,7 @@ export default function RecordSale({
           customer_name: customerName || 'Walk-in Customer',
           customer_phone: customerPhone || null,
           customer_address: customerAddress || null,
-          doctor_name: doctorName || null,
+          doctor_name: isWholesale ? null : (doctorName || null),
           sale_date: billDate,
           prescription_months: prescriptionMonths === '' ? null : Number(prescriptionMonths),
           months_taken: monthsTaken === '' ? null : Number(monthsTaken),
@@ -1194,12 +1299,79 @@ export default function RecordSale({
           received_amount: Math.round(rowReceivedAmount * 100) / 100,
           // Settled when customer has paid the full amount (works for all payment modes)
           is_settled: isFullPayment,
+          // Retail bills keep the column default; only a wholesale bill marks itself.
+          sale_type: isWholesale ? 'wholesale' : 'retail',
+          wholesale_customer_name: isWholesale ? (customerName.trim() || null) : null,
+          wholesale_customer_gstin: isWholesale ? (wholesaleGstin.trim() || null) : null,
+          // Rule 65 and place of supply. Null on retail, so nothing changes there.
+          wholesale_customer_dl: isWholesale ? (wholesaleDl.trim() || null) : null,
+          wholesale_customer_dl_expiry: isWholesale ? (wholesaleDlExpiry || null) : null,
+          buyer_state_code: isWholesale ? (buyerStateCode.length === 2 ? buyerStateCode : null) : null,
+          ship_to_address: isWholesale ? (shipToAddress.trim() || null) : null,
+          bill_serial: billSerial,
+          is_free: false,
         };
       });
 
+      // Free / scheme quantity rides along as its own ₹0 line on the same bill
+      // (the Marg/Vyapar convention). Two reasons it is a separate row rather
+      // than being folded into `quantity`:
+      //   • the invoice must show it at ₹0 without distorting unit_price
+      //   • the AFTER INSERT stock trigger deducts NEW.quantity, so the giveaway
+      //     leaves inventory exactly like any other line
+      const freeRowsToInsert = isWholesale
+        ? validRows
+            .filter(row => Number(row.freeQty) > 0)
+            .map(row => ({
+              account_id: profile?.account_id,
+              bill_id: billId,
+              product_id: row.productId,
+              user_id: profile?.id,
+              quantity: Number(row.freeQty),
+              sub_qty: null,
+              pcs_per_unit: null,
+              unit_price: 0,
+              total_price: 0,
+              gst_amount: 0,
+              taxable_value: 0,
+              gst_rate: row.gst,
+              cgst_amount: 0,
+              sgst_amount: 0,
+              igst_amount: 0,
+              hsn_code: row.hsn || null,
+              batch_id: row.batchId,
+              cogs_rate: row.cogsRate || null,
+              payment_mode: paymentMode,
+              customer_name: customerName || 'Walk-in Customer',
+              customer_phone: customerPhone || null,
+              customer_address: customerAddress || null,
+              doctor_name: null,
+              sale_date: billDate,
+              prescription_months: null,
+              months_taken: null,
+              discount_percentage: 0,
+              received_amount: 0,
+              is_settled: isFullPayment,
+              sale_type: 'wholesale',
+              wholesale_customer_name: customerName.trim() || null,
+              wholesale_customer_gstin: wholesaleGstin.trim() || null,
+              wholesale_customer_dl: wholesaleDl.trim() || null,
+              wholesale_customer_dl_expiry: wholesaleDlExpiry || null,
+              buyer_state_code: buyerStateCode.length === 2 ? buyerStateCode : null,
+              ship_to_address: shipToAddress.trim() || null,
+              bill_serial: billSerial,
+              // Without this a scheme giveaway is indistinguishable from a
+              // genuine zero-value sale, and per-party margin is wrong by
+              // exactly the free quantity.
+              is_free: true,
+            }))
+        : [];
+
+      const allRowsToInsert = [...salesToInsert, ...freeRowsToInsert];
+
       // Editing: un-apply the original bill first (restore its stock, then delete its
       // rows) so re-inserting below re-deducts cleanly. The stock trigger only fires
-      // on INSERT, so the restore is done manually — mirroring the item-delete flow.
+      // on INSERT, so the restore is done manually - mirroring the item-delete flow.
       if (editBillId) {
         const { data: orig, error: origErr } = await (supabase.from('sales') as any)
           .select('product_id, quantity, sub_qty, pcs_per_unit, batch_number')
@@ -1213,7 +1385,7 @@ export default function RecordSale({
           const { data: prod } = await (supabase.from('products') as any).select('quantity').eq('id', it.product_id).single();
           const cur = Number((prod as any)?.quantity) || 0;
           await (supabase.from('products') as any).update({ quantity: cur + restore }).eq('id', it.product_id);
-          // Restore batch ledger so FEFO stays accurate (never throws — batch row may not exist for legacy stock)
+          // Restore batch ledger so FEFO stays accurate (never throws - batch row may not exist for legacy stock)
           if (profile?.account_id && restore > 0) {
             await db.rpc('adjust_batch_stock', {
               p_account_id: profile.account_id,
@@ -1227,11 +1399,16 @@ export default function RecordSale({
         if (delErr) throw delErr;
       }
 
-      let { error } = await supabase.from('sales').insert(salesToInsert);
+      let { error } = await supabase.from('sales').insert(allRowsToInsert);
 
       if (error && error.message?.includes('column')) {
+        // A wholesale bill cannot be downgraded to a retail one - losing
+        // sale_type would silently file it under retail. Say so instead.
+        if (isWholesale) {
+          throw new Error('Wholesale billing needs a database update. Please run the pending migrations.');
+        }
         // Fallback without optional fields
-        const fallback = salesToInsert.map(s => {
+        const fallback = allRowsToInsert.map(s => {
           const {
             customer_name, customer_phone, customer_address, doctor_name,
             prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit,
@@ -1239,6 +1416,8 @@ export default function RecordSale({
             // migrations; drop them too so an un-migrated database still bills.
             taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
             hsn_code, batch_id, cogs_rate,
+            // Wholesale columns arrive with 20260918000000.
+            sale_type, wholesale_customer_name, wholesale_customer_gstin,
             ...rest
           } = s as any;
           return rest;
@@ -1254,12 +1433,14 @@ export default function RecordSale({
       // Batch ledger. products.quantity was already moved by the sales
       // trigger; this takes the same units off the batches so FEFO and
       // expiry tracking stay truthful. A failure here is reported but never
-      // fails the bill — the sale is already committed.
+      // fails the bill - the sale is already committed.
       const batchProblems: string[] = [];
       if (profile?.account_id) {
         for (const row of validRows) {
           const hasSub = row.subQty !== '' && Number(row.subQty) > 0;
-          const units = row.qty + (hasSub ? Number(row.subQty) / (row.pcsPerUnit || 1) : 0);
+          // Free qty leaves the shelf too, so the batch ledger takes it as well.
+          const freeUnits = isWholesale ? Number(row.freeQty) || 0 : 0;
+          const units = row.qty + freeUnits + (hasSub ? Number(row.subQty) / (row.pcsPerUnit || 1) : 0);
           if (units <= 0) continue;
           const res = await consumeBatchStock({
             accountId: profile.account_id,
@@ -1274,7 +1455,7 @@ export default function RecordSale({
       if (batchProblems.length > 0) {
         toast({
           variant: 'destructive',
-          title: 'Bill saved — batch ledger out of step',
+          title: 'Bill saved - batch ledger out of step',
           description: batchProblems.slice(0, 3).join(' · '),
         });
       } else {
@@ -1285,7 +1466,7 @@ export default function RecordSale({
       }
 
       // Bill is finalized → drop its locally-saved draft so it isn't restored later.
-      if (persistKey) clearBillData(persistKey);
+      if (persistKey) clearBillData(persistKey, isWholesale ? 'wholesale' : undefined);
 
       // Completion: container decides (preserve other tabs); standalone navigates as before.
       if (onCompleted) {
@@ -1298,7 +1479,8 @@ export default function RecordSale({
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, isInterstate]);
+  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
+      wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
   useEffect(() => {
@@ -1390,7 +1572,7 @@ export default function RecordSale({
   }, [handleSave, navigate, rows, focusField, clearRow, removeRow, isActive, focusFirstEmptyProduct, infoProduct, activeSearchRow, customerDropdownOpen]);
 
   // Capture-phase Escape: runs before any field/handler so an open popup ALWAYS
-  // closes first (and only the popup) — even while typing in the product search.
+  // closes first (and only the popup) - even while typing in the product search.
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -1407,14 +1589,23 @@ export default function RecordSale({
   }, []);
 
   // ─── Tab flow handler for row fields (Marg column order) ──────────────
-  const TAB_FIELDS = ['expiry', 'qty', 'subQty', 'batch', 'mrp', 'rate', 'discount', 'gst'];
+  const TAB_FIELDS = useMemo(
+    () => (isWholesale
+      ? ['expiry', 'qty', 'freeQty', 'subQty', 'batch', 'mrp', 'rate', 'discount', 'gst']
+      : ['expiry', 'qty', 'subQty', 'batch', 'mrp', 'rate', 'discount', 'gst']),
+    [isWholesale]
+  );
   // Shared column template for the Marg-style grid: PRODUCT PACK BATCH STRI TAB DISC MRP AMOUNT ⋯
   // Mobile uses tighter fractions so all columns fit the full screen width with NO horizontal
   // scroll; from lg up it opens out to the spacious desktop proportions.
   // Columns: Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount · ⋯
   // All 11 columns on every screen. On phones the grid keeps a legible min-width
   // and scrolls horizontally (swipe); on desktop it fits within max-width.
-  const GRID_COLS = 'grid-cols-[2.2fr_0.7fr_0.55fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]';
+  const GRID_COLS = isWholesale
+    ? 'grid-cols-[2.2fr_0.7fr_0.55fr_0.5fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]'
+    : 'grid-cols-[2.2fr_0.7fr_0.55fr_0.8fr_0.9fr_0.75fr_0.8fr_0.6fr_0.55fr_0.95fr_0.5fr]';
+  /** Cells per grid line - kept in step with GRID_COLS for the filler rows. */
+  const GRID_COL_COUNT = isWholesale ? 12 : 11;
 
 
   const isF3Unlocked = (uid: string, field: string) => f3Unlocked === `${uid}:${field}`;
@@ -1455,7 +1646,7 @@ export default function RecordSale({
     }
 
     // ↑ / ↓ : next / previous field within row (at caret boundary).
-    // ← / → owed page-wide — see handleVerticalArrowNav.
+    // ← / → owed page-wide - see handleVerticalArrowNav.
     if (e.key === 'ArrowDown') {
       if (caretAtEnd(e.currentTarget) && currentIdx >= 0 && currentIdx < TAB_FIELDS.length - 1) {
         e.preventDefault();
@@ -1507,16 +1698,16 @@ export default function RecordSale({
   }, [rows, focusField, addNewRow]);
 
   // ─── ← / → : walk every focusable element on the page (top-to-bottom) ────
-  // Horizontal keyboard navigation across the whole billing screen — customer
+  // Horizontal keyboard navigation across the whole billing screen - customer
   // fields, every row's inputs, payment, discount, save. stopPropagation keeps
   // it from bubbling to the tab-bar's bill-switch handler.
   const handleVerticalArrowNav = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     const active = document.activeElement as HTMLElement | null;
     if (!active) return;
-    // The product search owns ↑/↓ for its results dropdown — leave it alone.
+    // The product search owns ↑/↓ for its results dropdown - leave it alone.
     if (active === masterSearchRef.current) return;
-    // date/month inputs use ←/→ internally (mm/dd/yyyy segments) — don't intercept.
+    // date/month inputs use ←/→ internally (mm/dd/yyyy segments) - don't intercept.
     const inputType = (active as HTMLInputElement).type;
     if (inputType === 'date' || inputType === 'month') return;
 
@@ -1566,7 +1757,7 @@ export default function RecordSale({
     <div className={cn('flex flex-col bg-gray-50 overflow-hidden', embedded ? 'absolute inset-0' : 'fixed inset-0 z-50')} onKeyDown={handleVerticalArrowNav}>
 
 
-      {/* CRM "Returning Customer Found" popup removed — replaced by inline
+      {/* CRM "Returning Customer Found" popup removed - replaced by inline
           existing-customer suggestions in the Patient Name field. */}
       {/* ──────── SHORTCUT OVERLAY ──────── */}
       {showShortcutOverlay && (
@@ -1628,7 +1819,14 @@ export default function RecordSale({
             <div className="bg-white/15 p-1.5 rounded-lg">
               <ShoppingCart className="h-4 w-4 text-white" />
             </div>
-            <h1 className="font-semibold text-lg tracking-wide text-white">Sale Entry</h1>
+            <h1 className="font-semibold text-lg tracking-wide text-white">
+              {isWholesale ? 'Wholesale Sale Entry' : 'Sale Entry'}
+            </h1>
+            {isWholesale && (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500/90 text-white text-[10px] font-bold uppercase tracking-wider">
+                <Diamond className="h-3 w-3" /> B2B
+              </span>
+            )}
           </div>
         </div>
 
@@ -1647,7 +1845,7 @@ export default function RecordSale({
             type="button"
             onClick={() => setQuickAddOpen(true)}
             className="h-9 gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold px-3 rounded-md shadow-sm shadow-amber-500/25 transition-colors"
-            title="Add a new medicine to inventory and this bill — without leaving billing"
+            title="Add a new medicine to inventory and this bill - without leaving billing"
           >
             <Zap className="h-4 w-4" />
             <span className="hidden sm:inline">Quick Add</span>
@@ -1670,13 +1868,13 @@ export default function RecordSale({
           {/* Product search now lives inline in each grid row's Product cell.
               Press F2 (or Enter from the last patient field) to jump there. */}
 
-          {/* Row 2: Patient details — modern boxed fields, Enter moves to the next */}
+          {/* Row 2: Patient details - modern boxed fields, Enter moves to the next */}
           <div className="bg-white border border-emerald-200 rounded-xl px-3 py-2.5 shadow-sm">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
 
               {/* Patient (with existing-customer autocomplete) */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Patient</span>
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">{isWholesale ? 'Buyer' : 'Patient'}</span>
                 <div className="relative flex-1 min-w-0">
                   <input
                     ref={patientNameRef}
@@ -1718,7 +1916,7 @@ export default function RecordSale({
                 </div>
               </div>
 
-              {/* Phone — +91 prefix box, 10 digits only */}
+              {/* Phone - +91 prefix box, 10 digits only */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Phone</span>
                 <div className="flex items-center flex-1 min-w-0 h-8 rounded-md border border-emerald-200 bg-white overflow-hidden transition-colors focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-100">
@@ -1730,7 +1928,7 @@ export default function RecordSale({
                       const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
                       setCustomerPhone(digits ? '+91' + digits : '');
                     }}
-                    onKeyDown={enterTo(doctorRef, patientNameRef)}
+                    onKeyDown={enterTo(isWholesale ? addressRef : doctorRef, patientNameRef)}
                     inputMode="numeric"
                     maxLength={10}
                     placeholder="10-digit mobile"
@@ -1739,18 +1937,103 @@ export default function RecordSale({
                 </div>
               </div>
 
-              {/* Doctor */}
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Doctor</span>
-                <input
-                  ref={doctorRef}
-                  value={doctorName}
-                  onChange={e => setDoctorName(e.target.value)}
-                  onKeyDown={enterTo(addressRef, phoneRef)}
-                  placeholder="Name"
-                  className={patientFieldCls}
-                />
-              </div>
+              {/* Doctor - prescription concept, so retail only. A distributor
+                  has no prescriber, and Rule 65 asks for their licence instead. */}
+              {!isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Doctor</span>
+                  <input
+                    ref={doctorRef}
+                    value={doctorName}
+                    onChange={e => setDoctorName(e.target.value)}
+                    onKeyDown={enterTo(addressRef, phoneRef)}
+                    placeholder="Name"
+                    className={patientFieldCls}
+                  />
+                </div>
+              )}
+
+              {/* GSTIN - B2B buyer identity, printed on the tax invoice. */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">GSTIN</span>
+                  <input
+                    value={wholesaleGstin}
+                    onChange={e => setWholesaleGstin(e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 15))}
+                    placeholder="15-character GSTIN"
+                    maxLength={15}
+                    autoComplete="off"
+                    title="Buyer GSTIN - printed on the tax invoice"
+                    className={cn(patientFieldCls, 'uppercase tracking-wide')}
+                  />
+                  {buyerStateCode.length === 2 && sellerStateCode && (
+                    <span
+                      className={cn(
+                        'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                        effectiveInterstate
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-100 text-emerald-800',
+                      )}
+                      title={
+                        effectiveInterstate
+                          ? 'Buyer is in another state, so this invoice is taxed as IGST'
+                          : 'Buyer is in your state, so this invoice is taxed as CGST + SGST'
+                      }
+                    >
+                      {effectiveInterstate ? 'IGST' : 'CGST+SGST'}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Buyer drug licence - Rule 65(4) requires it on a wholesale sale. */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL No</span>
+                  <input
+                    value={wholesaleDl}
+                    onChange={e => setWholesaleDl(e.target.value.toUpperCase().slice(0, 40))}
+                    placeholder="Buyer drug license"
+                    autoComplete="off"
+                    title="Buyer drug license number - required on a wholesale invoice"
+                    className={cn(patientFieldCls, 'uppercase')}
+                  />
+                </div>
+              )}
+
+              {/* Licence validity. A warning, never a block: a mistyped date
+                  must not stop a legitimate sale at the counter. */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL Exp</span>
+                  <input
+                    type="date"
+                    value={wholesaleDlExpiry}
+                    onChange={e => setWholesaleDlExpiry(e.target.value)}
+                    title="Buyer drug license expiry"
+                    className={cn(patientFieldCls, dlExpired && 'ring-1 ring-amber-400 bg-amber-50')}
+                  />
+                  {dlExpired && (
+                    <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                          title="This licence has expired. Supplying against an expired licence is an offence.">
+                      Expired
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Ship-to, when goods go somewhere other than the billing address. */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Ship To</span>
+                  <input
+                    value={shipToAddress}
+                    onChange={e => setShipToAddress(e.target.value)}
+                    placeholder="Only if different from billing address"
+                    className={patientFieldCls}
+                  />
+                </div>
+              )}
 
               {/* Address (single column so Months fits on this row too) */}
               <div className="flex items-center gap-2 min-w-0">
@@ -1759,26 +2042,28 @@ export default function RecordSale({
                   ref={addressRef}
                   value={customerAddress}
                   onChange={e => setCustomerAddress(e.target.value)}
-                  onKeyDown={enterTo(dateRef, doctorRef)}
+                  onKeyDown={enterTo(dateRef, isWholesale ? phoneRef : doctorRef)}
                   placeholder="Area / street"
                   className={patientFieldCls}
                 />
               </div>
 
-              {/* Date */}
+              {/* Date - locked once a bill is generated */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Date</span>
                 <input
                   ref={dateRef}
                   type="date"
                   value={billDate}
-                  onChange={e => setBillDate(e.target.value)}
+                  onChange={e => !editBillId && setBillDate(e.target.value)}
                   onKeyDown={enterTo(prescRef, addressRef)}
-                  className={cn(patientFieldCls, 'appearance-none')}
+                  readOnly={!!editBillId}
+                  title={editBillId ? 'Bill date cannot be changed after a bill is generated' : undefined}
+                  className={cn(patientFieldCls, 'appearance-none', editBillId && 'opacity-60 cursor-not-allowed pointer-events-none')}
                 />
               </div>
 
-              {/* Prescription months / taken — compact, same row as Address & Date */}
+              {/* Prescription months / taken - compact, same row as Address & Date */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Months</span>
                 <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -1826,15 +2111,16 @@ export default function RecordSale({
 
       {/* ══════ ZONE 4: PRODUCT ENTRY ══════ */}
       <div className="flex-1 overflow-auto px-1.5 sm:px-4 py-1.5 bg-gray-50">
-        {/* Marg-style dense billing grid — one responsive table for every screen.
+        {/* Marg-style dense billing grid - one responsive table for every screen.
             On phones the fluid fr columns shrink to fill the full width with no
             horizontal scroll; from lg up it opens out to the spacious desktop size. */}
         <div className="billing-grid flex w-full min-w-[900px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
-          {/* Table header — Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount */}
+          {/* Table header - Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount */}
           <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[11px] lg:text-[13px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
             <div className="pl-2 lg:pl-4 truncate">Product</div>
             <div className="px-0.5 lg:px-1 text-center">Expiry</div>
             <div className="px-0.5 lg:px-1 text-center">Strip</div>
+            {isWholesale && <div className="px-0.5 lg:px-1 text-center" title="Free / scheme quantity - given away, not billed">Free</div>}
             <div className="px-0.5 lg:px-1 text-center">PCS</div>
             <div className="px-0.5 lg:px-1 text-center">Batch</div>
             <div className="px-0.5 lg:px-1 text-center">MRP</div>
@@ -1854,7 +2140,7 @@ export default function RecordSale({
                 className={`group/row group transition-colors duration-100 focus-within:bg-emerald-50 focus-within:shadow-sm ${row.productId ? 'bg-white hover:bg-green-50/40' : 'bg-transparent'}`}
               >
                 <div className={`grid ${GRID_COLS} items-center h-9 overflow-hidden divide-x divide-green-50 group-focus-within/row:divide-emerald-200`}>
-                  {/* PRODUCT — inline search when empty, name once selected */}
+                  {/* PRODUCT - inline search when empty, name once selected */}
                   <div className="pl-2 lg:pl-4 relative flex items-center min-w-0">
                     {row.productId ? (
                       <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 pointer-events-none">
@@ -1877,7 +2163,7 @@ export default function RecordSale({
                     )}
                   </div>
 
-                  {/* EXPIRY — editable YYYY-MM */}
+                  {/* EXPIRY - editable YYYY-MM */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'expiry', el)}
@@ -1890,7 +2176,7 @@ export default function RecordSale({
                     />
                   </div>
 
-                  {/* STRIP — full strips qty */}
+                  {/* STRIP - full strips qty */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'qty', el)}
@@ -1904,7 +2190,26 @@ export default function RecordSale({
                     />
                   </div>
 
-                  {/* PCS — loose tablets (subQty) */}
+                  {/* FREE - scheme qty. Given away: excluded from the amount,
+                      still deducted from stock as its own ₹0 invoice line. */}
+                  {isWholesale && (
+                    <div className="px-0.5">
+                      <Input
+                        ref={el => setFieldRef(row.uid, 'freeQty', el)}
+                        type="number"
+                        min="0"
+                        value={row.freeQty || ''}
+                        onChange={e => updateRow(idx, { freeQty: Math.max(0, parseInt(e.target.value) || 0) })}
+                        onKeyDown={e => handleFieldKeyDown(e, idx, 'freeQty')}
+                        disabled={!row.productId}
+                        placeholder="-"
+                        title="Free / scheme quantity - not billed, but deducted from stock"
+                        className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-violet-50 focus:bg-violet-50 focus:!text-violet-900 focus:!border-violet-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-violet-400 focus:!rounded-lg transition-all shadow-none text-violet-700"
+                      />
+                    </div>
+                  )}
+
+                  {/* PCS - loose tablets (subQty) */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'subQty', el)}
@@ -1915,12 +2220,12 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { subQty: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
                       disabled={!row.productId || row.pcsPerUnit === 0}
-                      placeholder={row.pcsPerUnit > 0 ? '—' : 'N/A'}
+                      placeholder={row.pcsPerUnit > 0 ? '-' : 'N/A'}
                       className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 transition-all shadow-none text-green-700"
                     />
                   </div>
 
-                  {/* BATCH — FEFO picker when the product has batches, free
+                  {/* BATCH - FEFO picker when the product has batches, free
                       text otherwise (accounts not yet on the batch ledger). */}
                   <div className="px-0.5">
                     {(row.batchOptions?.length ?? 0) > 0 ? (
@@ -1970,7 +2275,7 @@ export default function RecordSale({
                     )}
                   </div>
 
-                  {/* MRP — F3 to edit */}
+                  {/* MRP - F3 to edit */}
                   <div className="px-0.5">
                     <Input
                       ref={el => setFieldRef(row.uid, 'mrp', el)}
@@ -1982,7 +2287,7 @@ export default function RecordSale({
                       disabled={!row.productId}
                       readOnly={!isF3Unlocked(row.uid, 'mrp')}
                       onBlur={() => { if (isF3Unlocked(row.uid, 'mrp')) setF3Unlocked(null); }}
-                      title={isF3Unlocked(row.uid, 'mrp') ? 'Editing MRP — press F3 to lock' : 'Press F3 to edit MRP'}
+                      title={isF3Unlocked(row.uid, 'mrp') ? 'Editing MRP - press F3 to lock' : 'Press F3 to edit MRP'}
                       className={`h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 transition-all shadow-none tabular-nums ${
                         isF3Unlocked(row.uid, 'mrp')
                           ? 'focus:bg-amber-50 focus:!text-amber-900 focus:!border-amber-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-amber-400 focus:!rounded-lg text-amber-700'
@@ -2070,7 +2375,7 @@ export default function RecordSale({
             {/* Empty ledger lines to fill the grid (Marg look) */}
             {Array.from({ length: Math.max(0, 10 - rows.length) }).map((_, i) => (
               <div key={`filler-${i}`} className={`grid ${GRID_COLS} h-9 divide-x divide-green-50`}>
-                {Array.from({ length: 11 }).map((__, c) => <div key={c} />)}
+                {Array.from({ length: GRID_COL_COUNT }).map((__, c) => <div key={c} />)}
               </div>
             ))}
           </div>
@@ -2175,15 +2480,15 @@ export default function RecordSale({
                 const tabs = sales.reduce((s: number, r: any) => s + (r.sub_qty || 0), 0);
                 const revenue = sales.reduce((s: number, r: any) => s + (r.total_price || 0), 0);
                 const lastSold = sales[0];
-                const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
                 return (
                   <>
                     {/* Key stats */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <StatTile label="Current Stock" value={String(full.quantity ?? infoProduct.quantity)} />
                       <StatTile label="M.R.P." value={`₹${mrp.toFixed(2)}`} accent />
-                      <StatTile label="Purchase" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : '—'} />
-                      <StatTile label="Margin" value={margin != null ? `${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%` : '—'} accent={margin != null && margin >= 0} />
+                      <StatTile label="Purchase" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : '-'} />
+                      <StatTile label="Margin" value={margin != null ? `${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%` : '-'} accent={margin != null && margin >= 0} />
                     </div>
 
                     {/* Product details */}
@@ -2213,7 +2518,7 @@ export default function RecordSale({
                       <DetailItem label="Strips sold" value={String(strips)} />
                       <DetailItem label="Tablets sold" value={String(tabs)} />
                       <DetailItem label="Total revenue" value={`₹${revenue.toFixed(2)}`} />
-                      <DetailItem label="Last sold" value={lastSold ? fmtDate(lastSold.sale_date || lastSold.created_at) : '—'} />
+                      <DetailItem label="Last sold" value={lastSold ? fmtDate(lastSold.sale_date || lastSold.created_at) : '-'} />
                       <DetailItem label="Last sold to" value={lastSold?.customer_name || null} />
                     </InfoSection>
 
@@ -2275,9 +2580,9 @@ export default function RecordSale({
       {/* ══════ ZONE 5: STICKY FOOTER (SLEEK) ══════ */}
       <div className="bg-white border-t border-green-100 shadow-[0_-8px_24px_rgba(0,0,0,0.04)] shrink-0 z-30">
         <div className="px-2 sm:px-6 py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-4 max-w-[1700px] mx-auto">
-          {/* Left: Payment & inputs — full width on mobile */}
+          {/* Left: Payment & inputs - full width on mobile */}
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 md:gap-4 md:flex-1 min-w-0">
-            {/* Payment modes — 4-up grid on phones, inline from sm */}
+            {/* Payment modes - 4-up grid on phones, inline from sm */}
             <div className="grid grid-cols-4 sm:flex gap-1 sm:gap-1.5 bg-white p-1 rounded-lg border border-green-100 w-full sm:w-auto">
               {paymentModes.map((mode, i) => (
                 <button
@@ -2313,7 +2618,7 @@ export default function RecordSale({
 
             <div className="hidden md:block h-8 w-px bg-green-100"></div>
 
-            {/* Disc + Received — share one row on phones, flow inline from sm */}
+            {/* Disc + Received - share one row on phones, flow inline from sm */}
             <div className="flex gap-2 w-full sm:contents">
               <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-green-100 flex-1 sm:flex-none min-w-0">
                 <Label className="text-[11px] font-medium text-green-700 shrink-0">Global Disc%</Label>
@@ -2376,7 +2681,7 @@ export default function RecordSale({
             })()}
           </div>
 
-          {/* Right: Amount + Finalize — full width on mobile */}
+          {/* Right: Amount + Finalize - full width on mobile */}
           <div className="flex items-stretch gap-2 sm:gap-3 w-full md:w-auto">
             <div className="hidden lg:flex items-center gap-5 text-sm font-medium">
               <div className="flex flex-col text-right">
@@ -2499,7 +2804,7 @@ export default function RecordSale({
             onClick={e => e.stopPropagation()}
           >
             <div className="px-6 pt-6 pb-2">
-              <p id="leave-title" className="text-base font-bold text-gray-900">Bill in progress — leave without saving?</p>
+              <p id="leave-title" className="text-base font-bold text-gray-900">Bill in progress - leave without saving?</p>
               <p className="text-sm text-gray-500 mt-1">Your unsaved bill will be lost.</p>
             </div>
             <div className="flex gap-3 px-6 py-4 justify-end">
@@ -2515,7 +2820,7 @@ export default function RecordSale({
               <button
                 data-leave-btn
                 type="button"
-                onClick={() => { setShowLeaveConfirm(false); if (persistKey) clearBillData(persistKey); navigate('/sales'); }}
+                onClick={() => { setShowLeaveConfirm(false); if (persistKey) clearBillData(persistKey, isWholesale ? 'wholesale' : undefined); navigate('/sales'); }}
                 className="px-5 py-2 rounded-lg text-sm font-semibold text-gray-700 bg-gray-100 hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-gray-300 transition-colors"
               >
                 Leave
@@ -2553,7 +2858,7 @@ function DetailItem({ label, value }: { label: string; value: React.ReactNode })
   return (
     <div className="min-w-0">
       <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
-      <p className="text-sm font-medium text-gray-800 break-words">{value || '—'}</p>
+      <p className="text-sm font-medium text-gray-800 break-words">{value || '-'}</p>
     </div>
   );
 }

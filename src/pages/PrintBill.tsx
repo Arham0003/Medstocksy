@@ -252,7 +252,14 @@ export default function PrintBill() {
             });
             return;
         }
-        navigate(`/sales/new?edit=${billId}`);
+        // A wholesale bill has to reopen in the wholesale workspace. Sending it
+        // to /sales/new put a distributor under "Patient", hid the GSTIN and
+        // drug-licence fields, and would have saved the bill back as retail.
+        // Read the type off billData rather than the isWholesaleBill const,
+        // which is declared further down the component: naming it here would
+        // evaluate it before initialisation and throw on every render.
+        const editWholesale = billData?.sale_type === 'wholesale';
+        navigate(editWholesale ? `/wholesale?edit=${billId}` : `/sales/new?edit=${billId}`);
     }, [billId, billData, navigate, toast]);
 
     const doPrint = useCallback(async () => {

@@ -235,8 +235,6 @@ export default function RecordSale({
   // The seller's own state code decides CGST+SGST against IGST per buyer.
   const [sellerStateCode, setSellerStateCode] = useState<string>('');
   const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
-  const [prescriptionMonths, setPrescriptionMonths] = useState<number | ''>(hydrated?.prescriptionMonths ?? '');
-  const [monthsTaken, setMonthsTaken] = useState<number | ''>(hydrated?.monthsTaken ?? 1);
   // When set, this bill is being EDITED - save replaces the finalized bill of this id.
   const [editBillId] = useState<string | null>(() => hydrated?.editBillId ?? null);
 
@@ -375,8 +373,6 @@ export default function RecordSale({
   const doctorRef = useRef<HTMLInputElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
-  const prescRef = useRef<HTMLInputElement>(null);
-  const takenRef = useRef<HTMLInputElement>(null);
   const wholesaleGstinRef = useRef<HTMLInputElement>(null);
   const wholesaleDlRef = useRef<HTMLInputElement>(null);
   const wholesaleDlExpiryRef = useRef<HTMLInputElement>(null);
@@ -559,6 +555,11 @@ export default function RecordSale({
     phone: string | null;
     address: string | null;
     doctor: string | null;
+    /** B2B identity, recalled so a repeat buyer is not retyped each invoice. */
+    gstin?: string | null;
+    dl?: string | null;
+    dlExpiry?: string | null;
+    shipTo?: string | null;
   }
   const [customerSuggestions, setCustomerSuggestions] = useState<CustomerSuggestion[]>([]);
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
@@ -568,29 +569,75 @@ export default function RecordSale({
   const fetchCustomerSuggestions = useCallback(async (name: string) => {
     const q = name.trim();
     if (q.length < 1) { setCustomerSuggestions([]); setCustomerDropdownOpen(false); return; }
-    try {
-      const { data } = await (supabase as any)
-        .from('sales')
-        .select('customer_name, customer_phone, customer_address, doctor_name, created_at')
-        .ilike('customer_name', `${q}%`)
+
+    const BASE = 'customer_name, customer_phone, customer_address, doctor_name, created_at';
+    // Wholesale recall needs the buyer's identity, not just their name. These
+    // columns arrive with 20260925000000, so the query narrows on failure
+    // rather than returning nothing against an un-migrated database.
+    const B2B = ', wholesale_customer_name, wholesale_customer_gstin, wholesale_customer_dl, wholesale_customer_dl_expiry, ship_to_address';
+
+    const run = async (cols: string) => {
+      const query = db.from('sales')
+        .select(cols)
+        // Never cross the channels: a distributor must not be offered while
+        // billing a patient, and a patient must not be offered on a B2B invoice.
+        .eq('sale_type', isWholesale ? 'wholesale' : 'retail')
         .order('created_at', { ascending: false })
-        .limit(40);
+        .limit(60);
+      // Match on customer_name alone, in both modes. A wholesale bill cannot be
+      // saved without a buyer name, and that same value is written to both
+      // customer_name and wholesale_customer_name, so an or-filter across the
+      // two would return nothing extra. It would also be fragile: PostgREST
+      // separates or-terms with commas, so a buyer called "Shah, Bros" or
+      // "M/s (Gupta)" produced a malformed filter and silently killed the
+      // suggestions. One plain filter has no such hazard.
+      return query.ilike('customer_name', `${q}%`);
+    };
+
+    type SuggestionRow = {
+      customer_name?: string | null;
+      customer_phone?: string | null;
+      customer_address?: string | null;
+      doctor_name?: string | null;
+      wholesale_customer_name?: string | null;
+      wholesale_customer_gstin?: string | null;
+      wholesale_customer_dl?: string | null;
+      wholesale_customer_dl_expiry?: string | null;
+      ship_to_address?: string | null;
+    };
+
+    try {
+      let data: SuggestionRow[] | null = null;
+      for (const cols of isWholesale ? [BASE + B2B, BASE] : [BASE]) {
+        const res = await run(cols);
+        if (!res.error) { data = res.data as SuggestionRow[]; break; }
+      }
+
       const seen = new Set<string>();
       const list: CustomerSuggestion[] = [];
       for (const r of (data || [])) {
-        const nm = (r.customer_name || '').trim();
+        const nm = ((isWholesale ? r.wholesale_customer_name : null) || r.customer_name || '').trim();
         if (!nm || nm.toLowerCase() === 'walk-in customer') continue;
         const key = nm.toLowerCase() + '|' + (r.customer_phone || '');
         if (seen.has(key)) continue;
         seen.add(key);
-        list.push({ name: nm, phone: r.customer_phone ?? null, address: r.customer_address ?? null, doctor: r.doctor_name ?? null });
+        list.push({
+          name: nm,
+          phone: r.customer_phone ?? null,
+          address: r.customer_address ?? null,
+          doctor: r.doctor_name ?? null,
+          gstin: r.wholesale_customer_gstin ?? null,
+          dl: r.wholesale_customer_dl ?? null,
+          dlExpiry: r.wholesale_customer_dl_expiry ?? null,
+          shipTo: r.ship_to_address ?? null,
+        });
         if (list.length >= 6) break;
       }
       setCustomerSuggestions(list);
       setCustomerDropdownOpen(list.length > 0);
       setCustomerHighlight(0);
-    } catch { /* ignore */ }
-  }, []);
+    } catch { /* a failed lookup must never block typing a name */ }
+  }, [isWholesale]);
 
   const handleNameChange = useCallback((value: string) => {
     setCustomerName(value);
@@ -603,10 +650,19 @@ export default function RecordSale({
     setCustomerName(c.name);
     if (c.phone) setCustomerPhone(c.phone);
     if (c.address) setCustomerAddress(c.address);
-    if (c.doctor) setDoctorName(c.doctor);
+    if (!isWholesale && c.doctor) setDoctorName(c.doctor);
+    // Recall the whole B2B identity, so a repeat buyer is one keystroke rather
+    // than four fields retyped. Only filled where a stored value exists, so
+    // picking a buyer never blanks something already entered.
+    if (isWholesale) {
+      if (c.gstin) setWholesaleGstin(c.gstin);
+      if (c.dl) setWholesaleDl(c.dl);
+      if (c.dlExpiry) setWholesaleDlExpiry(String(c.dlExpiry).slice(0, 10));
+      if (c.shipTo) setShipToAddress(c.shipTo);
+    }
     setCustomerDropdownOpen(false);
     setCustomerSuggestions([]);
-  }, []);
+  }, [isWholesale]);
 
   const handleNameKeyDown = useCallback((e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (!customerDropdownOpen || customerSuggestions.length === 0) return;
@@ -876,13 +932,14 @@ export default function RecordSale({
       return;
     }
     if (e.key === 'Enter' && e.shiftKey) {
-      // Go BACK: previous filled row's last field, else up to the patient "Taken" field.
+      // Go BACK: previous filled row's last field, else up to the date field,
+      // which is the last field in the header now that Months is gone.
       e.preventDefault();
       setActiveSearchRow(null);
       setSearchRect(null);
       const prevRow = rows[rowIndex - 1];
       if (prevRow && prevRow.productId) focusField(prevRow.uid, TAB_FIELDS[TAB_FIELDS.length - 1]);
-      else takenRef.current?.focus();
+      else dateRef.current?.focus();
       return;
     }
     if (e.key === 'Enter') {
@@ -1101,13 +1158,13 @@ export default function RecordSale({
     try {
       localStorage.setItem(billDataPrefix(isWholesale ? 'wholesale' : undefined) + persistKey, JSON.stringify({
         customerName, customerPhone, customerAddress, doctorName, billDate,
-        prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
+        rows, paymentMode, receivedAmount, globalDiscount,
         editBillId, wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress,
         salesmanName, salesmanPhone, customerType,
       }));
     } catch { /* ignore quota errors */ }
   }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
-      prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
+      rows, paymentMode, receivedAmount, globalDiscount,
       wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress, isWholesale,
       salesmanName, salesmanPhone, customerType]);
 
@@ -1319,8 +1376,8 @@ export default function RecordSale({
           sale_date: billDate,
           // Prescription tracking is retail-only (refill cycle for chronic patients).
           // Wholesale goes to distributors/chemists - no prescriber, no refill concept.
-          prescription_months: isWholesale ? null : (prescriptionMonths === '' ? null : Number(prescriptionMonths)),
-          months_taken: isWholesale ? null : (monthsTaken === '' ? null : Number(monthsTaken)),
+          prescription_months: null,
+          months_taken: null,
           discount_percentage: row.discount + globalDiscount,
           received_amount: Math.round(rowReceivedAmount * 100) / 100,
           // Settled when customer has paid the full amount (works for all payment modes)
@@ -1405,10 +1462,27 @@ export default function RecordSale({
       // rows) so re-inserting below re-deducts cleanly. The stock trigger only fires
       // on INSERT, so the restore is done manually - mirroring the item-delete flow.
       if (editBillId) {
-        const { data: orig, error: origErr } = await (supabase.from('sales') as any)
-          .select('product_id, quantity, sub_qty, pcs_per_unit, batch_number')
+        const { data: orig, error: origErr } = await db.from('sales')
+          .select('product_id, quantity, sub_qty, pcs_per_unit, batch_id')
           .eq('bill_id', editBillId);
         if (origErr) throw origErr;
+
+        // adjust_batch_stock identifies a batch by its number, but the sale row
+        // stores batch_id. Resolve them in one query rather than per line: an
+        // eighty-line wholesale bill would otherwise fire eighty round trips.
+        const batchIds = [...new Set(
+          ((orig || []) as any[]).map(it => it.batch_id).filter(Boolean),
+        )];
+        const batchNumberById = new Map<string, string>();
+        if (batchIds.length > 0) {
+          const { data: batchRows } = await db.from('stock_batches')
+            .select('id, batch_number')
+            .in('id', batchIds);
+          for (const b of (batchRows || []) as any[]) {
+            if (b?.id && b?.batch_number) batchNumberById.set(b.id, b.batch_number);
+          }
+        }
+
         for (const it of (orig || []) as any[]) {
           const q = Number(it.quantity) || 0;
           const sq = Number(it.sub_qty) || 0;
@@ -1422,7 +1496,7 @@ export default function RecordSale({
             await db.rpc('adjust_batch_stock', {
               p_account_id: profile.account_id,
               p_product_id: it.product_id,
-              p_batch_number: it.batch_number || null,
+              p_batch_number: (it.batch_id && batchNumberById.get(it.batch_id)) || null,
               p_delta: restore,
             });
           }
@@ -1511,7 +1585,7 @@ export default function RecordSale({
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
+  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
       wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode, salesmanName, salesmanPhone, customerType]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
@@ -1699,13 +1773,13 @@ export default function RecordSale({
     if (e.key === 'Enter') {
       e.preventDefault();
       if (e.shiftKey) {
-        // Go BACK: previous field → previous row's last field → patient "Taken" field.
+        // Go BACK: previous field -> previous row's last field -> the date field.
         if (currentIdx > 0) {
           focusField(row.uid, TAB_FIELDS[currentIdx - 1]);
         } else {
           const prevRow = rows[rowIndex - 1];
           if (prevRow && prevRow.productId) focusField(prevRow.uid, TAB_FIELDS[TAB_FIELDS.length - 1]);
-          else takenRef.current?.focus();
+          else dateRef.current?.focus();
         }
         return;
       }
@@ -1924,7 +1998,9 @@ export default function RecordSale({
                   />
                   {customerDropdownOpen && customerSuggestions.length > 0 && (
                     <div className="absolute top-full left-0 mt-1 min-w-[240px] w-max max-w-[320px] bg-white rounded-lg shadow-[0_12px_32px_rgba(0,0,0,0.15)] border border-emerald-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">Existing customers</p>
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                        {isWholesale ? 'Existing buyers' : 'Existing customers'}
+                      </p>
                       {customerSuggestions.map((c, idx) => (
                         <button
                           key={idx}
@@ -1936,8 +2012,16 @@ export default function RecordSale({
                         >
                           <div className="min-w-0">
                             <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
-                            {(c.phone || c.doctor) && (
-                              <p className="text-[11px] text-gray-400 truncate">{[c.phone, c.doctor && `Dr. ${c.doctor}`].filter(Boolean).join(' · ')}</p>
+                            {isWholesale ? (
+                              (c.phone || c.gstin || c.dl) && (
+                                <p className="text-[11px] text-gray-400 truncate">
+                                  {[c.phone, c.gstin, c.dl && `DL ${c.dl}`].filter(Boolean).join(' · ')}
+                                </p>
+                              )
+                            ) : (
+                              (c.phone || c.doctor) && (
+                                <p className="text-[11px] text-gray-400 truncate">{[c.phone, c.doctor && `Dr. ${c.doctor}`].filter(Boolean).join(' · ')}</p>
+                              )
                             )}
                           </div>
                           <User className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -2149,55 +2233,17 @@ export default function RecordSale({
                   type="date"
                   value={billDate}
                   onChange={e => !editBillId && setBillDate(e.target.value)}
-                  onKeyDown={isWholesale ? enterTo(masterSearchRef, addressRef) : enterTo(prescRef, addressRef)}
+                  onKeyDown={enterTo(masterSearchRef, addressRef)}
                   readOnly={!!editBillId}
                   title={editBillId ? 'Bill date cannot be changed after a bill is generated' : undefined}
                   className={cn(patientFieldCls, 'appearance-none', editBillId && 'opacity-60 cursor-not-allowed pointer-events-none')}
                 />
               </div>
 
-              {/* Prescription months / taken - retail only. Wholesale sells to distributors/chemists;
-                  there is no prescriber, no refill cycle, and no clinical need to track this. */}
-              {!isWholesale && (
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Months</span>
-                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                    <input
-                      ref={prescRef}
-                      type="number"
-                      min="0"
-                      value={prescriptionMonths}
-                      onChange={e => {
-                        const val = e.target.value === '' ? '' : parseInt(e.target.value) || 0;
-                        setPrescriptionMonths(val);
-                        if (val !== '' && (monthsTaken === '' || monthsTaken === 0)) setMonthsTaken(1);
-                      }}
-                      onKeyDown={enterTo(takenRef, dateRef)}
-                      placeholder="0"
-                      title="Prescribed months"
-                      className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
-                    />
-                    <span className="text-[9px] font-semibold text-emerald-500 uppercase">Presc</span>
-                    <input
-                      ref={takenRef}
-                      type="number"
-                      min="0"
-                      value={monthsTaken}
-                      onChange={e => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
-                      onKeyDown={e => {
-                        if (e.key !== 'Enter') return;
-                        e.preventDefault();
-                        if (e.shiftKey) prescRef.current?.focus();
-                        else focusFirstEmptyProduct();
-                      }}
-                      placeholder="0"
-                      title="Months taken"
-                      className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
-                    />
-                    <span className="text-[9px] font-semibold text-emerald-500 uppercase">Taken</span>
-                  </div>
-                </div>
-              )}
+              {/* Prescription months / taken removed from billing: the counter does
+                  not need them to raise a bill. The sales columns are left in
+                  place so historical bills and past refill data stay readable;
+                  new bills simply write null. */}
 
             </div>
           </div>

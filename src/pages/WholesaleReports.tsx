@@ -38,6 +38,14 @@ interface WholesaleSaleRow {
   customer_name: string | null;
   wholesale_customer_name: string | null;
   wholesale_customer_gstin: string | null;
+  cgst_amount?: number | null;
+  sgst_amount?: number | null;
+  igst_amount?: number | null;
+  gst_rate?: number | null;
+  buyer_state_code?: string | null;
+  bill_serial?: string | null;
+  return_type?: string | null;
+  is_free?: boolean | null;
 }
 
 /** One wholesale invoice, folded up from its sale lines. */
@@ -51,6 +59,20 @@ interface WholesaleBill {
   gst: number;
   total: number;
   payment_mode: string;
+  /** Tax split, kept apart because GSTR-1 Table 4 wants the components. */
+  cgst: number;
+  sgst: number;
+  igst: number;
+  /** Highest rate on the invoice; GSTR-1 wants a rate per line. */
+  rate: number;
+  /** Two-digit buyer state code. */
+  pos: string;
+  /** Sequential number where one was allocated. */
+  serial: string;
+  /** A bill made entirely of reversal rows is a credit note, not an invoice. */
+  isCreditNote: boolean;
+  /** Units given away under a scheme. Invisible until sales.is_free existed. */
+  freeUnits: number;
 }
 
 export default function WholesaleReports() {
@@ -78,9 +100,14 @@ export default function WholesaleReports() {
 
       // Same shape as Reports.tsx, with the one difference that defines this
       // page: only wholesale rows. Account scoping comes from RLS.
-      let query = db
-        .from('sales')
-        .select(`
+      // Same shape as Reports.tsx, with the one difference that defines this
+      // page: only wholesale rows. Account scoping comes from RLS.
+      //
+      // Spelled as a cascade rather than one select. The compliance columns
+      // arrive with 20260925000000, and asking for a column that does not exist
+      // fails the whole query, which would leave this page blank on a database
+      // that has not been migrated yet. Widest set first, narrowing on failure.
+      const BASE_COLS = `
           bill_id,
           quantity,
           total_price,
@@ -91,23 +118,49 @@ export default function WholesaleReports() {
           payment_mode,
           customer_name,
           wholesale_customer_name,
-          wholesale_customer_gstin
-        `)
-        .eq('sale_type', 'wholesale')
-        .order('created_at', { ascending: false });
+          wholesale_customer_gstin,
+          return_type`;
+      const GST_SPLIT_COLS = `,
+          cgst_amount,
+          sgst_amount,
+          igst_amount,
+          gst_rate`;
+      const COMPLIANCE_COLS = `,
+          buyer_state_code,
+          bill_serial,
+          is_free`;
 
       const days = parseInt(dateRange) || 30;
       const fromDate = new Date();
       fromDate.setDate(fromDate.getDate() - days);
       const fromDateStr = fromDate.toISOString().split('T')[0];
 
-      if (dateRange === 'custom' && startDate && endDate) {
-        query = query.gte('sale_date', startDate).lte('sale_date', endDate);
-      } else {
-        query = query.gte('sale_date', fromDateStr);
+      let data: unknown[] | null = null;
+      let error: { message?: string } | null = null;
+
+      for (const cols of [
+        BASE_COLS + GST_SPLIT_COLS + COMPLIANCE_COLS,
+        BASE_COLS + GST_SPLIT_COLS,
+        BASE_COLS,
+      ]) {
+        let query = db
+          .from('sales')
+          .select(cols)
+          .eq('sale_type', 'wholesale')
+          .order('created_at', { ascending: false });
+
+        if (dateRange === 'custom' && startDate && endDate) {
+          query = query.gte('sale_date', startDate).lte('sale_date', endDate);
+        } else {
+          query = query.gte('sale_date', fromDateStr);
+        }
+
+        const res = await query;
+        data = res.data;
+        error = res.error;
+        if (!error) break;
       }
 
-      const { data, error } = await query;
       if (error) throw error;
 
       // Fold the sale lines into one row per invoice.
@@ -128,6 +181,15 @@ export default function WholesaleReports() {
           existing.taxable += taxable;
           existing.gst += gst;
           existing.total += total;
+          existing.cgst += Number(row.cgst_amount) || 0;
+          existing.sgst += Number(row.sgst_amount) || 0;
+          existing.igst += Number(row.igst_amount) || 0;
+          existing.rate = Math.max(existing.rate, Number(row.gst_rate) || 0);
+          if (!existing.pos && row.buyer_state_code) existing.pos = row.buyer_state_code;
+          if (!existing.serial && row.bill_serial) existing.serial = row.bill_serial;
+          if (row.is_free) existing.freeUnits += Number(row.quantity) || 0;
+          // One priced line is enough to make the document an invoice.
+          if (!row.return_type) existing.isCreditNote = false;
         } else {
           grouped.set(key, {
             bill_id: row.bill_id || '',
@@ -139,6 +201,14 @@ export default function WholesaleReports() {
             gst,
             total,
             payment_mode: row.payment_mode || 'cash',
+            cgst: Number(row.cgst_amount) || 0,
+            sgst: Number(row.sgst_amount) || 0,
+            igst: Number(row.igst_amount) || 0,
+            rate: Number(row.gst_rate) || 0,
+            pos: row.buyer_state_code || '',
+            serial: row.bill_serial || '',
+            isCreditNote: !!row.return_type,
+            freeUnits: row.is_free ? Number(row.quantity) || 0 : 0,
           });
         }
       }
@@ -244,10 +314,11 @@ export default function WholesaleReports() {
             exportToCSV(
               filteredBills.map(b => ({
                 Date: b.date,
-                Invoice: b.bill_id.slice(0, 8).toUpperCase(),
+                Invoice: b.serial || b.bill_id.slice(0, 8).toUpperCase(),
                 Customer: b.customer,
                 GSTIN: b.gstin,
                 Items: b.items,
+                'Free Units': b.freeUnits,
                 Taxable: b.taxable.toFixed(2),
                 GST: b.gst.toFixed(2),
                 Total: b.total.toFixed(2),
@@ -259,6 +330,41 @@ export default function WholesaleReports() {
         >
           <Download className="h-4 w-4" />
           Export
+        </Button>
+        {/* GSTR-1 Table 4: the B2B section, in the shape the return wants.
+            Column names follow the GST portal's own offline-utility headings so
+            a CA can map it without renaming anything. */}
+        <Button
+          variant="outline"
+          className="flex gap-2 items-center text-base py-2.5 px-4"
+          disabled={filteredBills.length === 0}
+          title="One row per invoice, with the tax split separated, for GSTR-1 Table 4 (B2B)"
+          onClick={() =>
+            exportToCSV(
+              filteredBills.map(b => ({
+                'GSTIN/UIN of Recipient': b.gstin,
+                'Receiver Name': b.customer,
+                'Invoice Number': b.serial || b.bill_id.slice(0, 8).toUpperCase(),
+                'Invoice date': b.date.split('-').reverse().join('-'),
+                'Invoice Value': b.total.toFixed(2),
+                'Place Of Supply': b.pos,
+                'Reverse Charge': 'N',
+                'Applicable % of Tax Rate': '',
+                'Invoice Type': b.isCreditNote ? 'Credit Note' : 'Regular B2B',
+                'E-Commerce GSTIN': '',
+                Rate: b.rate ? b.rate.toFixed(2) : '',
+                'Taxable Value': b.taxable.toFixed(2),
+                'Integrated Tax Amount': b.igst.toFixed(2),
+                'Central Tax Amount': b.cgst.toFixed(2),
+                'State/UT Tax Amount': b.sgst.toFixed(2),
+                'Cess Amount': '0.00',
+              })),
+              'gstr1-table4-b2b'
+            )
+          }
+        >
+          <Download className="h-4 w-4" />
+          GSTR-1 B2B
         </Button>
       </div>
 
@@ -347,7 +453,7 @@ export default function WholesaleReports() {
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <DashboardStatCard
           title="Wholesale Revenue"
-          value={loading ? '-' : `₹${stats.revenue.toFixed(2)}`}
+          value={loading ? '-' : `\u20B9${stats.revenue.toFixed(2)}`}
           icon={TrendingUp}
           variant="primary"
           description="Total billed in range"
@@ -361,14 +467,14 @@ export default function WholesaleReports() {
         />
         <DashboardStatCard
           title="Taxable Value"
-          value={loading ? '-' : `₹${stats.taxable.toFixed(2)}`}
+          value={loading ? '-' : `\u20B9${stats.taxable.toFixed(2)}`}
           icon={Building2}
           variant="default"
           description="Before GST"
         />
         <DashboardStatCard
           title="GST Collected"
-          value={loading ? '-' : `₹${stats.gst.toFixed(2)}`}
+          value={loading ? '-' : `\u20B9${stats.gst.toFixed(2)}`}
           icon={Percent}
           variant="success"
           description="Output tax in range"
@@ -408,6 +514,7 @@ export default function WholesaleReports() {
                     <TableHead>Customer</TableHead>
                     <TableHead className="hidden md:table-cell">GSTIN</TableHead>
                     <TableHead className="text-center">Items</TableHead>
+                    <TableHead className="text-center hidden lg:table-cell" title="Units given away under a scheme">Free</TableHead>
                     <TableHead className="text-right">Taxable</TableHead>
                     <TableHead className="text-right">GST</TableHead>
                     <TableHead className="text-right">Total</TableHead>
@@ -419,15 +526,29 @@ export default function WholesaleReports() {
                   {filteredBills.map(b => (
                     <TableRow key={b.bill_id || `${b.date}-${b.customer}`}>
                       <TableCell className="whitespace-nowrap">{b.date}</TableCell>
-                      <TableCell className="font-mono text-xs uppercase">{b.bill_id.slice(0, 8) || '-'}</TableCell>
+                      <TableCell className="font-mono text-xs uppercase">
+                        {/* The sequential number is the one that matters for
+                            filing; older bills fall back to their UUID stub. */}
+                        {b.serial || b.bill_id.slice(0, 8) || '-'}
+                        {b.isCreditNote && (
+                          <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-800 normal-case">
+                            Credit note
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="font-medium max-w-[180px] truncate" title={b.customer}>
                         {b.customer}
                       </TableCell>
                       <TableCell className="hidden md:table-cell font-mono text-xs">{b.gstin || '-'}</TableCell>
                       <TableCell className="text-center tabular-nums">{b.items}</TableCell>
-                      <TableCell className="text-right tabular-nums">₹{b.taxable.toFixed(2)}</TableCell>
-                      <TableCell className="text-right tabular-nums">₹{b.gst.toFixed(2)}</TableCell>
-                      <TableCell className="text-right tabular-nums font-semibold">₹{b.total.toFixed(2)}</TableCell>
+                      <TableCell className="text-center tabular-nums hidden lg:table-cell">
+                        {b.freeUnits > 0
+                          ? <span className="font-semibold text-violet-700">{b.freeUnits}</span>
+                          : <span className="text-muted-foreground">-</span>}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">&#8377;{b.taxable.toFixed(2)}</TableCell>
+                      <TableCell className="text-right tabular-nums">&#8377;{b.gst.toFixed(2)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">&#8377;{b.total.toFixed(2)}</TableCell>
                       <TableCell className="hidden sm:table-cell capitalize">{b.payment_mode}</TableCell>
                       <TableCell>
                         {b.bill_id && (

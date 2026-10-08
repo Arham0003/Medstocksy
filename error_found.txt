@@ -1,0 +1,213 @@
+================================================================================
+ MEDSTOCKSY - WHOLESALE FEATURE TEST REPORT
+ Date   : 2026-10-02
+ Branch : 002-wholesale-premium-billing
+ Scope  : every wholesale feature, tested end to end
+================================================================================
+
+RESULT: 40 of 40 tests passed. No application errors were found.
+
+One hardening change was made as a result of testing (section 3 below).
+
+
+================================================================================
+ 1. DO I NEED TO RUN ANY QUERY?
+================================================================================
+
+YES - exactly one file, and only once.
+
+    supabase/APPLY_ALL_WHOLESALE_COMPLETE.sql
+
+How to run it:
+    1. Supabase Dashboard -> Database -> Backups -> take a backup.
+    2. Dashboard -> SQL Editor -> paste the whole file -> Run.
+    3. Confirm the 16-row table at the end reads OK on every line.
+       "B. supplier drug licence" may read SKIPPED (expected) if the
+       suppliers table is absent; that is fine and is explained in the file.
+
+It is safe to run more than once. The whole file is one transaction, so a
+failure rolls everything back, and every step is guarded, so a second run is a
+no-op rather than an error. Verified by running it twice against the same
+database.
+
+NOTHING ELSE needs to be run. There are no follow-up queries, no data fixes and
+no backfills.
+
+After running it, do these two things in the app:
+    * Settings -> Tax & Currency -> turn on Wholesale Mode
+      (only appears on an account whose plan is wholesale_monthly/annual)
+    * Settings -> Store Information -> fill in FSSAI number, Drug License
+      Form (20B / 21B / 20G) and Drug License validity date.
+      Wholesale invoices omit these rather than printing blanks until set.
+
+
+================================================================================
+ 2. WHAT WAS TESTED, AND HOW
+================================================================================
+
+Tests ran against a real PostgreSQL 17 database carrying the actual schema:
+real row-level security, a real auth.uid(), the real stock trigger, two
+separate tenants (one on a wholesale plan, one not), and the production
+function signatures. The wholesale sheet was then applied exactly as you will
+apply it.
+
+This is not a mock. Every result below is the database's own answer.
+
+--- 1. The wholesale gate (RLS) ------------------------------------- 5/5 PASS
+  PASS  non-subscriber BLOCKED from inserting a wholesale row
+        (attempted directly against the table, bypassing the UI)
+  PASS  non-subscriber can still sell retail
+  PASS  subscriber can insert wholesale
+  PASS  cross-account insert blocked
+  PASS  sale_type CHECK rejects an unknown value
+
+--- 2. Invoice numbering, CGST Rule 46 ------------------------------ 7/7 PASS
+  PASS  numbers are sequential     WS/26-27/00001, 00002, 00003
+  PASS  within the 16-character limit                    14 characters
+  PASS  each account has its own independent series
+  PASS  the account cannot be passed in, so a series cannot be spoofed
+  PASS  financial year rolls over on 1 April   31 Mar = 26-27, 1 Apr = 27-28
+  PASS  malformed series rejected
+  PASS  no duplicate counter rows (gaps are acceptable, duplicates are not)
+
+--- 3. Returns and credit notes ----------------------------------- 13/13 PASS
+  PASS  wholesale return files as WHOLESALE, not retail
+  PASS  an IGST invoice is credited as IGST          -72.00
+  PASS  an intrastate invoice is credited as CGST+SGST   -45.00 / -45.00
+  PASS  buyer drug licence carried onto the credit note
+  PASS  place of supply carried
+  PASS  invoice serial carried
+  PASS  quantity negated
+  PASS  retail return still files as RETAIL
+  PASS  retail tax split preserved
+  PASS  no wholesale fields leak onto a retail row
+  PASS  over-return rejected
+  PASS  cannot return a return
+  PASS  cannot return another account's sale
+
+--- 4. Stock, free goods, compliance columns ----------------------- 10/10 PASS
+  PASS  wholesale sale depletes the same stock as retail   986 -> 961
+  PASS  free goods deduct stock                            961 -> 956
+  PASS  free goods are marked is_free
+  PASS  is_free is never null (defaults false), so no historical row is
+        mistaken for a giveaway
+  PASS  schedule_type CHECK rejects junk
+  PASS  storage_condition CHECK rejects junk
+  PASS  dl_form_type CHECK rejects junk
+  PASS  seller compliance fields accept valid values
+  PASS  DEFAULT 'salable' preserved on record_sales_return
+
+--- 5. Sequence table isolation ------------------------------------- 1/1 PASS
+  PASS  a tenant sees only its own counters (1 visible of 2 present)
+
+--- 6. Indexes ------------------------------------------------------ 2/2 PASS
+  PASS  both new indexes present
+  PASS  both duplicate indexes dropped
+
+--- 7. Lapsed subscription ------------------------------------------ 3/3 PASS
+  PASS  a lapsed plan blocks NEW wholesale invoices
+  PASS  a lapsed plan still allows retail billing
+  PASS  existing wholesale invoices stay READABLE after a lapse
+        (losing sight of who owes you money would not be acceptable)
+
+--- Build quality ---------------------------------------------------- PASS
+  tsc    0 errors
+  lint   279 problems (250 errors, 29 warnings) - identical to the
+         pre-existing baseline, so nothing new was introduced
+  build  passes
+
+--- Column-name audit ------------------------------------------------ PASS
+  The Supabase client is untyped, so a misspelled column would not be caught
+  by the compiler and would fail at runtime on a real bill. Every snake_case
+  name used in the sales queries across RecordSale, PrintBill, Sales,
+  WholesaleReports, Reports and CustomerRelation was compared against the live
+  schema. No misspellings. Everything flagged belonged to products, settings
+  or accounts, was an RPC parameter, or was a local object key.
+
+
+================================================================================
+ 3. THE ONE CHANGE MADE AS A RESULT OF TESTING
+================================================================================
+
+Finding : invoice_sequences had row-level security and a policy, but no
+          explicit GRANT. The table therefore depended on the project's
+          default privileges being configured as expected.
+
+Impact  : none in practice. The app never reads that table directly; it only
+          calls next_invoice_number(), which is SECURITY DEFINER and so runs
+          as the owner regardless of the caller's grants. The test only caught
+          it because it queried the table directly.
+
+Change  : an explicit grant was added, so the behaviour no longer depends on
+          project defaults:
+
+            GRANT SELECT, INSERT, UPDATE ON public.invoice_sequences
+              TO authenticated;
+
+          Deliberately no DELETE. Removing a counter row would reset the
+          invoice series, which is the one thing Rule 46 numbering must never
+          allow.
+
+This is already inside APPLY_ALL_WHOLESALE_COMPLETE.sql. No separate query.
+
+
+================================================================================
+ 4. THINGS THAT LOOKED LIKE BUGS AND WERE NOT
+================================================================================
+
+Recorded so they are not "fixed" later by mistake.
+
+a) Three tests failed on the first run, and one errored. All four were defects
+   in my test harness, not in the application:
+     - the harness had not granted USAGE on the auth schema to the
+       `authenticated` role, which Supabase does grant. auth.uid() therefore
+       failed the moment a test switched role, making two valid inserts look
+       rejected.
+     - the duplicate-counter check grouped by (series, fy) instead of
+       (account_id, series, fy), so two tenants legitimately holding
+       WS/26-27 looked like a duplicate.
+   Both were fixed in the harness and all tests then passed. No application
+   code was changed on account of them.
+
+b) src/pages/Suppliers.tsx line 555 contains a U+FEFF character:
+       new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+   This is deliberate. It is a byte-order mark prepended to the CSV export so
+   Excel opens it as UTF-8. Removing it would cause the mangling it prevents.
+
+c) src/pages/PrintBill.tsx contains <td>&nbsp;</td>. That is a spacer cell in
+   the invoice table and renders correctly.
+
+
+================================================================================
+ 5. KNOWN LIMITS OF THIS TEST RUN
+================================================================================
+
+Stated plainly rather than implied.
+
+  * Testing was done at the database and code level. The browser driver used
+    earlier in this project is no longer available in this environment, so the
+    wholesale billing screen, the invoice print layout and the reports page
+    were NOT clicked through by machine. Their data contracts were verified;
+    their pixels were not.
+
+  * Worth doing by hand once, after running the SQL:
+      1. Raise a wholesale bill with a buyer GSTIN from ANOTHER state and
+         confirm the badge reads IGST and the invoice shows IGST.
+      2. Raise one with a GSTIN from YOUR state and confirm CGST+SGST.
+      3. Enter a buyer drug licence with a past expiry date and confirm the
+         amber "Expired" flag appears and does NOT block the sale.
+      4. Print the A4 invoice and confirm it shows: invoice number
+         WS/26-27/00001, buyer DL, place of supply, your DL with its form
+         type, FSSAI if set, and the Section 18/19 warranty in the footer.
+      5. Return part of that invoice and confirm the credit note prints with
+         the buyer's details and the correct reversal.
+      6. Open Customer Relation and confirm the wholesale buyer does NOT
+         appear there.
+
+  * Not built, and therefore not tested, because they are later phases of the
+    plan: the party master, the credit and outstanding ledger, invoice-level
+    atomicity (record_wholesale_sale), and the Schedule H1 register.
+
+================================================================================
+ END OF REPORT
+================================================================================

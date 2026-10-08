@@ -132,6 +132,18 @@ const expiryToDate = (input: string): string | null => {
   return `${year}-${m.padStart(2, '0')}-01`;
 };
 
+/** Months of shelf life left, or null when the expiry is blank or unparseable. */
+const monthsOfShelfLife = (input: string): number | null => {
+  const iso = expiryToDate(input);
+  if (!iso) return null;
+  const [y, m] = iso.split('-').map(Number);
+  const now = new Date();
+  return (y - now.getFullYear()) * 12 + (m - (now.getMonth() + 1));
+};
+
+/** Inward stock below this has to be confirmed before it is accepted. */
+const SHORT_EXPIRY_MONTHS = 6;
+
 /** Automatically insert '/' after MM when typing digits for MM/YY */
 const formatExpiryInput = (val: string, prev: string): string => {
   if (val.length < prev.length) return val;
@@ -681,10 +693,10 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                         </p>
                         {(parseFloat(row.rate) > 0 || parseFloat(row.mrp) > 0 || parseFloat(row.quantity) > 0 || row.finalAmount > 0) && (
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground ml-2 flex-wrap">
-                            {parseFloat(row.rate) > 0 && <span>Rate: <strong className="text-slate-700">₹{parseFloat(row.rate).toFixed(2)}</strong></span>}
-                            {parseFloat(row.mrp) > 0 && <span>MRP: <strong className="text-slate-700">₹{parseFloat(row.mrp).toFixed(2)}</strong></span>}
+                            {parseFloat(row.rate) > 0 && <span>Rate: <strong className="text-slate-700">&#8377;{parseFloat(row.rate).toFixed(2)}</strong></span>}
+                            {parseFloat(row.mrp) > 0 && <span>MRP: <strong className="text-slate-700">&#8377;{parseFloat(row.mrp).toFixed(2)}</strong></span>}
                             {parseFloat(row.quantity) > 0 && <span>Qty: <strong className="text-slate-700">{row.quantity}</strong></span>}
-                            {row.finalAmount > 0 && <span className="text-emerald-600 font-semibold">Amt: ₹{row.finalAmount.toFixed(2)}</span>}
+                            {row.finalAmount > 0 && <span className="text-emerald-600 font-semibold">Amt: &#8377;{row.finalAmount.toFixed(2)}</span>}
                           </div>
                         )}
                       </div>
@@ -780,7 +792,26 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                           onKeyDown={e => handleEnterNav(e, idx, 'expiry_date')}
                           placeholder="MM/YY"
                           maxLength={5}
-                          className={cn(cardInputCls, 'font-mono text-center')}
+                          title={
+                            (() => {
+                              const left = monthsOfShelfLife(row.expiry_date);
+                              if (left === null) return undefined;
+                              if (left < 0) return 'This batch has already expired';
+                              if (left < SHORT_EXPIRY_MONTHS) return `Only ${left} month(s) of shelf life left`;
+                              return undefined;
+                            })()
+                          }
+                          className={cn(
+                            cardInputCls,
+                            'font-mono text-center',
+                            (() => {
+                              const left = monthsOfShelfLife(row.expiry_date);
+                              if (left === null) return '';
+                              if (left < 0) return 'border-red-400 bg-red-50 text-red-900';
+                              if (left < SHORT_EXPIRY_MONTHS) return 'border-amber-400 bg-amber-50 text-amber-900';
+                              return '';
+                            })(),
+                          )}
                         />
                       </div>
                       <div className="flex flex-col gap-0.5">
@@ -913,7 +944,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel>Amount</FieldLabel>
                         <div className="h-7 flex items-center justify-end pr-2 text-xs text-slate-900 tabular-nums select-none font-bold border border-transparent rounded bg-white/60">
-                          {row.finalAmount > 0 ? `₹${row.finalAmount.toFixed(2)}` : '-'}
+                          {row.finalAmount > 0 ? `\u20B9${row.finalAmount.toFixed(2)}` : '-'}
                         </div>
                       </div>
                     </div>
@@ -1297,6 +1328,26 @@ export const MultiProductForm = ({
       if (expDate && expDate.substring(0, 7) < nowStr) {
         if (!silent) toast({ variant: 'destructive', title: 'Cannot save expired product', description: `${r.name} (${r.expiry_date}) is expired.` });
         return;
+      }
+    }
+
+    // Short-dated, not expired: confirm rather than block. Accepting stock with
+    // four months left can be a deliberate commercial decision; silently booking
+    // it in is what causes the write-off nobody saw coming.
+    if (!silent) {
+      const shortDated = toSave
+        .map(r => ({ name: r.name, left: monthsOfShelfLife(r.expiry_date) }))
+        .filter(r => r.left !== null && r.left >= 0 && r.left < SHORT_EXPIRY_MONTHS);
+
+      if (shortDated.length > 0) {
+        const lines = shortDated
+          .map(r => `${r.name}: ${r.left} month(s) left`)
+          .join('\n');
+        const ok = window.confirm(
+          `${shortDated.length} item(s) arrive with less than ${SHORT_EXPIRY_MONTHS} months of shelf life:\n\n` +
+          `${lines}\n\nAccept this stock anyway?`,
+        );
+        if (!ok) return;
       }
     }
 
@@ -1686,19 +1737,19 @@ export const MultiProductForm = ({
                 <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">
                   <span className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Gross Purchase</span>
-                  <span className="text-slate-800 font-bold tabular-nums text-sm">₹{totals.grossPurchase.toFixed(2)}</span>
+                  <span className="text-slate-800 font-bold tabular-nums text-sm">&#8377;{totals.grossPurchase.toFixed(2)}</span>
                 </div>
                 <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">
                   <span className="text-emerald-600 text-[10px] uppercase tracking-wider font-semibold">Discount</span>
-                  <span className="text-emerald-700 font-bold tabular-nums text-sm">₹{totals.totalDiscount.toFixed(2)}</span>
+                  <span className="text-emerald-700 font-bold tabular-nums text-sm">&#8377;{totals.totalDiscount.toFixed(2)}</span>
                 </div>
                 <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">
                   <span className="text-indigo-500 text-[10px] uppercase tracking-wider font-semibold">
                     GST {gstInclusive ? '(Incl.)' : '(Excl.)'}
                   </span>
-                  <span className="text-indigo-700 font-bold tabular-nums text-sm">₹{totals.totalGst.toFixed(2)}</span>
+                  <span className="text-indigo-700 font-bold tabular-nums text-sm">&#8377;{totals.totalGst.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -1710,7 +1761,7 @@ export const MultiProductForm = ({
                     Net Purchase
                   </span>
                   <div className="flex items-baseline gap-0.5 leading-tight">
-                    <span className="text-blue-600 text-xs font-medium">₹</span>
+                    <span className="text-blue-600 text-xs font-medium">&#8377;</span>
                     <span className="text-lg sm:text-xl font-bold tabular-nums text-blue-950">
                       {totals.netPurchaseAmount.toFixed(2)}
                     </span>

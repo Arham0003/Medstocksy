@@ -40,6 +40,7 @@ import {
   Truck,
   PackageX,
   FileStack,
+  Store,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -61,10 +62,18 @@ const ownerNavItems = [
 // Premium entry, appended only for accounts on a wholesale plan. It goes at the
 // END on purpose: every existing item keeps its number shortcut (1–9, 0), and
 // this one sits past the 10 the shortcut scheme covers.
-const wholesaleNavItem = { title: 'Wholesale Reports', icon: FileStack, href: '/wholesale-reports' };
+// Billing first, then reports: billing is the daily task and was previously
+// reachable only through a button on the Sales page.
+const wholesaleNavItems = [
+  { title: 'Wholesale Billing', icon: Store, href: '/wholesale' },
+  { title: 'Wholesale Reports', icon: FileStack, href: '/wholesale-reports' },
+];
+
+// Kept for the lock badge, which hangs off the reports entry.
+const wholesaleNavItem = wholesaleNavItems[1];
 
 // Every route that can supply a page title, gated or not.
-const allNavItems = [...ownerNavItems, wholesaleNavItem];
+const allNavItems = [...ownerNavItems, ...wholesaleNavItems];
 
 const extraRouteTitles: Record<string, string> = {
   '/record-sale': 'Record Sale',
@@ -248,7 +257,7 @@ export default function Layout() {
   // the plan exists but the Settings toggle is off.
   const { hasPlan: wholesalePlan, isActive: wholesaleActive } = useWholesaleAccess();
   const navItems = useMemo(
-    () => (wholesalePlan ? [...ownerNavItems, wholesaleNavItem] : ownerNavItems),
+    () => (wholesalePlan ? [...ownerNavItems, ...wholesaleNavItems] : ownerNavItems),
     [wholesalePlan]
   );
   const [accountName, setAccountName] = useState('My Store');

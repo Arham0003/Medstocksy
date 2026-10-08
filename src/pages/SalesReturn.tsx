@@ -226,8 +226,8 @@ export default function SalesReturn() {
                 toast({
                     title: 'Return processed (legacy mode)',
                     description: returnType === 'salable'
-                        ? `Refunded ₹${totalReturnAmount.toFixed(2)}. Stock restored.`
-                        : `Refunded ₹${totalReturnAmount.toFixed(2)}. Note: stock was restored - write-off routing needs the compliance migrations.`,
+                        ? `Refunded \u20B9${totalReturnAmount.toFixed(2)}. Stock restored.`
+                        : `Refunded \u20B9${totalReturnAmount.toFixed(2)}. Note: stock was restored - write-off routing needs the compliance migrations.`,
                 });
 
                 setIsReturnDialogOpen(false);
@@ -242,8 +242,8 @@ export default function SalesReturn() {
             toast({
                 title: "Return processed",
                 description: returnType === 'salable'
-                    ? `Refunded ₹${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Stock restored.`
-                    : `Refunded ₹${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Written off as ${returnType} - stock not restored.`,
+                    ? `Refunded \u20B9${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Stock restored.`
+                    : `Refunded \u20B9${totalReturnAmount.toFixed(2)} for ${returnQuantity} item(s). Written off as ${returnType} - stock not restored.`,
             });
 
             // Reset form and close dialog
@@ -615,7 +615,7 @@ export default function SalesReturn() {
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Unit ₹</p>
+                                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Unit &#8377;</p>
                                         <p className="text-sm font-medium mt-0.5">{formatINR(selectedSale.unit_price)}</p>
                                     </div>
                                     <div>

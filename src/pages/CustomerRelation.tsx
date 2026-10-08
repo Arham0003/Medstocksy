@@ -96,6 +96,9 @@ export default function CustomerRelation() {
           .from('sales')
           .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled')
           .eq('account_id', profile?.account_id)
+          // Retail only. Wholesale parties have no refill lifecycle, so they are
+          // permanently out of this screen rather than filtered in the UI.
+          .eq('sale_type', 'retail')
           .not('customer_phone', 'is', null)
           .neq('customer_phone', '')
           .order('created_at', { ascending: false });
@@ -106,6 +109,7 @@ export default function CustomerRelation() {
               .from('sales')
               .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled')
               .eq('account_id', profile?.account_id)
+              .eq('sale_type', 'retail')
               .not('customer_phone', 'is', null)
               .neq('customer_phone', '')
               .order('created_at', { ascending: false });
@@ -154,6 +158,9 @@ export default function CustomerRelation() {
         .from('sales')
         .delete()
         .eq('account_id', profile.account_id)
+        // Scoped to retail: a shared phone number must never let a CRM delete
+        // remove a wholesale tax invoice.
+        .eq('sale_type', 'retail')
         .eq('customer_phone', customerToDelete.phone);
 
       if (error) throw error;
@@ -212,7 +219,7 @@ export default function CustomerRelation() {
       
       toast({
         title: "Payment Recorded",
-        description: `Successfully recorded ₹${settlementAmount.toFixed(2)} for ${settlementCustomer.name}`,
+        description: `Successfully recorded \u20B9${settlementAmount.toFixed(2)} for ${settlementCustomer.name}`,
       });
       
       setIsSettleDialogOpen(false);
@@ -1084,7 +1091,7 @@ export default function CustomerRelation() {
             {/* Payment amount */}
             <div className="space-y-1.5">
               <Label htmlFor="paymentAmount" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Payment amount (₹)
+                Payment amount (&#8377;)
               </Label>
               <Input
                 id="paymentAmount"

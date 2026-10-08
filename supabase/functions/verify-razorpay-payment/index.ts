@@ -1,8 +1,12 @@
 // @ts-ignore
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { corsHeaders } from "../_shared/cors.ts"
 // @ts-ignore
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
 
 // Verifies a Razorpay payment and records it.
 //
@@ -89,7 +93,7 @@ serve(async (req: Request) => {
             console.error("Signature mismatch for order", razorpay_order_id)
             return new Response(
                 JSON.stringify({ error: "Payment could not be verified" }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 },
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 },
             )
         }
 
@@ -135,9 +139,10 @@ serve(async (req: Request) => {
         )
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
+        console.error("verify-razorpay-payment error:", message)
         return new Response(
             JSON.stringify({ error: message }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 },
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 },
         )
     }
 })

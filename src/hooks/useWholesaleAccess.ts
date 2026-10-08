@@ -38,9 +38,16 @@ export interface WholesaleAccess {
  * Mirrors public.plan_has_wholesale() in SQL. Paid wholesale plans, plus
  * wholesale trials granted from the admin panel. Keep the two in step.
  */
-export const planHasWholesale = (plan: string | null | undefined): boolean =>
-  !!plan && (plan === 'wholesale_monthly' || plan === 'wholesale_annual'
-             || plan.startsWith('trial_wholesale_'));
+export const planHasWholesale = (plan: string | null | undefined): boolean => {
+  if (!plan) return false;
+  const p = plan.trim().toLowerCase();
+  return (
+    p === 'wholesale_monthly' ||
+    p === 'wholesale_annual' ||
+    p.includes('wholesale') ||
+    p.startsWith('trial_wholesale')
+  );
+};
 
 const UNKNOWN: WholesaleAccess = { hasPlan: false, isActive: false, loading: true, viaAdmin: false, needsMigration: false };
 const NO_ACCESS: WholesaleAccess = { hasPlan: false, isActive: false, loading: false, viaAdmin: false, needsMigration: false };
@@ -60,8 +67,8 @@ function publish(value: WholesaleAccess) {
 async function load(userId: string, accountId: string): Promise<WholesaleAccess> {
   try {
     const [subRes, settingsRes, adminRes] = await Promise.all([
-      db.from('subscriptions').select('status, plan_type').eq('user_id', userId).single(),
-      db.from('settings').select('wholesale_mode').eq('account_id', accountId).single(),
+      db.from('subscriptions').select('status, plan_type').eq('user_id', userId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      db.from('settings').select('wholesale_mode').eq('account_id', accountId).maybeSingle(),
       // Platform admins own the product, so they do not have to buy it from
       // themselves. Absent before the admin migration, which is not an error.
       db.rpc('is_platform_admin'),
@@ -75,9 +82,11 @@ async function load(userId: string, accountId: string): Promise<WholesaleAccess>
     // The column arrives with 20260918000000. Its absence is why the toggle
     // would otherwise refuse to stick, so surface it rather than failing mute.
     const settingsRow = settingsRes?.data as { wholesale_mode?: boolean } | null;
+    const hasWholesaleCol = settingsRow != null && 'wholesale_mode' in settingsRow;
     const needsMigration =
-      Boolean(settingsRes?.error) ||
-      (settingsRow != null && !('wholesale_mode' in settingsRow));
+      !hasWholesaleCol &&
+      (settingsRes?.error?.code === '42703' ||
+        Boolean(settingsRes?.error?.message?.toLowerCase().includes('wholesale_mode')));
 
     const hasPlan = paidPlan || viaAdmin;
 

@@ -1,14 +1,17 @@
 // @ts-ignore
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { corsHeaders } from "../_shared/cors.ts"
 // @ts-ignore
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+
+const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
 
 console.log("Create Razorpay Order Function Invoked")
 
 // @ts-ignore
 serve(async (req: any) => {
-    // Handle CORS preflight request
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders })
     }
@@ -20,26 +23,33 @@ serve(async (req: any) => {
 
         console.log(`Processing order for plan: ${planName}, isAnnual: ${isAnnualPlan}, coupon: ${couponCode || 'none'}`);
 
-        // Define Plan Details (Could also be fetched from DB)
-        let baseAmount = 0;
-        if (planName === 'Professional') {
-            if (isAnnualPlan) {
-                baseAmount = 600000; // ₹6000.00 in paise for Professional Annual
-            } else {
-                baseAmount = 49900; // ₹499.00 in paise for Professional Monthly
-            }
-        } else if (planName === 'Professional + Wholesale') {
-            if (isAnnualPlan) {
-                baseAmount = 720000; // ₹7,200.00 in paise for Professional + Wholesale Annual
-            } else {
-                baseAmount = 59900; // ₹599.00 in paise for Professional + Wholesale Monthly
-            }
-        } else if (planName === 'Testing Plan') {
-            baseAmount = 5000; // Fixed ₹50.00 in paise for Testing Plan
-        } else {
+        // Identify the buyer early so we can store order_id → user_id for the webhook.
+        // @ts-ignore
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+        // @ts-ignore
+        const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!
+        const authHeader = req.headers.get('Authorization') ?? ''
+        const asUser = createClient(supabaseUrl, anonKey, {
+            global: { headers: { Authorization: authHeader } },
+        })
+        const { data: { user }, error: userErr } = await asUser.auth.getUser()
+        if (userErr || !user) throw new Error('Not signed in')
+
+        // Plan amount + type derived together so they stay in sync.
+        // planType is stored in subscriptions so the webhook can look it up
+        // regardless of the final charged amount (coupons can change amount).
+        const PLAN_LOOKUP: Record<string, { baseAmount: number; monthly: string; annual: string; monthlyDays: number; annualDays: number }> = {
+            'Professional':           { baseAmount: isAnnualPlan ? 600000 : 49900, monthly: 'professional_monthly', annual: 'professional_annual', monthlyDays: 30, annualDays: 365 },
+            'Professional + Wholesale': { baseAmount: isAnnualPlan ? 720000 : 59900, monthly: 'wholesale_monthly',      annual: 'wholesale_annual',      monthlyDays: 30, annualDays: 365 },
+            'Testing Plan':           { baseAmount: 5000,                           monthly: 'testing_weekly',         annual: 'testing_weekly',         monthlyDays: 7,  annualDays: 7   },
+        }
+        const planEntry = PLAN_LOOKUP[planName]
+        if (!planEntry) {
             console.error(`Invalid plan name received: ${planName}`);
             throw new Error("Invalid Plan Selected");
         }
+        let baseAmount = planEntry.baseAmount;
+        const planType = isAnnualPlan ? planEntry.annual : planEntry.monthly;
 
         console.log(`Base amount: ${baseAmount} paise`);
 
@@ -53,19 +63,15 @@ serve(async (req: any) => {
             throw new Error("Razorpay Server Keys not configured")
         }
 
+        // Admin client for coupon lookup and order anchoring.
+        // @ts-ignore
+        const supabaseAdmin = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
         // --- Coupon Validation ---
         let finalAmount = baseAmount;
         let discountApplied: { code: string; type: string; value: number; savedPaise: number } | null = null;
 
         if (couponCode && couponCode.trim() !== '') {
-            // @ts-ignore
-            const supabaseAdmin = createClient(
-                // @ts-ignore
-                Deno.env.get('SUPABASE_URL')!,
-                // @ts-ignore
-                Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-            )
-
             const { data: coupon, error: couponErr } = await supabaseAdmin
                 .from('coupons')
                 .select('*')
@@ -113,19 +119,22 @@ serve(async (req: any) => {
         }
 
         // Create Order via Razorpay API
-        const authHeader = `Basic ${btoa(`${key_id}:${key_secret}`)}`
+        const razorpayAuth = `Basic ${btoa(`${key_id}:${key_secret}`)}`
 
         const response = await fetch('https://api.razorpay.com/v1/orders', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': authHeader
+                'Authorization': razorpayAuth
             },
-            body: JSON.stringify({
+                    body: JSON.stringify({
                 amount: finalAmount,
                 currency: "INR",
                 receipt: `receipt_${Date.now()}`,
-                payment_capture: 1
+                payment_capture: 1,
+                // Store plan_type in notes so the webhook has a second source of truth
+                // even if the subscriptions lookup fails.
+                notes: { plan_type: planType, is_annual: String(isAnnualPlan) },
             })
         })
 
@@ -133,6 +142,22 @@ serve(async (req: any) => {
 
         if (orderData.error) {
             throw new Error(orderData.error.description || "Razorpay API Error")
+        }
+
+        // Anchor order_id → user_id so the webhook can find the buyer
+        // even if the browser tab closes before verify-razorpay-payment fires.
+        // For existing subscribers: only update razorpay_order_id (don't touch plan/status).
+        // For new users: insert a minimal pending row; verify will overwrite with real values.
+        const { error: insertErr } = await supabaseAdmin
+            .from('subscriptions')
+            .insert({ user_id: user.id, razorpay_order_id: orderData.id, plan_type: planType, status: 'pending' })
+
+        if (insertErr) {
+            // Row already exists (existing subscriber) — stamp the new order_id and planType.
+            await supabaseAdmin
+                .from('subscriptions')
+                .update({ razorpay_order_id: orderData.id, plan_type: planType })
+                .eq('user_id', user.id)
         }
 
         return new Response(

@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+﻿import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,15 +24,12 @@ import {
   CircleDollarSign,
   ShieldCheck,
   Clock,
-  Diamond,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { GST_STATE_CODES } from '@/lib/gst';
-import { useWholesaleAccess, refreshWholesaleAccess } from '@/hooks/useWholesaleAccess';
-import { PremiumBadge } from '@/components/PremiumBadge';
 
 interface Settings {
   id: string;
@@ -43,7 +39,6 @@ interface Settings {
   gst_type?: string;
   whatsapp_custom_note?: string | null;
   sales_edit_window_hours?: number | null;
-  wholesale_mode?: boolean | null;
 }
 
 interface Account {
@@ -114,19 +109,10 @@ export default function Settings() {
   const [gstTypeState, setGstTypeState] = useState<'exclusive' | 'inclusive'>('exclusive');
   const [gstEnabledState, setGstEnabledState] = useState<boolean>(false);
   // Account-level GST identity. is_interstate_billing decides CGST+SGST vs
-  // IGST for every bill - there is no per-bill override by design.
+  // IGST for every bill ΓÇö there is no per-bill override by design.
   const [stateCodeState, setStateCodeState] = useState<string>('');
   const [dlFormTypeState, setDlFormTypeState] = useState<string>('');
   const [interstateState, setInterstateState] = useState<boolean>(false);
-  // Wholesale mode. hasPlan decides whether the toggle is shown at all; the
-  // toggle itself is what actually unlocks wholesale across the app.
-  const {
-    hasPlan,
-    loading: wholesaleLoading,
-    viaAdmin: wholesaleViaAdmin,
-    needsMigration: wholesaleNeedsMigration,
-  } = useWholesaleAccess();
-  const [wholesaleModeState, setWholesaleModeState] = useState<boolean>(false);
 
   const fetchData = async () => {
     try {
@@ -154,8 +140,6 @@ export default function Settings() {
         setGstTypeState(settingsRaw.gst_type);
       }
       setGstEnabledState(Boolean(settingsRaw?.gst_enabled));
-      // Added by 20260918000000_add_wholesale_fields.sql; absent on older databases.
-      setWholesaleModeState(Boolean(settingsRaw?.wholesale_mode));
 
       // Added by 20260910000000_create_hsn_codes.sql; absent on older databases.
       const accountRaw: any = accountRes.data;
@@ -277,7 +261,7 @@ export default function Settings() {
 
     try {
       // Core columns always exist; the optional ones need later migrations.
-      // gst_type is in core - it exists since the earliest migrations and must always be saved.
+      // gst_type is in core ΓÇö it exists since the earliest migrations and must always be saved.
       // sales_edit_window_hours was added later and is the only truly optional field.
       const core: any = {
         currency,
@@ -286,11 +270,7 @@ export default function Settings() {
         gst_type: gstType,
         whatsapp_custom_note: whatsappCustomNote,
       };
-      const withOptional = {
-        ...core,
-        sales_edit_window_hours: salesEditWindowHours,
-        wholesale_mode: wholesaleModeState,
-      };
+      const withOptional = { ...core, sales_edit_window_hours: salesEditWindowHours };
 
       const { error } = await supabase
         .from('settings')
@@ -298,7 +278,7 @@ export default function Settings() {
         .eq('account_id', profile?.account_id);
 
       if (error) {
-        // A newer column (gst_type / sales_edit_window_hours) may not exist yet → save the core fields.
+        // A newer column (gst_type / sales_edit_window_hours) may not exist yet ΓåÆ save the core fields.
         const { error: retryError } = await supabase
           .from('settings')
           .update(core)
@@ -315,9 +295,6 @@ export default function Settings() {
         });
       }
 
-      // Wholesale mode may have flipped - re-read it so the sidebar entry and
-      // the Sales button update without a reload.
-      refreshWholesaleAccess();
       fetchData();
     } catch (error: any) {
       toast({
@@ -548,7 +525,7 @@ export default function Settings() {
                       <SelectContent className="max-h-72">
                         {GST_STATE_CODES.map((s) => (
                           <SelectItem key={s.code} value={s.code}>
-                            {s.code} - {s.name}
+                            {s.code} ΓÇö {s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -562,7 +539,7 @@ export default function Settings() {
                     <div className="space-y-1">
                       <FieldLabel htmlFor="interstateBilling" icon={Receipt}>Interstate billing (IGST)</FieldLabel>
                       <p className="text-xs text-muted-foreground">
-                        Off - every bill is taxed as CGST + SGST. Turn this on only if you
+                        Off ΓÇö every bill is taxed as CGST + SGST. Turn this on only if you
                         invoice hospitals or institutions in another state; all bills then
                         carry IGST instead.
                       </p>
@@ -583,7 +560,7 @@ export default function Settings() {
                       {saving ? (
                         <div className="flex items-center gap-2">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                          Saving…
+                          SavingΓÇª
                         </div>
                       ) : (
                         'Save Store Info'
@@ -653,7 +630,7 @@ export default function Settings() {
                     </p>
                   </div>
 
-                  {/* GST enable - big clickable toggle card */}
+                  {/* GST enable ΓÇö big clickable toggle card */}
                   <button
                     type="button"
                     role="switch"
@@ -775,74 +752,6 @@ export default function Settings() {
                     <input type="hidden" name="gstType" value={gstTypeState} />
                   </div>
 
-                  {/* ── Wholesale mode ───────────────────────────────────
-                      Shown to everyone: subscribers get the switch, everyone
-                      else gets the upgrade line so the feature is discoverable. */}
-                  <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-4 space-y-3">
-                    <div className="flex items-start gap-3">
-                      <div className="p-2 rounded-lg shrink-0 bg-violet-100 text-violet-600">
-                        <Diamond className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-900 text-sm sm:text-base">Wholesale Mode</p>
-                        <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-                          Enable wholesale billing, B2B invoicing, and free-qty schemes across the app.
-                        </p>
-                      </div>
-                    </div>
-
-                    {wholesaleLoading ? (
-                      <div className="h-10 w-full bg-violet-100/60 animate-pulse rounded-lg" />
-                    ) : wholesaleNeedsMigration ? (
-                      /* The column is missing, so the toggle could be flipped but
-                         would never save. Say so instead of failing silently. */
-                      <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
-                        <ShieldCheck className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                        <p className="text-sm text-amber-900">
-                          Wholesale needs a database update before this can be switched on. Run{' '}
-                          <code className="text-xs bg-amber-100 px-1 py-0.5 rounded">supabase/APPLY_ALL_wholesale.sql</code>{' '}
-                          in the Supabase SQL editor, then reload this page.
-                        </p>
-                      </div>
-                    ) : !hasPlan ? (
-                      <div className="flex items-start gap-3 p-3 rounded-lg bg-white border border-violet-100">
-                        <PremiumBadge />
-                        <div className="text-sm text-violet-700">
-                          <p>
-                            Wholesale billing is a premium feature.{' '}
-                            <Link to="/pricing" className="underline font-medium">Upgrade your plan &rarr;</Link>
-                          </p>
-                          <p className="text-xs text-violet-500 mt-1">
-                            This account has no active wholesale plan. Platform admins get it automatically;
-                            you can also assign one from Admin Control.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-white border border-violet-100">
-                        <div className="min-w-0">
-                          <Label htmlFor="wholesaleMode" className="text-sm font-medium text-slate-800 cursor-pointer">
-                            Enable Wholesale Mode
-                          </Label>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            Shows wholesale billing, B2B fields, and the free-qty column.
-                          </p>
-                          {wholesaleViaAdmin && (
-                            <p className="text-xs text-violet-600 mt-1">
-                              Available because this account is a platform admin, not through a subscription.
-                            </p>
-                          )}
-                        </div>
-                        <Switch
-                          id="wholesaleMode"
-                          checked={wholesaleModeState}
-                          onCheckedChange={setWholesaleModeState}
-                          aria-label="Enable Wholesale Mode"
-                        />
-                      </div>
-                    )}
-                  </div>
-
                   <div className="flex justify-end pt-2 border-t border-slate-100">
                     <Button
                       type="submit"
@@ -852,7 +761,7 @@ export default function Settings() {
                       {saving ? (
                         <div className="flex items-center gap-2">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                          Saving…
+                          SavingΓÇª
                         </div>
                       ) : (
                         'Save Tax Settings'
@@ -918,7 +827,7 @@ export default function Settings() {
                     <div className="rounded-lg bg-white border border-violet-100 p-3 text-sm text-slate-700 whitespace-pre-wrap min-h-[64px]">
                       {settings?.whatsapp_custom_note?.trim()
                         ? settings.whatsapp_custom_note
-                        : <span className="italic text-muted-foreground">No custom note set - messages will start with the bill summary.</span>}
+                        : <span className="italic text-muted-foreground">No custom note set ΓÇö messages will start with the bill summary.</span>}
                     </div>
                   </div>
 
@@ -931,7 +840,7 @@ export default function Settings() {
                       {saving ? (
                         <div className="flex items-center gap-2">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                          Saving…
+                          SavingΓÇª
                         </div>
                       ) : (
                         'Save Notifications'
@@ -981,7 +890,7 @@ export default function Settings() {
                       <Store className="h-3.5 w-3.5" />
                       Store
                     </div>
-                    <p className="text-sm font-medium text-slate-900 truncate">{account?.name || '-'}</p>
+                    <p className="text-sm font-medium text-slate-900 truncate">{account?.name || 'ΓÇö'}</p>
                   </div>
                   <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">

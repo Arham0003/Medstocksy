@@ -453,7 +453,7 @@ export default function WholesaleReports() {
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
         <DashboardStatCard
           title="Wholesale Revenue"
-          value={loading ? '-' : `₹${stats.revenue.toFixed(2)}`}
+          value={loading ? '-' : `\u20B9${stats.revenue.toFixed(2)}`}
           icon={TrendingUp}
           variant="primary"
           description="Total billed in range"
@@ -467,14 +467,14 @@ export default function WholesaleReports() {
         />
         <DashboardStatCard
           title="Taxable Value"
-          value={loading ? '-' : `₹${stats.taxable.toFixed(2)}`}
+          value={loading ? '-' : `\u20B9${stats.taxable.toFixed(2)}`}
           icon={Building2}
           variant="default"
           description="Before GST"
         />
         <DashboardStatCard
           title="GST Collected"
-          value={loading ? '-' : `₹${stats.gst.toFixed(2)}`}
+          value={loading ? '-' : `\u20B9${stats.gst.toFixed(2)}`}
           icon={Percent}
           variant="success"
           description="Output tax in range"
@@ -546,9 +546,9 @@ export default function WholesaleReports() {
                           ? <span className="font-semibold text-violet-700">{b.freeUnits}</span>
                           : <span className="text-muted-foreground">-</span>}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">₹{b.taxable.toFixed(2)}</TableCell>
-                      <TableCell className="text-right tabular-nums">₹{b.gst.toFixed(2)}</TableCell>
-                      <TableCell className="text-right tabular-nums font-semibold">₹{b.total.toFixed(2)}</TableCell>
+                      <TableCell className="text-right tabular-nums">&#8377;{b.taxable.toFixed(2)}</TableCell>
+                      <TableCell className="text-right tabular-nums">&#8377;{b.gst.toFixed(2)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">&#8377;{b.total.toFixed(2)}</TableCell>
                       <TableCell className="hidden sm:table-cell capitalize">{b.payment_mode}</TableCell>
                       <TableCell>
                         {b.bill_id && (

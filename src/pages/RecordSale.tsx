@@ -15,7 +15,7 @@ import {
   CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Zap, Diamond
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { calcGst } from '@/lib/gst';
+import { calcGst, splitGst } from '@/lib/gst';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
 import { billDataPrefix, clearBillData } from '@/hooks/useBillSessions';
 import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
@@ -98,8 +98,11 @@ interface BillRow {
   batchOptions: StockBatch[];
 }
 
+// ponytail: crypto.randomUUID requires a secure context; fall back to Math.random for HTTP dev/LAN access.
+const uuid = () => crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 const EMPTY_ROW = (): BillRow => ({
-  uid: crypto.randomUUID(),
+  uid: uuid(),
   productId: '',
   productName: '',
   stock: 0,
@@ -132,7 +135,7 @@ function calcAmount(row: BillRow, settings: Settings | null): number {
 
   // Add loose portion if pcs is provided
   if (subQty !== '' && Number(subQty) > 0 && pcsPerUnit > 0) {
-    gross += (rate / pcsPerUnit) * Number(subQty);
+    gross += (rate * Number(subQty)) / pcsPerUnit;
   }
 
   const discountAmt = (gross * discount) / 100;
@@ -224,6 +227,11 @@ export default function RecordSale({
   const [wholesaleDl, setWholesaleDl] = useState<string>(hydrated?.wholesaleDl ?? '');
   const [wholesaleDlExpiry, setWholesaleDlExpiry] = useState<string>(hydrated?.wholesaleDlExpiry ?? '');
   const [shipToAddress, setShipToAddress] = useState<string>(hydrated?.shipToAddress ?? '');
+  // Salesman who closed the deal - for commission tracking and accountability.
+  const [salesmanName, setSalesmanName] = useState<string>(hydrated?.salesmanName ?? '');
+  const [salesmanPhone, setSalesmanPhone] = useState<string>(hydrated?.salesmanPhone ?? '');
+  // Customer classification (Normal / Distributor / Chemist / Hospital / Retailer).
+  const [customerType, setCustomerType] = useState<string>(hydrated?.customerType ?? '');
   // The seller's own state code decides CGST+SGST against IGST per buyer.
   const [sellerStateCode, setSellerStateCode] = useState<string>('');
   const [billDate, setBillDate] = useState<string>(hydrated?.billDate ?? new Date().toISOString().split('T')[0]);
@@ -369,6 +377,13 @@ export default function RecordSale({
   const dateRef = useRef<HTMLInputElement>(null);
   const prescRef = useRef<HTMLInputElement>(null);
   const takenRef = useRef<HTMLInputElement>(null);
+  const wholesaleGstinRef = useRef<HTMLInputElement>(null);
+  const wholesaleDlRef = useRef<HTMLInputElement>(null);
+  const wholesaleDlExpiryRef = useRef<HTMLInputElement>(null);
+  const shipToAddressRef = useRef<HTMLInputElement>(null);
+  const salesmanNameRef = useRef<HTMLInputElement>(null);
+  const salesmanPhoneRef = useRef<HTMLInputElement>(null);
+  const customerTypeRef = useRef<HTMLSelectElement>(null);
   const masterSearchRef = useRef<HTMLInputElement>(null);
   const masterDropdownRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<string, Map<string, GridField>>>(new Map());
@@ -604,7 +619,7 @@ export default function RecordSale({
   // Enter in a patient-detail field → focus the next field (or the master search).
   // Enter → next field, Shift+Enter → previous field (bidirectional chain).
   const enterTo = (nextRef: React.RefObject<HTMLElement | null>, prevRef?: React.RefObject<HTMLElement | null>) =>
-    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    (e: ReactKeyboardEvent<any>) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
       const target = e.shiftKey ? prevRef : nextRef;
@@ -687,7 +702,7 @@ export default function RecordSale({
       const newRows: BillRow[] = selectedItems.map(item => {
         const liveProduct = products.find(p => p.id === item.product_id);
         const row: BillRow = {
-          uid: crypto.randomUUID(),
+          uid: uuid(),
           productId: item.product_id,
           productName: item.product_name,
           stock: liveProduct?.quantity ?? 0,
@@ -919,7 +934,7 @@ export default function RecordSale({
   const addProductFromMasterSearch = useCallback((product: Product) => {
     const gstRate = product.gst ?? settings?.default_gst_rate ?? 0;
     const newRow: BillRow = {
-      uid: crypto.randomUUID(),
+      uid: uuid(),
       productId: product.id,
       productName: product.name,
       stock: product.quantity,
@@ -998,7 +1013,7 @@ export default function RecordSale({
       // Full strips + loose tablets
       let gross = row.rate * row.qty;
       if (row.subQty !== '' && Number(row.subQty) > 0 && row.pcsPerUnit > 0) {
-        gross += (row.rate / row.pcsPerUnit) * Number(row.subQty);
+        gross += (row.rate * Number(row.subQty)) / row.pcsPerUnit;
       }
 
       // Per-row discount
@@ -1088,11 +1103,13 @@ export default function RecordSale({
         customerName, customerPhone, customerAddress, doctorName, billDate,
         prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
         editBillId, wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress,
+        salesmanName, salesmanPhone, customerType,
       }));
     } catch { /* ignore quota errors */ }
   }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
       prescriptionMonths, monthsTaken, rows, paymentMode, receivedAmount, globalDiscount,
-      wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress, isWholesale]);
+      wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress, isWholesale,
+      salesmanName, salesmanPhone, customerType]);
 
   // ─── Quick Add: add a freshly created product straight into this bill ────
   const handleQuickAddSaved = useCallback((product: Product, qty: number) => {
@@ -1102,7 +1119,7 @@ export default function RecordSale({
 
     const gstRate = product.gst ?? settings?.default_gst_rate ?? 0;
     const newRow: BillRow = {
-      uid: crypto.randomUUID(),
+      uid: uuid(),
       productId: product.id,
       productName: product.name,
       stock: product.quantity,
@@ -1180,7 +1197,7 @@ export default function RecordSale({
 
     try {
       // Editing an existing bill → reuse its id (same invoice); otherwise a new bill.
-      const billId = editBillId || crypto.randomUUID();
+      const billId = editBillId || uuid();
       const isGstInclusive = settings?.gst_type === 'inclusive';
 
       // CGST Rule 46 wants a unique sequential number per financial year, and a
@@ -1216,7 +1233,7 @@ export default function RecordSale({
       }
 
       // receivedNum = how much the customer actually paid right now (can be 0 for pure credit,
-      // or a partial amount even on credit mode - e.g. ₹200 upfront on a ₹500 credit sale)
+      // or a partial amount even on credit mode - e.g. \u20B9200 upfront on a \u20B9500 credit sale)
       const receivedNum = receivedAmount !== '' ? Number(receivedAmount) : 0;
 
       // Settled = fully paid (applies to ALL modes including credit with full upfront payment)
@@ -1226,7 +1243,7 @@ export default function RecordSale({
         // Full strips + loose tablets
         let gross = row.rate * row.qty;
         if (row.subQty !== '' && Number(row.subQty) > 0 && row.pcsPerUnit > 0) {
-          gross += (row.rate / row.pcsPerUnit) * Number(row.subQty);
+          gross += (row.rate * Number(row.subQty)) / row.pcsPerUnit;
         }
 
         // Per-row discount
@@ -1237,21 +1254,34 @@ export default function RecordSale({
         const globalDiscAmt = (net * globalDiscount) / 100;
         const netAfterAll = net - globalDiscAmt;
 
-        let finalGst = 0;
+        // Indian GST sequence (CGST Act, Rule 33):
+        // 1. Gross inclusive amount = qty × rate (inclusive)
+        // 2. Net inclusive amount   = gross − line_discount − global_discount  (= netAfterAll)
+        // 3. Taxable value          = net_inclusive / (1 + rate/100)
+        // 4. CGST = Round(taxable × cgst_rate/100, 2)
+        // 5. SGST = Round(taxable × sgst_rate/100, 2)
+        // 6. Final payable          = taxable + CGST + SGST
         let finalTotal = netAfterAll;
+        let split = { taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0, rate: 0, gross: netAfterAll };
 
         if (settings?.gst_enabled) {
+          // Step 3: extract taxable from post-discount inclusive net
           const gstResult = calcGst(netAfterAll, row.gst, isGstInclusive);
-          finalGst = gstResult.gstAmount;
-          finalTotal = gstResult.totalPrice;
+          const taxableRounded = Math.round(gstResult.taxableValue * 100) / 100;
+          // Steps 4-5: independently round each component from the taxable base
+          split = splitGst(taxableRounded, row.gst, effectiveInterstate);
+          // Step 6: payable = taxable + total_tax (split.gross)
+          finalTotal = isGstInclusive ? netAfterAll : split.gross;
+        } else {
+          split = { taxable: netAfterAll, cgst: 0, sgst: 0, igst: 0, total: 0, rate: row.gst, gross: netAfterAll };
         }
 
         const hasSubQty = row.subQty !== '' && Number(row.subQty) > 0;
         const totalPriceRounded = Math.round(finalTotal);
-        
+
         // received_amount per row, distributed proportionally:
         // - Pure credit (receivedNum=0) → 0 per row → full due shows in CustomerRelation
-        // - Partial upfront (e.g. ₹200 of ₹500) → proportional per row → ₹300 due shows
+        // - Partial upfront (e.g. \u20B9200 of \u20B9500) → proportional per row → \u20B9300 due shows
         // - Full payment → match total_price exactly to avoid rounding dust
         let rowReceivedAmount = 0;
         if (isFullPayment) {
@@ -1261,12 +1291,6 @@ export default function RecordSale({
           rowReceivedAmount = receivedNum * (finalTotal / totals.grandTotal);
         }
         // else receivedNum === 0 → rowReceivedAmount stays 0 (pure credit, nothing paid)
-
-        // GST breakup for GSTR-1. finalGst is the tax actually charged on
-        // this line after both discounts, so it is apportioned rather than
-        // recomputed - recomputing taxable x rate would drift by paise.
-        const taxableValue = isGstInclusive ? netAfterAll - finalGst : netAfterAll;
-        const split = apportionGst(finalGst, effectiveInterstate);
 
         return {
           account_id: profile?.account_id,
@@ -1278,8 +1302,8 @@ export default function RecordSale({
           pcs_per_unit: hasSubQty ? row.pcsPerUnit : null,
           unit_price: Math.round(row.rate * 100) / 100,
           total_price: totalPriceRounded,
-          gst_amount: Math.round(finalGst * 100) / 100,
-          taxable_value: Math.round(taxableValue * 100) / 100,
+          gst_amount: split.total,
+          taxable_value: split.taxable,
           gst_rate: row.gst,
           cgst_amount: split.cgst,
           sgst_amount: split.sgst,
@@ -1293,8 +1317,10 @@ export default function RecordSale({
           customer_address: customerAddress || null,
           doctor_name: isWholesale ? null : (doctorName || null),
           sale_date: billDate,
-          prescription_months: prescriptionMonths === '' ? null : Number(prescriptionMonths),
-          months_taken: monthsTaken === '' ? null : Number(monthsTaken),
+          // Prescription tracking is retail-only (refill cycle for chronic patients).
+          // Wholesale goes to distributors/chemists - no prescriber, no refill concept.
+          prescription_months: isWholesale ? null : (prescriptionMonths === '' ? null : Number(prescriptionMonths)),
+          months_taken: isWholesale ? null : (monthsTaken === '' ? null : Number(monthsTaken)),
           discount_percentage: row.discount + globalDiscount,
           received_amount: Math.round(rowReceivedAmount * 100) / 100,
           // Settled when customer has paid the full amount (works for all payment modes)
@@ -1309,14 +1335,17 @@ export default function RecordSale({
           buyer_state_code: isWholesale ? (buyerStateCode.length === 2 ? buyerStateCode : null) : null,
           ship_to_address: isWholesale ? (shipToAddress.trim() || null) : null,
           bill_serial: billSerial,
+          salesman_name: salesmanName.trim() || null,
+          salesman_phone: salesmanPhone.trim() || null,
+          customer_type: customerType.trim() || null,
           is_free: false,
         };
       });
 
-      // Free / scheme quantity rides along as its own ₹0 line on the same bill
+      // Free / scheme quantity rides along as its own \u20B90 line on the same bill
       // (the Marg/Vyapar convention). Two reasons it is a separate row rather
       // than being folded into `quantity`:
-      //   • the invoice must show it at ₹0 without distorting unit_price
+      //   • the invoice must show it at \u20B90 without distorting unit_price
       //   • the AFTER INSERT stock trigger deducts NEW.quantity, so the giveaway
       //     leaves inventory exactly like any other line
       const freeRowsToInsert = isWholesale
@@ -1360,6 +1389,9 @@ export default function RecordSale({
               buyer_state_code: buyerStateCode.length === 2 ? buyerStateCode : null,
               ship_to_address: shipToAddress.trim() || null,
               bill_serial: billSerial,
+              salesman_name: salesmanName.trim() || null,
+              salesman_phone: salesmanPhone.trim() || null,
+              customer_type: customerType.trim() || null,
               // Without this a scheme giveaway is indistinguishable from a
               // genuine zero-value sale, and per-party margin is wrong by
               // exactly the free quantity.
@@ -1480,7 +1512,7 @@ export default function RecordSale({
       setIsSaving(false);
     }
   }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, prescriptionMonths, monthsTaken, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
-      wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode]);
+      wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode, salesmanName, salesmanPhone, customerType]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
   useEffect(() => {
@@ -1928,7 +1960,7 @@ export default function RecordSale({
                       const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
                       setCustomerPhone(digits ? '+91' + digits : '');
                     }}
-                    onKeyDown={enterTo(isWholesale ? addressRef : doctorRef, patientNameRef)}
+                    onKeyDown={enterTo(isWholesale ? wholesaleGstinRef : doctorRef, patientNameRef)}
                     inputMode="numeric"
                     maxLength={10}
                     placeholder="10-digit mobile"
@@ -1946,7 +1978,7 @@ export default function RecordSale({
                     ref={doctorRef}
                     value={doctorName}
                     onChange={e => setDoctorName(e.target.value)}
-                    onKeyDown={enterTo(addressRef, phoneRef)}
+                    onKeyDown={enterTo(customerTypeRef, phoneRef)}
                     placeholder="Name"
                     className={patientFieldCls}
                   />
@@ -1958,8 +1990,10 @@ export default function RecordSale({
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">GSTIN</span>
                   <input
+                    ref={wholesaleGstinRef}
                     value={wholesaleGstin}
                     onChange={e => setWholesaleGstin(e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 15))}
+                    onKeyDown={enterTo(wholesaleDlRef, phoneRef)}
                     placeholder="15-character GSTIN"
                     maxLength={15}
                     autoComplete="off"
@@ -1991,8 +2025,10 @@ export default function RecordSale({
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL No</span>
                   <input
+                    ref={wholesaleDlRef}
                     value={wholesaleDl}
                     onChange={e => setWholesaleDl(e.target.value.toUpperCase().slice(0, 40))}
+                    onKeyDown={enterTo(wholesaleDlExpiryRef, wholesaleGstinRef)}
                     placeholder="Buyer drug license"
                     autoComplete="off"
                     title="Buyer drug license number - required on a wholesale invoice"
@@ -2007,9 +2043,11 @@ export default function RecordSale({
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL Exp</span>
                   <input
+                    ref={wholesaleDlExpiryRef}
                     type="date"
                     value={wholesaleDlExpiry}
                     onChange={e => setWholesaleDlExpiry(e.target.value)}
+                    onKeyDown={enterTo(shipToAddressRef, wholesaleDlRef)}
                     title="Buyer drug license expiry"
                     className={cn(patientFieldCls, dlExpired && 'ring-1 ring-amber-400 bg-amber-50')}
                   />
@@ -2027,13 +2065,68 @@ export default function RecordSale({
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Ship To</span>
                   <input
+                    ref={shipToAddressRef}
                     value={shipToAddress}
                     onChange={e => setShipToAddress(e.target.value)}
+                    onKeyDown={enterTo(salesmanNameRef, wholesaleDlExpiryRef)}
                     placeholder="Only if different from billing address"
                     className={patientFieldCls}
                   />
                 </div>
               )}
+
+              {/* Salesman name - who closed the deal (commission / accountability). */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Salesman</span>
+                  <input
+                    ref={salesmanNameRef}
+                    value={salesmanName}
+                    onChange={e => setSalesmanName(e.target.value)}
+                    onKeyDown={enterTo(salesmanPhoneRef, shipToAddressRef)}
+                    placeholder="Salesman name"
+                    autoComplete="off"
+                    className={patientFieldCls}
+                  />
+                </div>
+              )}
+
+              {/* Salesman phone */}
+              {isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Slsm Ph</span>
+                  <input
+                    ref={salesmanPhoneRef}
+                    value={salesmanPhone}
+                    onChange={e => setSalesmanPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    onKeyDown={enterTo(customerTypeRef, salesmanNameRef)}
+                    placeholder="Salesman mobile"
+                    inputMode="numeric"
+                    maxLength={10}
+                    autoComplete="off"
+                    className={patientFieldCls}
+                  />
+                </div>
+              )}
+
+              {/* Customer type - Normal / Distributor / Chemist / Hospital / Retailer */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Cust Type</span>
+                <select
+                  ref={customerTypeRef}
+                  value={customerType}
+                  onChange={e => setCustomerType(e.target.value)}
+                  onKeyDown={enterTo(addressRef, isWholesale ? salesmanPhoneRef : doctorRef)}
+                  className={patientFieldCls}
+                >
+                  <option value="">—</option>
+                  <option value="Normal">Normal</option>
+                  <option value="Distributor">Distributor</option>
+                  <option value="Chemist">Chemist</option>
+                  <option value="Hospital">Hospital</option>
+                  <option value="Retailer">Retailer</option>
+                </select>
+              </div>
 
               {/* Address (single column so Months fits on this row too) */}
               <div className="flex items-center gap-2 min-w-0">
@@ -2042,7 +2135,7 @@ export default function RecordSale({
                   ref={addressRef}
                   value={customerAddress}
                   onChange={e => setCustomerAddress(e.target.value)}
-                  onKeyDown={enterTo(dateRef, isWholesale ? phoneRef : doctorRef)}
+                  onKeyDown={enterTo(dateRef, customerTypeRef)}
                   placeholder="Area / street"
                   className={patientFieldCls}
                 />
@@ -2056,52 +2149,55 @@ export default function RecordSale({
                   type="date"
                   value={billDate}
                   onChange={e => !editBillId && setBillDate(e.target.value)}
-                  onKeyDown={enterTo(prescRef, addressRef)}
+                  onKeyDown={isWholesale ? enterTo(masterSearchRef, addressRef) : enterTo(prescRef, addressRef)}
                   readOnly={!!editBillId}
                   title={editBillId ? 'Bill date cannot be changed after a bill is generated' : undefined}
                   className={cn(patientFieldCls, 'appearance-none', editBillId && 'opacity-60 cursor-not-allowed pointer-events-none')}
                 />
               </div>
 
-              {/* Prescription months / taken - compact, same row as Address & Date */}
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Months</span>
-                <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                  <input
-                    ref={prescRef}
-                    type="number"
-                    min="0"
-                    value={prescriptionMonths}
-                    onChange={e => {
-                      const val = e.target.value === '' ? '' : parseInt(e.target.value) || 0;
-                      setPrescriptionMonths(val);
-                      if (val !== '' && (monthsTaken === '' || monthsTaken === 0)) setMonthsTaken(1);
-                    }}
-                    onKeyDown={enterTo(takenRef, dateRef)}
-                    placeholder="0"
-                    title="Prescribed months"
-                    className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
-                  />
-                  <span className="text-[9px] font-semibold text-emerald-500 uppercase">Presc</span>
-                  <input
-                    ref={takenRef}
-                    type="number"
-                    min="0"
-                    value={monthsTaken}
-                    onChange={e => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
-                    onKeyDown={e => {
-                      if (e.key !== 'Enter') return;
-                      e.preventDefault();
-                      if (e.shiftKey) prescRef.current?.focus();
-                      else focusFirstEmptyProduct();
-                    }}
-                    placeholder="0"
-                    title="Months taken"
-                    className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
-                  />
-                  <span className="text-[9px] font-semibold text-emerald-500 uppercase">Taken</span>
+              {/* Prescription months / taken - retail only. Wholesale sells to distributors/chemists;
+                  there is no prescriber, no refill cycle, and no clinical need to track this. */}
+              {!isWholesale && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Months</span>
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                    <input
+                      ref={prescRef}
+                      type="number"
+                      min="0"
+                      value={prescriptionMonths}
+                      onChange={e => {
+                        const val = e.target.value === '' ? '' : parseInt(e.target.value) || 0;
+                        setPrescriptionMonths(val);
+                        if (val !== '' && (monthsTaken === '' || monthsTaken === 0)) setMonthsTaken(1);
+                      }}
+                      onKeyDown={enterTo(takenRef, dateRef)}
+                      placeholder="0"
+                      title="Prescribed months"
+                      className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
+                    />
+                    <span className="text-[9px] font-semibold text-emerald-500 uppercase">Presc</span>
+                    <input
+                      ref={takenRef}
+                      type="number"
+                      min="0"
+                      value={monthsTaken}
+                      onChange={e => setMonthsTaken(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+                      onKeyDown={e => {
+                        if (e.key !== 'Enter') return;
+                        e.preventDefault();
+                        if (e.shiftKey) prescRef.current?.focus();
+                        else focusFirstEmptyProduct();
+                      }}
+                      placeholder="0"
+                      title="Months taken"
+                      className={cn(patientFieldCls, 'no-spinner w-11 px-1 text-center font-bold')}
+                    />
+                    <span className="text-[9px] font-semibold text-emerald-500 uppercase">Taken</span>
+                  </div>
                 </div>
-              </div>
+              )}
 
             </div>
           </div>
@@ -2191,7 +2287,7 @@ export default function RecordSale({
                   </div>
 
                   {/* FREE - scheme qty. Given away: excluded from the amount,
-                      still deducted from stock as its own ₹0 invoice line. */}
+                      still deducted from stock as its own \u20B90 invoice line. */}
                   {isWholesale && (
                     <div className="px-0.5">
                       <Input
@@ -2419,7 +2515,7 @@ export default function RecordSale({
                       {p.hsn_code && <span className="hidden lg:inline text-[11px] text-gray-400 shrink-0 w-[86px] text-right truncate">HSN {p.hsn_code}</span>}
                       {p.pcs_per_unit && p.pcs_per_unit > 0 && <span className="hidden sm:inline text-[11px] font-medium text-indigo-500 shrink-0 w-[64px] text-right tabular-nums">1×{p.pcs_per_unit}</span>}
                       <span className={`text-[11px] font-medium shrink-0 w-16 text-right tabular-nums ${p.quantity <= 0 ? 'text-red-600 font-bold' : 'text-emerald-600'}`}>Stk {p.quantity}</span>
-                      <span className="text-sm font-bold text-emerald-700 shrink-0 w-20 text-right tabular-nums">₹{p.selling_price.toFixed(2)}</span>
+                      <span className="text-sm font-bold text-emerald-700 shrink-0 w-20 text-right tabular-nums">&#8377;{p.selling_price.toFixed(2)}</span>
                     </button>
                     <button
                       type="button"
@@ -2436,7 +2532,7 @@ export default function RecordSale({
               </div>
               <div className="px-4 py-1.5 border-t border-gray-100 bg-slate-50 text-[10px] text-gray-500 flex items-center justify-between">
                 <span><kbd className="px-1 rounded border bg-white">↵</kbd> select · <kbd className="px-1 rounded border bg-white">F1</kbd> full info</span>
-                <span><kbd className="px-1 rounded border bg-white">↑↓</kbd> move</span>
+                <span><kbd className="px-1 rounded border bg-white">\u2191\u2193</kbd> move</span>
               </div>
             </div>
           );
@@ -2486,8 +2582,8 @@ export default function RecordSale({
                     {/* Key stats */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <StatTile label="Current Stock" value={String(full.quantity ?? infoProduct.quantity)} />
-                      <StatTile label="M.R.P." value={`₹${mrp.toFixed(2)}`} accent />
-                      <StatTile label="Purchase" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : '-'} />
+                      <StatTile label="M.R.P." value={`\u20B9${mrp.toFixed(2)}`} accent />
+                      <StatTile label="Purchase" value={purchase != null ? `\u20B9${Number(purchase).toFixed(2)}` : '-'} />
                       <StatTile label="Margin" value={margin != null ? `${margin >= 0 ? '+' : ''}${margin.toFixed(1)}%` : '-'} accent={margin != null && margin >= 0} />
                     </div>
 
@@ -2507,7 +2603,7 @@ export default function RecordSale({
                     {/* Purchase & supplier */}
                     <InfoSection title="Purchase & Supplier">
                       <DetailItem label="Supplier" value={full.supplier} />
-                      <DetailItem label="Purchase Price" value={purchase != null ? `₹${Number(purchase).toFixed(2)}` : null} />
+                      <DetailItem label="Purchase Price" value={purchase != null ? `\u20B9${Number(purchase).toFixed(2)}` : null} />
                       <DetailItem label="Added on" value={fmtDate(full.created_at)} />
                       <DetailItem label="Last updated" value={fmtDate(full.updated_at)} />
                     </InfoSection>
@@ -2517,7 +2613,7 @@ export default function RecordSale({
                       <DetailItem label="Bills" value={String(sales.length)} />
                       <DetailItem label="Strips sold" value={String(strips)} />
                       <DetailItem label="Tablets sold" value={String(tabs)} />
-                      <DetailItem label="Total revenue" value={`₹${revenue.toFixed(2)}`} />
+                      <DetailItem label="Total revenue" value={`\u20B9${revenue.toFixed(2)}`} />
                       <DetailItem label="Last sold" value={lastSold ? fmtDate(lastSold.sale_date || lastSold.created_at) : '-'} />
                       <DetailItem label="Last sold to" value={lastSold?.customer_name || null} />
                     </InfoSection>
@@ -2536,8 +2632,8 @@ export default function RecordSale({
                                 <span className="text-gray-500 tabular-nums">{fmtDate(r.sale_date || r.created_at)}</span>
                                 <span className="text-gray-700 truncate">{r.customer_name || 'Walk-in'}</span>
                                 <span className="text-center font-medium text-gray-700 tabular-nums">{r.quantity}{r.sub_qty ? `+${r.sub_qty}` : ''}</span>
-                                <span className="text-right text-gray-600 tabular-nums">₹{Number(r.unit_price || 0).toFixed(2)}</span>
-                                <span className="text-right font-semibold text-emerald-700 tabular-nums">₹{Number(r.total_price || 0).toFixed(2)}</span>
+                                <span className="text-right text-gray-600 tabular-nums">&#8377;{Number(r.unit_price || 0).toFixed(2)}</span>
+                                <span className="text-right font-semibold text-emerald-700 tabular-nums">&#8377;{Number(r.total_price || 0).toFixed(2)}</span>
                               </div>
                             ))}
                           </div>
@@ -2673,7 +2769,7 @@ export default function RecordSale({
                 return (
                   <div className="flex items-center justify-between sm:justify-center gap-2 px-3 py-1 rounded-md bg-red-50 border border-red-200 w-full sm:w-auto sm:min-w-[80px]">
                     <span className="text-[10px] sm:text-[9px] font-bold text-red-400 uppercase tracking-wider">Due</span>
-                    <span className="text-sm font-black text-red-600">₹{Math.round(due * 100) / 100}</span>
+                    <span className="text-sm font-black text-red-600">&#8377;{Math.round(due * 100) / 100}</span>
                   </div>
                 );
               }
@@ -2690,12 +2786,12 @@ export default function RecordSale({
               </div>
               <div className="flex flex-col text-right">
                 <span className="text-emerald-500 text-xs">Subtotal</span>
-                <span className="text-emerald-900">₹{totals.subtotal.toFixed(2)}</span>
+                <span className="text-emerald-900">&#8377;{totals.subtotal.toFixed(2)}</span>
               </div>
               {(totals.discountTotal > 0) && (
                 <div className="flex flex-col text-right">
                   <span className="text-red-400 text-xs">Discount</span>
-                  <span className="text-red-600">-₹{(totals.discountTotal).toFixed(2)}</span>
+                  <span className="text-red-600">-&#8377;{(totals.discountTotal).toFixed(2)}</span>
                 </div>
               )}
             </div>
@@ -2703,7 +2799,7 @@ export default function RecordSale({
             <div className="bg-emerald-50 text-emerald-900 px-4 py-2 rounded-md border border-emerald-200 flex flex-col items-center justify-center flex-1 md:flex-none md:min-w-[170px] min-w-0">
               <span className="text-[11px] font-medium text-emerald-600">Amount Payable</span>
               <div className="flex items-baseline gap-1">
-                <span className="text-emerald-600 text-sm font-medium">₹</span>
+                <span className="text-emerald-600 text-sm font-medium">&#8377;</span>
                 <span className="text-2xl font-semibold tabular-nums leading-none">
                   {totals.grandTotal.toFixed(0)}<span className="text-base text-emerald-700/80">.{totals.grandTotal.toFixed(2).split('.')[1]}</span>
                 </span>

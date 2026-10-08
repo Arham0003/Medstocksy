@@ -135,7 +135,7 @@ const fmtDate = (iso: string | null) => {
     : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 };
 
-const fmtMoney = (n: number) => "₹" + Number(n || 0).toLocaleString("en-IN");
+const fmtMoney = (n: number) => "\u20B9" + Number(n || 0).toLocaleString("en-IN");
 
 const DOT = " · ";
 

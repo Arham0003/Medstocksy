@@ -716,13 +716,13 @@ export default function PurchaseReturn() {
         <td>${(r.products?.name ?? '-').replace(/</g, '')}${r.products?.category ? `<div class="muted" style="margin-top:2px">${r.products.category.replace(/</g, '')}</div>` : ''}</td>
         <td>${(r.batch_number ?? '-').replace(/</g, '')}</td>
         <td class="right">${r.quantity}</td>
-        <td class="right">₹${fmt(r.purchase_price)}</td>
-        <td class="right">₹${fmt(r.return_amount)}</td>
+        <td class="right">\u20B9${fmt(r.purchase_price)}</td>
+        <td class="right">\u20B9${fmt(r.return_amount)}</td>
       </tr>
     </tbody>
   </table>
 
-  <div class="total"><div class="box"><div class="row"><span class="muted">Total credit</span><strong style="font-size:15px">₹${fmt(r.return_amount)}</strong></div></div></div>
+  <div class="total"><div class="box"><div class="row"><span class="muted">Total credit</span><strong style="font-size:15px">\u20B9${fmt(r.return_amount)}</strong></div></div></div>
 
   <div class="sig"><div>Authorised signatory</div><div>Supplier acknowledgement</div></div>
 </body></html>`;
@@ -951,7 +951,7 @@ export default function PurchaseReturn() {
 
         toast({
           title: 'Return updated',
-          description: `${returnQty} unit(s) of "${selectedProduct?.name}" - ₹${returnAmount.toLocaleString('en-IN')} credited.`,
+          description: `${returnQty} unit(s) of "${selectedProduct?.name}" - \u20B9${returnAmount.toLocaleString('en-IN')} credited.`,
         });
       } else {
         // ── CREATE path (atomic via RPC) ──────────────────
@@ -997,7 +997,7 @@ export default function PurchaseReturn() {
 
         toast({
           title: 'Return processed',
-          description: `${returnQty} unit(s) of "${selectedProduct?.name}" returned. ₹${returnAmount.toLocaleString('en-IN')} credited to supplier.`,
+          description: `${returnQty} unit(s) of "${selectedProduct?.name}" returned. \u20B9${returnAmount.toLocaleString('en-IN')} credited to supplier.`,
         });
       }
 
@@ -1144,7 +1144,7 @@ export default function PurchaseReturn() {
         {[
           { label: 'Total returns', value: returns.length.toLocaleString('en-IN'), icon: ClipboardList },
           { label: 'Units returned', value: totalUnits.toLocaleString('en-IN'), icon: Package },
-          { label: 'Total credited', value: `₹${totalReturned.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, icon: IndianRupee },
+          { label: 'Total credited', value: `\u20B9${totalReturned.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, icon: IndianRupee },
         ].map((s) => (
           <div key={s.label} className="flex items-center gap-3 px-5 py-3 flex-1">
             <s.icon className="h-4 w-4 text-slate-400 shrink-0" />
@@ -1271,10 +1271,10 @@ export default function PurchaseReturn() {
                         </TableCell>
                         <TableCell className="text-center font-medium tabular-nums">{r.quantity}</TableCell>
                         <TableCell className="text-right text-muted-foreground tabular-nums">
-                          ₹{Number(r.purchase_price).toLocaleString('en-IN')}
+                          &#8377;{Number(r.purchase_price).toLocaleString('en-IN')}
                         </TableCell>
                         <TableCell className="text-right font-semibold text-slate-900 tabular-nums">
-                          ₹{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          &#8377;{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground max-w-[160px] truncate">
                           {r.reason ?? <span className="italic opacity-40">-</span>}
@@ -1332,7 +1332,7 @@ export default function PurchaseReturn() {
                       </div>
                       <div className="text-right shrink-0">
                         <div className="font-semibold tabular-nums">
-                          ₹{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                          &#8377;{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                         </div>
                         <div className="text-xs text-muted-foreground tabular-nums">
                           {new Date(r.return_date).toLocaleDateString('en-IN')}
@@ -1458,14 +1458,14 @@ export default function PurchaseReturn() {
                         title="Outstanding balance"
                       >
                         <Wallet className="h-3 w-3" />
-                        ₹{supplierContext.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        &#8377;{supplierContext.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                       </span>
                       {supplierContext.recentReturns[0] && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-700 px-1.5 sm:px-2 py-0.5 max-w-full truncate" title="Most recent return">
                           <Clock className="h-3 w-3 shrink-0" />
                           <span className="truncate">{supplierContext.recentReturns[0].product_name}</span>
                           <span className="text-slate-500 tabular-nums shrink-0">
-                            ₹{Number(supplierContext.recentReturns[0].return_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                            &#8377;{Number(supplierContext.recentReturns[0].return_amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                           </span>
                         </span>
                       )}
@@ -1623,7 +1623,7 @@ export default function PurchaseReturn() {
                   )}
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[10px] sm:text-[11px] font-semibold text-slate-700">Unit price (₹)</Label>
+                  <Label className="text-[10px] sm:text-[11px] font-semibold text-slate-700">Unit price (&#8377;)</Label>
                   <Input
                     type="number"
                     step="0.01"
@@ -1686,14 +1686,14 @@ export default function PurchaseReturn() {
                       ITC to reverse @ {itcReversal.rate}%
                     </span>
                     <span className="text-sm sm:text-base font-bold tabular-nums text-amber-800">
-                      ₹{itcReversal.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      &#8377;{itcReversal.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <p className="text-[10px] text-amber-800/80 mt-0.5">
-                    Taxable ₹{itcReversal.taxable.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    Taxable &#8377;{itcReversal.taxable.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     {isInterstate
-                      ? ` · IGST ₹${itcReversal.igst.toFixed(2)}`
-                      : ` · CGST ₹${itcReversal.cgst.toFixed(2)} · SGST ₹${itcReversal.sgst.toFixed(2)}`}
+                      ? ` · IGST \u20B9${itcReversal.igst.toFixed(2)}`
+                      : ` · CGST \u20B9${itcReversal.cgst.toFixed(2)} · SGST \u20B9${itcReversal.sgst.toFixed(2)}`}
                   </p>
                   <p className="text-[10px] text-amber-800/70 mt-1">
                     Credit note value is treated as GST-inclusive. Report this in GSTR-3B.
@@ -1732,7 +1732,7 @@ export default function PurchaseReturn() {
                       Credit
                     </div>
                     <div className={`text-base sm:text-xl font-bold tabular-nums leading-tight ${selectedProduct ? 'text-orange-700' : 'text-slate-300'}`}>
-                      ₹{estimatedRefund.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      &#8377;{estimatedRefund.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -1902,7 +1902,7 @@ export default function PurchaseReturn() {
                       <TableRow>
                         <TableHead>Product</TableHead>
                         <TableHead className="text-center">Qty</TableHead>
-                        <TableHead className="text-right">Price (₹)</TableHead>
+                        <TableHead className="text-right">Price (&#8377;)</TableHead>
                         <TableHead>Reason</TableHead>
                         <TableHead>Status</TableHead>
                       </TableRow>
@@ -1923,7 +1923,7 @@ export default function PurchaseReturn() {
                                 className="w-16 h-7 text-center mx-auto text-sm border-muted-foreground/20 focus-visible:ring-1 focus-visible:ring-orange-500 px-1 shadow-none"
                               />
                             </TableCell>
-                            <TableCell className="text-right">₹{row.price.toLocaleString('en-IN')}</TableCell>
+                            <TableCell className="text-right">&#8377;{row.price.toLocaleString('en-IN')}</TableCell>
                             <TableCell className="text-xs text-muted-foreground">{row.reason || '-'}</TableCell>
                             <TableCell>
                               {hasErr ? (
@@ -1972,7 +1972,7 @@ export default function PurchaseReturn() {
                       )}
                     </span>
                     <span className="font-semibold text-sm">
-                      Total Credit: ₹{bulkRows.filter(r => !r.error && (bulkProcessMode === 'all' || r.supplier_id === bulkSupplierId)).reduce((s, r) => s + r.price * r.qty, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      Total Credit: &#8377;{bulkRows.filter(r => !r.error && (bulkProcessMode === 'all' || r.supplier_id === bulkSupplierId)).reduce((s, r) => s + r.price * r.qty, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -2079,8 +2079,8 @@ export default function PurchaseReturn() {
                             </div>
                           </div>
                           <div className="text-right shrink-0 tabular-nums">
-                            <div className="text-sm font-semibold">₹{amt.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                            <div className="text-[10px] text-muted-foreground">@ ₹{(p.purchase_price ?? 0).toLocaleString('en-IN')}</div>
+                            <div className="text-sm font-semibold">&#8377;{amt.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                            <div className="text-[10px] text-muted-foreground">@ &#8377;{(p.purchase_price ?? 0).toLocaleString('en-IN')}</div>
                           </div>
                         </label>
                       );
@@ -2106,7 +2106,7 @@ export default function PurchaseReturn() {
                       {expiredSelectedIds.size} item(s) selected
                     </span>
                     <span className="font-semibold tabular-nums text-amber-900">
-                      Total credit: ₹{Array.from(expiredSelectedIds).reduce((s, id) => {
+                      Total credit: &#8377;{Array.from(expiredSelectedIds).reduce((s, id) => {
                         const p = expiredCandidates.find(x => x.id === id);
                         return s + (p ? (p.purchase_price ?? 0) * p.quantity : 0);
                       }, 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -2182,12 +2182,12 @@ export default function PurchaseReturn() {
                   </div>
                   <div>
                     <div className="text-[11px] uppercase text-muted-foreground">Unit price</div>
-                    <div className="font-semibold tabular-nums">₹{Number(detailRow.purchase_price).toLocaleString('en-IN')}</div>
+                    <div className="font-semibold tabular-nums">&#8377;{Number(detailRow.purchase_price).toLocaleString('en-IN')}</div>
                   </div>
                   <div>
                     <div className="text-[11px] uppercase text-muted-foreground">Credited</div>
                     <div className="font-semibold tabular-nums text-orange-700">
-                      ₹{Number(detailRow.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      &#8377;{Number(detailRow.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>

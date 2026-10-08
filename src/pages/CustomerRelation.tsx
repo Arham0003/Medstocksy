@@ -219,7 +219,7 @@ export default function CustomerRelation() {
       
       toast({
         title: "Payment Recorded",
-        description: `Successfully recorded ₹${settlementAmount.toFixed(2)} for ${settlementCustomer.name}`,
+        description: `Successfully recorded \u20B9${settlementAmount.toFixed(2)} for ${settlementCustomer.name}`,
       });
       
       setIsSettleDialogOpen(false);
@@ -1091,7 +1091,7 @@ export default function CustomerRelation() {
             {/* Payment amount */}
             <div className="space-y-1.5">
               <Label htmlFor="paymentAmount" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Payment amount (₹)
+                Payment amount (&#8377;)
               </Label>
               <Input
                 id="paymentAmount"

@@ -1558,7 +1558,7 @@ export default function Suppliers() {
           </DialogHeader>
           <form onSubmit={handleAddPayment} className="space-y-4 mt-2">
             <div className="space-y-2">
-              <Label className="text-base font-semibold">Amount (₹) *</Label>
+              <Label className="text-base font-semibold">Amount (&#8377;) *</Label>
               <Input name="amount" type="number" step="0.01" min="0.01" placeholder="0.00" className="text-base" required />
             </div>
             <div className="space-y-2">

@@ -40,7 +40,7 @@ interface SaleItem {
     sgst_amount?: number | null;
     igst_amount?: number | null;
     hsn_code_stored?: string | null;
-    /** Scheme line: given away at ₹0, shown but never added to the invoice value. */
+    /** Scheme line: given away at \u20B90, shown but never added to the invoice value. */
     is_free?: boolean;
 }
 
@@ -75,6 +75,10 @@ interface BillData {
     bill_serial?: string | null;
     /** True when every line is a reversal, so the bill prints as a credit note. */
     is_credit_note?: boolean;
+    salesman_name?: string | null;
+    salesman_phone?: string | null;
+    /** Customer classification: Normal / Distributor / Chemist / Hospital / Retailer. */
+    customer_type?: string | null;
 }
 
 // Lightweight product type for the add-item search list
@@ -127,14 +131,20 @@ export default function PrintBill() {
             const hasStored =
                 item.cgst_amount != null || item.sgst_amount != null || item.igst_amount != null;
             const gstTotal = Math.abs(item.gst_amount || 0);
-            const cgst = hasStored ? Math.abs(item.cgst_amount ?? 0) : gstTotal / 2;
-            const sgst = hasStored ? Math.abs(item.sgst_amount ?? 0) : gstTotal / 2;
+            const cgst = hasStored ? Math.abs(item.cgst_amount ?? 0) : Math.round(gstTotal / 2 * 100) / 100;
+            const sgst = hasStored ? Math.abs(item.sgst_amount ?? 0) : Math.round((gstTotal - cgst) * 100) / 100;
             const igst = hasStored ? Math.abs(item.igst_amount ?? 0) : 0;
-            // Pre-migration lines have no taxable_value; derive it from the
-            // line total less its tax, which is what was actually charged.
+            // Derive taxable from stored taxable_value when available (accurate).
+            // Fallback for pre-migration rows: if gst_rate is known and this is an
+            // inclusive bill, back tax out of total_price directly (Rule 33 formula).
+            // Plain subtraction (total_price − gst_amount) is less reliable because
+            // old code may have stored gst_amount with the wrong exclusive formula.
+            const lineTotal = Math.abs(item.total_price);
             const taxable = item.taxable_value != null
                 ? Math.abs(item.taxable_value)
-                : Math.abs(item.total_price) - gstTotal;
+                : rate > 0
+                    ? Math.round((lineTotal * 100) / (100 + rate) * 100) / 100
+                    : lineTotal - gstTotal;
 
             const bucket = buckets.get(key) ?? { hsn, rate, taxable: 0, cgst: 0, sgst: 0, igst: 0 };
             bucket.taxable += taxable;
@@ -368,7 +378,7 @@ export default function PrintBill() {
             const WHOLESALE_COLS = ', sale_type, wholesale_customer_name, wholesale_customer_gstin';
             // Compliance columns arrive with 20260925000000; the cascade below
             // drops them first so a bill still prints on an un-migrated database.
-            const COMPLIANCE_COLS = ', wholesale_customer_dl, wholesale_customer_dl_expiry, buyer_state_code, ship_to_address, bill_serial, return_type, is_free';
+            const COMPLIANCE_COLS = ', wholesale_customer_dl, wholesale_customer_dl_expiry, buyer_state_code, ship_to_address, bill_serial, return_type, is_free, salesman_name, salesman_phone, customer_type';
 
             // db (untyped client): a column list built at runtime defeats
             // PostgREST's generated row typing; rows are re-mapped by hand below.
@@ -464,8 +474,8 @@ export default function PrintBill() {
                     const effectiveQty = item.sub_qty && item.pcs_per_unit && item.pcs_per_unit > 0
                         ? item.quantity + (item.sub_qty / item.pcs_per_unit)
                         : (item.quantity || 1);
-                    const mrp = item.selling_price || item.unit_price;
-                    return sum + (mrp * effectiveQty);
+                    // unit_price is the rate at time of sale; selling_price is live and can drift.
+                    return sum + (item.unit_price * effectiveQty);
                 }, 0);
                 
                 const total_gst = items.reduce((sum, item) => sum + (item.gst_amount || 0), 0);
@@ -508,6 +518,9 @@ export default function PrintBill() {
                     // A bill made entirely of reversal rows is a credit note, and
                     // has to say so: GST wants the document type on its face.
                     is_credit_note: salesData.every((r) => !!(r as Record<string, unknown>).return_type),
+                    salesman_name: firstItem.salesman_name ?? null,
+                    salesman_phone: firstItem.salesman_phone ?? null,
+                    customer_type: firstItem.customer_type ?? null,
                 });
                 // Seed the date picker with the bill's stored date
                 const rawDate = firstItem.sale_date || originalCreatedAt || firstItem.created_at;
@@ -925,11 +938,11 @@ export default function PrintBill() {
                                             <td style={{ textAlign: 'center', verticalAlign: 'top', paddingTop: '1.5px' }}>
                                                 {item.sub_qty ? `${item.quantity}+${item.sub_qty}` : item.quantity}
                                             </td>
-                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px' }}>₹{mrp.toFixed(2)}</td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px' }}>&#8377;{mrp.toFixed(2)}</td>
                                             <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontSize: '6.5pt' }}>
                                                 {item.discount_percentage ? item.discount_percentage + '%' : '-'}
                                             </td>
-                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontWeight: 700 }}>₹{item.total_price.toFixed(2)}</td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'top', paddingTop: '1.5px', fontWeight: 700 }}>&#8377;{item.total_price.toFixed(2)}</td>
                                         </tr>
                                     );
                                 })}
@@ -941,22 +954,22 @@ export default function PrintBill() {
                         {/* Totals */}
                         <div style={{ fontSize: '7.5pt' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span>Subtotal</span><span>₹{billData.subtotal.toFixed(2)}</span>
+                                <span>Subtotal</span><span>&#8377;{billData.subtotal.toFixed(2)}</span>
                             </div>
                             {billData.total_discount > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#0d6e3a' }}>
-                                    <span>Savings</span><span>-₹{billData.total_discount.toFixed(2)}</span>
+                                    <span>Savings</span><span>-&#8377;{billData.total_discount.toFixed(2)}</span>
                                 </div>
                             )}
                             {billData.total_gst > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
-                                    <span>GST</span><span>₹{billData.total_gst.toFixed(2)}</span>
+                                    <span>GST</span><span>&#8377;{billData.total_gst.toFixed(2)}</span>
                                 </div>
                             )}
                         </div>
                         <div style={{ borderTop: '2px solid #000', margin: '1.5mm 0 1mm' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: '10pt' }}>
-                            <span>TOTAL</span><span>₹{billData.total_amount.toFixed(2)}</span>
+                            <span>TOTAL</span><span>&#8377;{billData.total_amount.toFixed(2)}</span>
                         </div>
 
                         <div style={{ borderTop: '1px dashed #666', margin: '2mm 0 1.5mm' }} />
@@ -1141,6 +1154,25 @@ export default function PrintBill() {
                                     <div style={{ display: 'flex' }}>
                                         <span style={{ width: '14mm', fontWeight: 600 }}>SHIP TO:</span>
                                         <span>{billData.ship_to_address}</span>
+                                    </div>
+                                )}
+                                {/* Salesman - accountability for commission + route tracking. */}
+                                {billData.salesman_name && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>Salesman :</span>
+                                        <span style={{ fontWeight: 600 }}>{billData.salesman_name}</span>
+                                    </div>
+                                )}
+                                {billData.salesman_phone && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>Salesman Ph :</span>
+                                        <span>{billData.salesman_phone}</span>
+                                    </div>
+                                )}
+                                {billData.customer_type && (
+                                    <div style={{ display: 'flex' }}>
+                                        <span style={{ width: '14mm', fontWeight: 600 }}>Type :</span>
+                                        <span>{billData.customer_type}</span>
                                     </div>
                                 )}
                             </div>
@@ -1345,12 +1377,12 @@ export default function PrintBill() {
                                 <tbody>
                                     <tr>
                                         <td style={{ padding: '1px 0', fontWeight: 600, textAlign: 'left' }}>Subtotal</td>
-                                        <td style={{ padding: '1px 0', textAlign: 'right' }}>₹{billData.subtotal.toFixed(2)}</td>
+                                        <td style={{ padding: '1px 0', textAlign: 'right' }}>&#8377;{billData.subtotal.toFixed(2)}</td>
                                     </tr>
                                     {billData.total_discount > 0 && (
                                         <tr>
                                             <td style={{ padding: '1px 0', fontWeight: 600, textAlign: 'left', color: '#0d6e3a' }}>Savings</td>
-                                            <td style={{ padding: '1px 0', textAlign: 'right', color: '#0d6e3a' }}>-₹{billData.total_discount.toFixed(2)}</td>
+                                            <td style={{ padding: '1px 0', textAlign: 'right', color: '#0d6e3a' }}>-&#8377;{billData.total_discount.toFixed(2)}</td>
                                         </tr>
                                     )}
                                     <tr>
@@ -1360,7 +1392,7 @@ export default function PrintBill() {
                                     </tr>
                                     <tr>
                                         <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'left' }}>TOTAL</td>
-                                        <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'right' }}>₹{billData.total_amount.toFixed(2)}</td>
+                                        <td style={{ padding: '1px 0', fontWeight: 800, fontSize: '8.5pt', textAlign: 'right' }}>&#8377;{billData.total_amount.toFixed(2)}</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -1411,10 +1443,10 @@ export default function PrintBill() {
                                             <div className="min-w-0 flex-1">
                                                 <p className="text-sm font-medium truncate">{item.product_name}</p>
                                                 <p className="text-[11px] text-muted-foreground">
-                                                    Qty {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''} · ₹{item.unit_price.toFixed(2)} each
+                                                    Qty {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''} · &#8377;{item.unit_price.toFixed(2)} each
                                                 </p>
                                             </div>
-                                            <div className="text-sm font-semibold whitespace-nowrap">₹{item.total_price.toFixed(2)}</div>
+                                            <div className="text-sm font-semibold whitespace-nowrap">&#8377;{item.total_price.toFixed(2)}</div>
                                             <Button
                                                 type="button"
                                                 variant="ghost"
@@ -1464,7 +1496,7 @@ export default function PrintBill() {
                                                 >
                                                     <span className="truncate">{p.name}</span>
                                                     <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                                                        Stk {p.quantity} · ₹{p.selling_price.toFixed(2)}
+                                                        Stk {p.quantity} · &#8377;{p.selling_price.toFixed(2)}
                                                     </span>
                                                 </button>
                                             ))}
@@ -1505,7 +1537,7 @@ export default function PrintBill() {
                                                 />
                                             </div>
                                             <div className="space-y-0.5">
-                                                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Rate ₹</Label>
+                                                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Rate &#8377;</Label>
                                                 <Input
                                                     type="number"
                                                     inputMode="decimal"

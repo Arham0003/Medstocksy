@@ -211,7 +211,7 @@ const Index = () => {
           />
           <DashboardStatCard
             title="Outstanding Credit"
-            value={loading ? '-' : `₹${stats.totalCredit.toFixed(2)}`}
+            value={loading ? '-' : `\u20B9${stats.totalCredit.toFixed(2)}`}
             icon={TrendingUp}
             variant="primary"
             description="Unpaid customer dues"
@@ -323,7 +323,7 @@ const Index = () => {
                         </p>
                       </div>
                       <div className="text-sm font-semibold text-emerald-700 whitespace-nowrap">
-                        ₹{(s.total_price || 0).toFixed(2)}
+                        &#8377;{(s.total_price || 0).toFixed(2)}
                       </div>
                     </li>
                   ))}

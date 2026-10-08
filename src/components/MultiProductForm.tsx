@@ -693,10 +693,10 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                         </p>
                         {(parseFloat(row.rate) > 0 || parseFloat(row.mrp) > 0 || parseFloat(row.quantity) > 0 || row.finalAmount > 0) && (
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground ml-2 flex-wrap">
-                            {parseFloat(row.rate) > 0 && <span>Rate: <strong className="text-slate-700">₹{parseFloat(row.rate).toFixed(2)}</strong></span>}
-                            {parseFloat(row.mrp) > 0 && <span>MRP: <strong className="text-slate-700">₹{parseFloat(row.mrp).toFixed(2)}</strong></span>}
+                            {parseFloat(row.rate) > 0 && <span>Rate: <strong className="text-slate-700">&#8377;{parseFloat(row.rate).toFixed(2)}</strong></span>}
+                            {parseFloat(row.mrp) > 0 && <span>MRP: <strong className="text-slate-700">&#8377;{parseFloat(row.mrp).toFixed(2)}</strong></span>}
                             {parseFloat(row.quantity) > 0 && <span>Qty: <strong className="text-slate-700">{row.quantity}</strong></span>}
-                            {row.finalAmount > 0 && <span className="text-emerald-600 font-semibold">Amt: ₹{row.finalAmount.toFixed(2)}</span>}
+                            {row.finalAmount > 0 && <span className="text-emerald-600 font-semibold">Amt: &#8377;{row.finalAmount.toFixed(2)}</span>}
                           </div>
                         )}
                       </div>
@@ -944,7 +944,7 @@ const MemoizedRowCard = React.memo(({ row, idx, rowsLength, removeRow, setFieldR
                       <div className="flex flex-col gap-0.5">
                         <FieldLabel>Amount</FieldLabel>
                         <div className="h-7 flex items-center justify-end pr-2 text-xs text-slate-900 tabular-nums select-none font-bold border border-transparent rounded bg-white/60">
-                          {row.finalAmount > 0 ? `₹${row.finalAmount.toFixed(2)}` : '-'}
+                          {row.finalAmount > 0 ? `\u20B9${row.finalAmount.toFixed(2)}` : '-'}
                         </div>
                       </div>
                     </div>
@@ -1737,19 +1737,19 @@ export const MultiProductForm = ({
                 <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">
                   <span className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Gross Purchase</span>
-                  <span className="text-slate-800 font-bold tabular-nums text-sm">₹{totals.grossPurchase.toFixed(2)}</span>
+                  <span className="text-slate-800 font-bold tabular-nums text-sm">&#8377;{totals.grossPurchase.toFixed(2)}</span>
                 </div>
                 <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">
                   <span className="text-emerald-600 text-[10px] uppercase tracking-wider font-semibold">Discount</span>
-                  <span className="text-emerald-700 font-bold tabular-nums text-sm">₹{totals.totalDiscount.toFixed(2)}</span>
+                  <span className="text-emerald-700 font-bold tabular-nums text-sm">&#8377;{totals.totalDiscount.toFixed(2)}</span>
                 </div>
                 <div className="h-6 w-px bg-slate-200 hidden sm:block" />
                 <div className="flex flex-col">
                   <span className="text-indigo-500 text-[10px] uppercase tracking-wider font-semibold">
                     GST {gstInclusive ? '(Incl.)' : '(Excl.)'}
                   </span>
-                  <span className="text-indigo-700 font-bold tabular-nums text-sm">₹{totals.totalGst.toFixed(2)}</span>
+                  <span className="text-indigo-700 font-bold tabular-nums text-sm">&#8377;{totals.totalGst.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -1761,7 +1761,7 @@ export const MultiProductForm = ({
                     Net Purchase
                   </span>
                   <div className="flex items-baseline gap-0.5 leading-tight">
-                    <span className="text-blue-600 text-xs font-medium">₹</span>
+                    <span className="text-blue-600 text-xs font-medium">&#8377;</span>
                     <span className="text-lg sm:text-xl font-bold tabular-nums text-blue-950">
                       {totals.netPurchaseAmount.toFixed(2)}
                     </span>

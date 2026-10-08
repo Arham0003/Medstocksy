@@ -32,19 +32,16 @@ const Pricing = () => {
         script.async = true;
         document.body.appendChild(script);
 
-        return () => {
-            // Clean up: remove the script if we leave the page (optional, but keep it clean)
-            if (document.body.contains(script)) {
-                document.body.removeChild(script);
-            }
-        };
+        // ponytail: no cleanup — Razorpay's handler fires after the modal closes;
+        // removing the script on unmount kills window.Razorpay mid-checkout.
+        return () => {};
     }, []);
 
     const plans = [
         {
             name: "Testing Plan",
             description: "Try all our premium features for 7 days.",
-            price: "₹50",
+            price: "\u20B950",
             originalPrice: null,
             discount: null,
             period: "/ 7 days",
@@ -63,8 +60,8 @@ const Pricing = () => {
         {
             name: "Professional",
             description: "Everything for a busy, growing medical shop.",
-            price: isAnnual ? "₹6,000" : "₹499",
-            originalPrice: isAnnual ? "₹7,500" : "₹625",
+            price: isAnnual ? "\u20B96,000" : "\u20B9499",
+            originalPrice: isAnnual ? "\u20B97,500" : "\u20B9625",
             discount: isAnnual ? "20% OFF" : "20% OFF",
             period: isAnnual ? "/year" : "/month",
             features: [
@@ -73,7 +70,7 @@ const Pricing = () => {
                 { name: "Inventory Forecasting", included: true },
                 { name: "Sales Analytics", included: true },
             ],
-            saving: isAnnual ? "Save ₹1,500/year" : "Save ₹126/month",
+            saving: isAnnual ? "Save \u20B91,500/year" : "Save \u20B9126/month",
             cta: "Get Started",
             popular: true,
             variant: "default" as const,
@@ -83,8 +80,8 @@ const Pricing = () => {
         {
             name: "Professional + Wholesale",
             description: "Everything in Professional, plus B2B invoicing, free-qty schemes, and wholesale reports.",
-            price: isAnnual ? "₹7,200" : "₹599",
-            originalPrice: isAnnual ? "₹8,400" : "₹699",
+            price: isAnnual ? "\u20B97,200" : "\u20B9599",
+            originalPrice: isAnnual ? "\u20B98,400" : "\u20B9699",
             discount: "20% OFF",
             period: isAnnual ? "/year" : "/month",
             features: [
@@ -96,7 +93,7 @@ const Pricing = () => {
                 { name: "B2B customer & GSTIN on every bill", included: true },
                 { name: "Separate Wholesale Reports section", included: true },
             ],
-            saving: isAnnual ? "Save ₹1,200/year vs monthly" : null,
+            saving: isAnnual ? "Save \u20B91,200/year vs monthly" : null,
             cta: "Upgrade to Wholesale",
             variant: "outline" as const,
             disabled: false,
@@ -150,7 +147,7 @@ const Pricing = () => {
                 // Show discount toast if coupon was applied
                 if (data.discountApplied) {
                     const saved = (data.discountApplied.savedPaise / 100).toFixed(2);
-                    toast.success(`Coupon "${data.discountApplied.code}" applied - ₹${saved} off!`);
+                    toast.success(`Coupon "${data.discountApplied.code}" applied - \u20B9${saved} off!`);
                 }
 
                 // 2. Open Razorpay options
@@ -183,11 +180,13 @@ const Pricing = () => {
                             },
                         );
 
-                        let message = verifyError?.message ?? verified?.error ?? null;
-                        if (!message && verifyError) message = "Could not confirm the payment.";
+                        // supabase.functions.invoke puts the parsed body in `data` even on 4xx.
+                        // `verifyError.message` is always a generic SDK string, not the real error.
+                        // The real error, if any, is in `verified.error` (the body we returned).
+                        const message: string | null = verified?.error ?? verifyError?.message ?? null;
 
                         if (message) {
-                            console.error("Payment verification failed", verifyError ?? verified);
+                            console.error("Payment verification failed", { verifyError, verified });
                             toast.error(
                                 "Payment taken but activation failed: " + message +
                                 " Please contact support with payment id " + response.razorpay_payment_id,

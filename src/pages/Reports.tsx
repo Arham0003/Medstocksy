@@ -442,8 +442,8 @@ export default function Reports() {
   // Outstanding credit = sum of (total_price - received_amount) for ALL unsettled rows
   // This correctly accounts for:
   //   - Pure credit sales (received=0 → full amount is outstanding)
-  //   - Partial upfront payments (e.g. ₹200 paid on ₹500 → ₹300 outstanding)
-  //   - Settled sales (is_settled=true → ₹0 outstanding, not counted)
+  //   - Partial upfront payments (e.g. \u20B9200 paid on \u20B9500 → \u20B9300 outstanding)
+  //   - Settled sales (is_settled=true → \u20B90 outstanding, not counted)
   //   - Old rows without these fields (fallback: treated as fully paid)
   const totalCredit = useMemo(() =>
     salesData.reduce((sum, day) => {
@@ -627,7 +627,7 @@ export default function Reports() {
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <DashboardStatCard
             title="Total Revenue"
-            value={loading ? '-' : `₹${totalRevenue.toFixed(2)}`}
+            value={loading ? '-' : `\u20B9${totalRevenue.toFixed(2)}`}
             icon={TrendingUp}
             variant="success"
             description="Gross sales in range"
@@ -662,7 +662,7 @@ export default function Reports() {
             </CardHeader>
             <CardContent className="relative flex items-center justify-between">
               <div className="text-2xl font-bold tracking-tight text-emerald-700">
-                {loading ? '-' : isProfitVisible ? `₹${totalProfit.toFixed(2)}` : '•••••'}
+                {loading ? '-' : isProfitVisible ? `\u20B9${totalProfit.toFixed(2)}` : '•••••'}
               </div>
               <Button
                 variant="ghost"
@@ -677,14 +677,14 @@ export default function Reports() {
           </Card>
           <DashboardStatCard
             title="Outstanding Credit"
-            value={loading ? '-' : `₹${globalOutstandingCredit.toFixed(2)}`}
+            value={loading ? '-' : `\u20B9${globalOutstandingCredit.toFixed(2)}`}
             icon={Wallet}
             variant="warning"
             description="All-time unpaid dues"
           />
           <DashboardStatCard
             title="Purchase Returns"
-            value={loading ? '-' : `₹${totalPurchaseReturns.toFixed(2)}`}
+            value={loading ? '-' : `\u20B9${totalPurchaseReturns.toFixed(2)}`}
             icon={RotateCcw}
             variant="warning"
             description={`${purchaseReturns.length} return(s) in period`}
@@ -748,7 +748,7 @@ export default function Reports() {
                         borderRadius: 8,
                         fontSize: 12,
                       }}
-                      formatter={(value: number, name: string) => [`₹${value.toFixed(2)}`, name === 'revenue' ? 'Revenue' : 'Profit']}
+                      formatter={(value: number, name: string) => [`\u20B9${value.toFixed(2)}`, name === 'revenue' ? 'Revenue' : 'Profit']}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
                     <Area
@@ -815,7 +815,7 @@ export default function Reports() {
                     <Tooltip
                       contentStyle={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 12 }}
                       formatter={(value: number, _name, entry) => [
-                        `₹${value.toFixed(2)} · ${entry.payload.units} units`,
+                        `\u20B9${value.toFixed(2)} · ${entry.payload.units} units`,
                         entry.payload.fullName,
                       ]}
                     />
@@ -881,7 +881,7 @@ export default function Reports() {
                       <TableRow key={index} className="hover:bg-emerald-50/40">
                         <TableCell className="font-medium">{new Date(day.date).toLocaleDateString()}</TableCell>
                         <TableCell className="text-right tabular-nums font-semibold text-emerald-700">
-                          ₹{day.total_sales?.toFixed(2) || '0.00'}
+                          &#8377;{day.total_sales?.toFixed(2) || '0.00'}
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-right tabular-nums">{day.transaction_count || 0}</TableCell>
                         <TableCell className="hidden sm:table-cell text-right tabular-nums">{day.total_quantity || 0}</TableCell>
@@ -919,8 +919,8 @@ export default function Reports() {
                                         <TableRow key={saleIndex} className={hasDue ? 'bg-orange-50/40' : ''}>
                                           <TableCell className="font-medium">{sale.product_name}</TableCell>
                                           <TableCell>{sale.quantity}</TableCell>
-                                          <TableCell className="hidden md:table-cell">₹{sale.unit_price.toFixed(2)}</TableCell>
-                                          <TableCell>₹{sale.total_price.toFixed(2)}</TableCell>
+                                          <TableCell className="hidden md:table-cell">&#8377;{sale.unit_price.toFixed(2)}</TableCell>
+                                          <TableCell>&#8377;{sale.total_price.toFixed(2)}</TableCell>
                                           <TableCell className="hidden sm:table-cell">
                                             <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${
                                               sale.payment_mode === 'credit'
@@ -931,7 +931,7 @@ export default function Reports() {
                                             </span>
                                           </TableCell>
                                           <TableCell className={`hidden md:table-cell font-bold ${hasDue ? 'text-orange-600' : 'text-green-600'}`}>
-                                            {hasDue ? `₹${balance.toFixed(2)}` : '-'}
+                                            {hasDue ? `\u20B9${balance.toFixed(2)}` : '-'}
                                           </TableCell>
                                         </TableRow>
                                       );
@@ -1078,7 +1078,7 @@ export default function Reports() {
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{product.total_quantity}</TableCell>
                         <TableCell className="text-right tabular-nums font-semibold text-emerald-700">
-                          ₹{product.total_revenue.toFixed(2)}
+                          &#8377;{product.total_revenue.toFixed(2)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1138,7 +1138,7 @@ export default function Reports() {
                     <TableHead>Supplier</TableHead>
                     <TableHead>Product</TableHead>
                     <TableHead className="text-center">Qty</TableHead>
-                    <TableHead className="text-right">Credited (₹)</TableHead>
+                    <TableHead className="text-right">Credited (&#8377;)</TableHead>
                     <TableHead>Reason</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1162,7 +1162,7 @@ export default function Reports() {
                       </TableCell>
                       <TableCell className="text-center font-medium">{r.quantity}</TableCell>
                       <TableCell className="text-right font-semibold text-red-600">
-                        ₹{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                        &#8377;{Number(r.return_amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground max-w-[180px] truncate">
                         {r.reason ?? <span className="italic opacity-40">-</span>}
@@ -1189,7 +1189,7 @@ export default function Reports() {
                   </CardTitle>
                   <CardDescription>
                     {expiringBatches.length} batch(es) expired or expiring within {EXPIRY_HORIZON_DAYS} days ·
-                    {' '}₹{expiringBatches
+                    {' '}&#8377;{expiringBatches
                       .reduce((n, b) => n + Number(b.qty_available) * Number(b.effective_cost || 0), 0)
                       .toLocaleString('en-IN', { maximumFractionDigits: 2 })} at cost
                   </CardDescription>
@@ -1247,7 +1247,7 @@ export default function Reports() {
                         </TableCell>
                         <TableCell className="text-center font-medium">{b.qty_available}</TableCell>
                         <TableCell className="text-right font-semibold">
-                          ₹{(Number(b.qty_available) * Number(b.effective_cost || 0))
+                          &#8377;{(Number(b.qty_available) * Number(b.effective_cost || 0))
                             .toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                         </TableCell>
                       </TableRow>

@@ -330,7 +330,7 @@ export default function Inventory() {
                         </div>
                       </TableCell>
                       <TableCell className="text-sm md:text-lg py-2 md:py-4 font-medium">{product.quantity} Units</TableCell>
-                      <TableCell className="text-sm md:text-lg py-2 md:py-4 font-bold text-green-700">₹{product.selling_price}</TableCell>
+                      <TableCell className="text-sm md:text-lg py-2 md:py-4 font-bold text-green-700">&#8377;{product.selling_price}</TableCell>
                       <TableCell className="hidden sm:table-cell py-2 md:py-4">
                         <Badge
                           variant={

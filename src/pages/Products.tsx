@@ -1037,7 +1037,7 @@ export default function Products() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
 
-                  <Label htmlFor="rate" className="text-lg font-medium">Rate (₹)</Label>
+                  <Label htmlFor="rate" className="text-lg font-medium">Rate (&#8377;)</Label>
 
                   <Input
                     id="rate"
@@ -1064,7 +1064,7 @@ export default function Products() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="mrp" className="text-lg font-medium">MRP (₹)</Label>
+                  <Label htmlFor="mrp" className="text-lg font-medium">MRP (&#8377;)</Label>
                   <Input
                     id="mrp"
                     name="mrp"

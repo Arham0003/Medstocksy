@@ -247,7 +247,7 @@ export default function QuickAddMedicineSheet({
                       >
                         <span className="truncate text-xs font-medium text-gray-700">{m.name}</span>
                         <span className="flex items-center gap-1 shrink-0 text-[11px] font-semibold text-emerald-700">
-                          ₹{m.selling_price?.toFixed(2)} <ArrowRight className="h-3 w-3" />
+                          &#8377;{m.selling_price?.toFixed(2)} <ArrowRight className="h-3 w-3" />
                         </span>
                       </button>
                     ))}
@@ -339,7 +339,7 @@ export default function QuickAddMedicineSheet({
                   <span className="font-semibold text-sm truncate">{savedProduct?.name}</span>
                 </div>
                 <p className="text-xs text-emerald-600/80 mt-1">
-                  ₹{savedProduct?.selling_price?.toFixed(2)} each · In stock: {savedProduct?.quantity}
+                  &#8377;{savedProduct?.selling_price?.toFixed(2)} each · In stock: {savedProduct?.quantity}
                 </p>
               </div>
 
@@ -393,7 +393,7 @@ export default function QuickAddMedicineSheet({
               {/* Line total */}
               <div className="flex items-center justify-between rounded-lg bg-gray-50 border border-gray-100 px-4 py-3">
                 <span className="text-xs font-medium text-gray-500">Line total</span>
-                <span className="text-lg font-bold text-emerald-700">₹{lineTotal.toFixed(2)}</span>
+                <span className="text-lg font-bold text-emerald-700">&#8377;{lineTotal.toFixed(2)}</span>
               </div>
             </div>
 

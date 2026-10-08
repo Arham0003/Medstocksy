@@ -430,6 +430,13 @@ CREATE POLICY "owner_manages_sequences" ON public.invoice_sequences
   USING (account_id = public.get_user_account_id())
   WITH CHECK (account_id = public.get_user_account_id());
 
+-- Explicit, rather than relying on the project's default privileges being
+-- configured as expected. SELECT so an owner can inspect their own counters,
+-- INSERT and UPDATE because next_invoice_number upserts. Deliberately no
+-- DELETE: removing a counter row would reset the series, which is the one
+-- thing Rule 46 numbering must never allow.
+GRANT SELECT, INSERT, UPDATE ON public.invoice_sequences TO authenticated;
+
 COMMENT ON TABLE public.invoice_sequences IS
   'One counter per account, series and financial year. Gaps are acceptable and expected; duplicates are not.';
 

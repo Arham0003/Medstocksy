@@ -5,7 +5,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// INR formatter - adds Indian-style separators (1,23,456.78) and the ₹ symbol
+// INR formatter - adds Indian-style separators (1,23,456.78) and the \u20B9 symbol
 const inrFormatter = new Intl.NumberFormat('en-IN', {
   style: 'currency',
   currency: 'INR',

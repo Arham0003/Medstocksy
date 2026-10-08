@@ -18,7 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { calcGst } from '@/lib/gst';
+import { calcGst, splitGst } from '@/lib/gst';
 import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft';
 import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
 import { apportionGst } from '@/lib/gst';
@@ -724,30 +724,27 @@ export default function Sales() {
         const discountAmount = (grossAmount * discountPercentage) / 100;
         const netAmount = grossAmount - discountAmount;
 
-        // 3rd: Calculation of GST
-        // Use custom GST rate if set, otherwise use default from settings
+        // Use custom GST rate if set, otherwise fall back to settings default
         const itemGstRate = customGstRates[item.id] !== undefined ? customGstRates[item.id] : currentSettings?.default_gst_rate || 0;
 
-        let finalGstAmount = 0;
-        let finalTotalPrice = 0;
+        // Indian GST sequence (CGST Act, Rule 33):
+        // Step 3: taxable = net_inclusive / (1 + rate/100)
+        // Steps 4-5: CGST/SGST each independently rounded from taxable base
+        // Step 6: payable = taxable + CGST + SGST
+        let finalTotalPrice = netAmount;
+        let split = { taxable: netAmount, cgst: 0, sgst: 0, igst: 0, total: 0, rate: itemGstRate, gross: netAmount };
 
         if (currentSettings?.gst_enabled) {
           const gstResult = calcGst(netAmount, itemGstRate, isGstInclusive);
-          finalGstAmount = gstResult.gstAmount;
-          finalTotalPrice = gstResult.totalPrice;
-        } else {
-          finalTotalPrice = netAmount;
-          finalGstAmount = 0;
+          const taxableRounded = Math.round(gstResult.taxableValue * 100) / 100;
+          split = splitGst(taxableRounded, itemGstRate, isInterstate);
+          finalTotalPrice = isGstInclusive ? netAmount : split.gross;
         }
 
         const totalPriceRounded = Math.round(finalTotalPrice);
         const isSettled = paymentMode !== 'credit';
 
-        // GSTR-1 breakup. The charged tax is apportioned, not recomputed, so
-        // CGST + SGST always adds back to gst_amount exactly.
         const batch = fefoTop.get(item.id);
-        const taxableValue = isGstInclusive ? netAmount - finalGstAmount : netAmount;
-        const split = apportionGst(finalGstAmount, isInterstate);
 
         return {
           account_id: profile?.account_id,
@@ -759,8 +756,8 @@ export default function Sales() {
           pcs_per_unit: pcsPerUnitMap[item.id] || null,
           unit_price: Math.round(unitPrice * 100) / 100,
           total_price: totalPriceRounded,
-          gst_amount: Math.round(finalGstAmount * 100) / 100,
-          taxable_value: Math.round(taxableValue * 100) / 100,
+          gst_amount: split.total,
+          taxable_value: split.taxable,
           gst_rate: itemGstRate,
           cgst_amount: split.cgst,
           sgst_amount: split.sgst,
@@ -1362,7 +1359,7 @@ export default function Sales() {
     const customerPhone = targetTransaction.customer_phone || "Not provided";
 
     let itemsStr = targetTransaction.items.map(item => 
-      `- ${item.products?.name}: ${item.quantity} ${item.sub_qty ? `(+${item.sub_qty} pcs)` : ''} x ₹${item.unit_price} = ₹${item.total_price}`
+      `- ${item.products?.name}: ${item.quantity} ${item.sub_qty ? `(+${item.sub_qty} pcs)` : ''} x \u20B9${item.unit_price} = \u20B9${item.total_price}`
     ).join('\n');
 
     const content = `
@@ -1374,8 +1371,8 @@ ITEMS:
 ${itemsStr}
 
 ====================
-GST Amount: ₹${(targetTransaction.gst_amount || 0).toFixed(2)}
-Total Amount: ₹${targetTransaction.total_amount.toFixed(2)}
+GST Amount: \u20B9${(targetTransaction.gst_amount || 0).toFixed(2)}
+Total Amount: \u20B9${targetTransaction.total_amount.toFixed(2)}
 
 CUSTOMER DETAILS
 ====================
@@ -1731,7 +1728,7 @@ Thank you for your purchase!
                             </div>
 
                             <div className="flex flex-col">
-                              <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Rate ₹</span>
+                              <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-medium leading-none mb-0.5">Rate &#8377;</span>
                               <Input
                                 type="number"
                                 inputMode="decimal"
@@ -1767,9 +1764,9 @@ Thank you for your purchase!
                             {/* Total + (optional) GST sub-line + desktop remove -pushed to the far right */}
                             <div className="ml-auto flex items-center gap-2">
                               <div className="text-right leading-tight">
-                                <div className="text-sm sm:text-base font-bold text-emerald-700">₹{itemTotal.toFixed(2)}</div>
+                                <div className="text-sm sm:text-base font-bold text-emerald-700">&#8377;{itemTotal.toFixed(2)}</div>
                                 {settings?.gst_enabled && itemGstAmount > 0 && (
-                                  <div className="text-[10px] text-muted-foreground leading-none mt-0.5">incl ₹{itemGstAmount.toFixed(2)} GST</div>
+                                  <div className="text-[10px] text-muted-foreground leading-none mt-0.5">incl &#8377;{itemGstAmount.toFixed(2)} GST</div>
                                 )}
                               </div>
                               <button
@@ -1894,7 +1891,7 @@ Thank you for your purchase!
                               </td>
                               {/* Amount */}
                               <td className="px-1.5 py-1 border-r border-slate-200 align-middle text-right leading-tight">
-                                <div className="font-bold text-emerald-700 tabular-nums">₹{itemTotal.toFixed(2)}</div>
+                                <div className="font-bold text-emerald-700 tabular-nums">&#8377;{itemTotal.toFixed(2)}</div>
                                 {settings?.gst_enabled && itemGstAmount > 0 && (
                                   <div className="text-[9px] text-slate-400 leading-none">+{itemGstAmount.toFixed(2)}</div>
                                 )}
@@ -2020,7 +2017,7 @@ Thank you for your purchase!
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Subtotal</span>
-                      <span>₹{orderTotals.subtotal.toFixed(2)}</span>
+                      <span>&#8377;{orderTotals.subtotal.toFixed(2)}</span>
                     </div>
 
                     {/* Discount Section */}
@@ -2041,18 +2038,18 @@ Thank you for your purchase!
                       {discountPercentage > 0 && (
                         <div className="flex justify-between text-red-600">
                           <span>Discount ({discountPercentage}%)</span>
-                          <span>-₹{orderTotals.discountAmount.toFixed(2)}</span>
+                          <span>-&#8377;{orderTotals.discountAmount.toFixed(2)}</span>
                         </div>
                       )}
                     </div>
 
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">GST</span>
-                      <span>₹{orderTotals.gstAmount.toFixed(2)}</span>
+                      <span>&#8377;{orderTotals.gstAmount.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between font-bold text-lg border-t pt-2.5 mt-1">
                       <span>Total</span>
-                      <span className="text-green-600">₹{orderTotals.grandTotal.toFixed(2)}</span>
+                      <span className="text-green-600">&#8377;{orderTotals.grandTotal.toFixed(2)}</span>
                     </div>
                   </div>
                 </Card>
@@ -2088,7 +2085,7 @@ Thank you for your purchase!
                 <div className="flex items-center gap-2">
                   <div className="flex flex-col leading-tight">
                     <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payable</span>
-                    <span className="text-xl font-bold text-emerald-700">₹{orderTotals.grandTotal.toFixed(2)}</span>
+                    <span className="text-xl font-bold text-emerald-700">&#8377;{orderTotals.grandTotal.toFixed(2)}</span>
                   </div>
                   <Button
                     type="button"
@@ -2154,7 +2151,7 @@ Thank you for your purchase!
                 {loading ? 'Loading...' : `${totalSales} transaction${totalSales === 1 ? '' : 's'} found`}
               </CardDescription>
               <div className="hidden md:flex flex-wrap items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
-                {[['↑↓', 'Move'], ['Enter', 'View'], ['E', 'Edit'], ['P', 'Print'], ['N', 'New']].map(([k, l]) => (
+                {[['\u2191\u2193', 'Move'], ['Enter', 'View'], ['E', 'Edit'], ['P', 'Print'], ['N', 'New']].map(([k, l]) => (
                   <span key={k} className="inline-flex items-center gap-1">
                     <kbd className="px-1 rounded border bg-muted font-semibold">{k}</kbd>{l}
                   </span>
@@ -2282,7 +2279,7 @@ Thank you for your purchase!
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-sm font-medium truncate">{group.customer_name}</p>
-                            <p className="text-base font-bold text-green-700 whitespace-nowrap">₹{group.total_amount.toFixed(2)}</p>
+                            <p className="text-base font-bold text-green-700 whitespace-nowrap">&#8377;{group.total_amount.toFixed(2)}</p>
                           </div>
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[11px] text-muted-foreground">
                             {group.customer_phone && <span>{group.customer_phone}</span>}
@@ -2355,7 +2352,7 @@ Thank you for your purchase!
                                   × {item.quantity}{item.sub_qty ? ` +${item.sub_qty}` : ''}
                                 </span>
                               </div>
-                              <span className="font-medium whitespace-nowrap">₹{item.total_price.toFixed(2)}</span>
+                              <span className="font-medium whitespace-nowrap">&#8377;{item.total_price.toFixed(2)}</span>
                             </div>
                           ))}
                         </div>
@@ -2415,7 +2412,7 @@ Thank you for your purchase!
                             </TableCell>
                             <TableCell className="hidden lg:table-cell py-2.5 text-sm">{group.customer_phone || '-'}</TableCell>
                             <TableCell className="hidden md:table-cell py-2.5 text-center text-sm">{group.items.length}</TableCell>
-                            <TableCell className="py-2.5 text-right font-semibold text-green-700">₹{group.total_amount.toFixed(2)}</TableCell>
+                            <TableCell className="py-2.5 text-right font-semibold text-green-700">&#8377;{group.total_amount.toFixed(2)}</TableCell>
                             <TableCell className="hidden lg:table-cell py-2.5 text-center">
                               <Badge variant="outline" className={`text-[10px] capitalize h-5 ${paymentClass}`}>
                                 {paymentMode}
@@ -2482,8 +2479,8 @@ Thank you for your purchase!
                                               {item.quantity}
                                               {item.sub_qty ? <span className="text-xs text-blue-600 ml-1">+{item.sub_qty}</span> : null}
                                             </TableCell>
-                                            <TableCell className="py-2 text-right text-sm">₹{item.unit_price.toFixed(2)}</TableCell>
-                                            <TableCell className="py-2 text-right text-sm font-medium">₹{item.total_price.toFixed(2)}</TableCell>
+                                            <TableCell className="py-2 text-right text-sm">&#8377;{item.unit_price.toFixed(2)}</TableCell>
+                                            <TableCell className="py-2 text-right text-sm font-medium">&#8377;{item.total_price.toFixed(2)}</TableCell>
                                           </TableRow>
                                         ))}
                                       </TableBody>
@@ -2695,7 +2692,7 @@ Thank you for your purchase!
                                   </div>
                                 )}
                                 <div className="space-y-0.5">
-                                  <Label className="text-[10px] uppercase tracking-wide text-slate-500">Rate (₹)</Label>
+                                  <Label className="text-[10px] uppercase tracking-wide text-slate-500">Rate (&#8377;)</Label>
                                   <Input
                                     type="number"
                                     step="0.01"
@@ -2720,7 +2717,7 @@ Thank you for your purchase!
                                 <div className="space-y-0.5 col-span-2 sm:col-span-1">
                                   <Label className="text-[10px] uppercase tracking-wide text-slate-500">Line total</Label>
                                   <div className="h-8 px-2 flex items-center font-semibold tabular-nums text-slate-900 border rounded-md bg-slate-50/50">
-                                    ₹{lineTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                    &#8377;{lineTotal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                   </div>
                                 </div>
                               </div>
@@ -2770,7 +2767,7 @@ Thank you for your purchase!
                         <div className="flex items-center justify-between gap-2">
                           <span className="truncate font-medium">{p.name}</span>
                           <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                            ₹{Number(p.selling_price).toLocaleString('en-IN')} · Stock: {p.quantity}
+                            &#8377;{Number(p.selling_price).toLocaleString('en-IN')} · Stock: {p.quantity}
                           </span>
                         </div>
                         {p.batch_number && (
@@ -2863,16 +2860,16 @@ Thank you for your purchase!
                 <div className="flex items-center gap-3 sm:gap-4 tabular-nums">
                   <div className="text-right">
                     <div className="text-[10px] uppercase text-slate-500">Subtotal</div>
-                    <div className="text-sm font-medium text-slate-900">₹{editCartTotals.net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                    <div className="text-sm font-medium text-slate-900">&#8377;{editCartTotals.net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-[10px] uppercase text-slate-500">GST</div>
-                    <div className="text-sm font-medium text-slate-900">₹{editCartTotals.gst.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                    <div className="text-sm font-medium text-slate-900">&#8377;{editCartTotals.gst.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
                   </div>
                   <div className="text-right border-l border-blue-200/70 pl-3 sm:pl-4">
                     <div className="text-[10px] uppercase text-blue-700/80 font-semibold">Total</div>
                     <div className="text-base sm:text-xl font-bold text-blue-700">
-                      ₹{editCartTotals.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      &#8377;{editCartTotals.total.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -2946,12 +2943,12 @@ Thank you for your purchase!
                       <div>
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Total Amount</p>
                         <p className="text-2xl font-bold text-green-700 leading-tight mt-0.5">
-                          ₹{selectedTransaction.total_amount.toFixed(2)}
+                          &#8377;{selectedTransaction.total_amount.toFixed(2)}
                         </p>
                       </div>
                       {(selectedTransaction.gst_amount || 0) > 0 && (
                         <p className="text-[11px] text-muted-foreground mb-0.5">
-                          incl. ₹{(selectedTransaction.gst_amount || 0).toFixed(2)} GST
+                          incl. &#8377;{(selectedTransaction.gst_amount || 0).toFixed(2)} GST
                         </p>
                       )}
                     </div>
@@ -2973,7 +2970,7 @@ Thank you for your purchase!
                     </div>
                     <div className="rounded-md border p-3">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">GST</p>
-                      <p className="text-sm font-medium mt-0.5">₹{(selectedTransaction.gst_amount || 0).toFixed(2)}</p>
+                      <p className="text-sm font-medium mt-0.5">&#8377;{(selectedTransaction.gst_amount || 0).toFixed(2)}</p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">{(selectedTransaction.gst_amount || 0) > 0 ? 'tax included' : 'no tax'}</p>
                     </div>
                   </div>
@@ -3002,8 +2999,8 @@ Thank you for your purchase!
                                   {item.quantity}
                                   {item.sub_qty ? <span className="text-[10px] text-blue-600 ml-1">+{item.sub_qty}</span> : null}
                                 </TableCell>
-                                <TableCell className="hidden sm:table-cell py-2 text-sm text-right">₹{item.unit_price.toFixed(2)}</TableCell>
-                                <TableCell className="py-2 text-sm text-right font-medium">₹{item.total_price.toFixed(2)}</TableCell>
+                                <TableCell className="hidden sm:table-cell py-2 text-sm text-right">&#8377;{item.unit_price.toFixed(2)}</TableCell>
+                                <TableCell className="py-2 text-sm text-right font-medium">&#8377;{item.total_price.toFixed(2)}</TableCell>
                               </TableRow>
                             ))}
                           </TableBody>

@@ -672,6 +672,20 @@ CREATE INDEX IF NOT EXISTS idx_sales_account_type_date
 DROP INDEX IF EXISTS public.idx_sales_customer_phone_new;
 DROP INDEX IF EXISTS public.idx_sales_sale_date_new;
 
+-- #####################################################################
+-- ##  PART C - SALESMAN AND CUSTOMER TYPE
+-- ##
+-- ##  From 20261006000000. Three nullable columns on sales; existing rows
+-- ##  read as NULL and nothing is rewritten.
+-- #####################################################################
+-- Adds salesman name/phone and customer type to sales rows.
+-- All three columns are optional (NULL for pre-migration rows).
+
+ALTER TABLE sales
+  ADD COLUMN IF NOT EXISTS salesman_name    TEXT,
+  ADD COLUMN IF NOT EXISTS salesman_phone   TEXT,
+  ADD COLUMN IF NOT EXISTS customer_type    TEXT;   -- e.g. 'Normal', 'Distributor', 'Chemist', 'Hospital'
+
 COMMIT;
 
 -- =====================================================================
@@ -833,6 +847,18 @@ SELECT
 FROM pg_indexes
 WHERE schemaname='public' AND tablename='sales'
   AND indexname IN ('idx_sales_customer_phone_new','idx_sales_sale_date_new')
+
+UNION ALL
+SELECT
+  'C. salesman and customer type',
+  count(*)::text || ' of 3',
+  CASE WHEN count(*) = 3 THEN 'OK' ELSE 'MISSING' END
+FROM information_schema.columns
+WHERE (table_schema, table_name, column_name) IN (
+  ('public','sales','salesman_name'),
+  ('public','sales','salesman_phone'),
+  ('public','sales','customer_type')
+)
 
 UNION ALL
 SELECT

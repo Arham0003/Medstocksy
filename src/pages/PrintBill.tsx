@@ -1192,19 +1192,19 @@ export default function PrintBill() {
                     <table className="bill-table">
                         <thead>
                             <tr>
-                                <th style={{ width: '3%' }}>#</th>
-                                <th style={{ textAlign: 'left', width: '29%' }}>Products</th>
-                                <th style={{ width: '10%' }}>HSN</th>
-                                <th style={{ width: '10%' }}>Batch</th>
-                                <th style={{ width: '6%' }}>Exp</th>
-                                <th style={{ width: '5%' }}>Qty</th>
-                                {isWholesaleBill && <th style={{ width: '4%' }}>Free</th>}
-                                <th style={{ width: '7%' }}>MRP</th>
-                                <th style={{ width: '7%' }}>Rate</th>
-                                <th style={{ width: '5%', fontSize: '7pt' }}>Dis%</th>
-                                <th style={{ width: '5%', fontSize: '7pt' }}>CGST</th>
-                                <th style={{ width: '5%', fontSize: '7pt' }}>SGST</th>
-                                <th style={{ width: '8%' }}>Amt</th>
+                                <th style={{ width: '3%', fontSize: '6pt' }}>#</th>
+                                <th style={{ textAlign: 'left', width: '29%', fontSize: '6pt' }}>Products</th>
+                                <th style={{ width: '10%', fontSize: '6pt' }}>HSN</th>
+                                <th style={{ width: '10%', fontSize: '6pt' }}>Batch</th>
+                                <th style={{ width: '6%', fontSize: '6pt' }}>Exp</th>
+                                <th style={{ width: '5%', fontSize: '6pt' }}>Qty</th>
+                                {isWholesaleBill && <th style={{ width: '4%', fontSize: '6pt' }}>Free</th>}
+                                <th style={{ width: '7%', fontSize: '6pt' }}>MRP</th>
+                                <th style={{ width: '7%', fontSize: '6pt' }}>Rate</th>
+                                <th style={{ width: '5%', fontSize: '6pt' }}>Dis</th>
+                                <th style={{ width: '5%', fontSize: '6pt' }}>CGST</th>
+                                <th style={{ width: '5%', fontSize: '6pt' }}>SGST</th>
+                                <th style={{ width: '8%', fontSize: '6pt' }}>Amt</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1213,23 +1213,18 @@ export default function PrintBill() {
                                     ? item.quantity + (item.sub_qty / item.pcs_per_unit)
                                     : (item.quantity || 1);
 
-                                // Calculate GST rates
-                                const grossAmount = item.unit_price * effectiveQty;
-                                const discountAmt = (grossAmount * (item.discount_percentage || 0)) / 100;
-                                const netAmount = grossAmount - discountAmt;
-
-                                // CGST & SGST: prefer the amounts frozen on the sale line.
-                                // Bills raised before the GST-split migration have none,
-                                // so an even split of gst_amount stands in.
+                                // All amounts (unit_price, total_price, gst_amount, cgst/sgst/igst, taxable_value)
+                                // are calculated at sale-entry time (RecordSale) and stored in the DB.
+                                // PrintBill only reads them — no local re-calculation.
                                 const hasStoredSplit =
                                     item.cgst_amount != null || item.sgst_amount != null || item.igst_amount != null;
                                 const cgstAmt = hasStoredSplit ? Math.abs(item.cgst_amount ?? 0) : Math.abs(item.gst_amount || 0) / 2;
                                 const sgstAmt = hasStoredSplit ? Math.abs(item.sgst_amount ?? 0) : Math.abs(item.gst_amount || 0) / 2;
                                 const igstAmt = hasStoredSplit ? Math.abs(item.igst_amount ?? 0) : 0;
 
+                                // MRP = live product price (for display); Rate = the actual price billed (stored).
                                 const mrp = item.selling_price || item.unit_price;
-                                const gstPerUnit = (item.gst_amount || 0) / effectiveQty;
-                                const rate = mrp - gstPerUnit;
+                                const rate = item.unit_price; // stored at sale time — correct for both retail & wholesale
 
                                 return (
                                     <tr key={item.id}>
@@ -1259,9 +1254,14 @@ export default function PrintBill() {
                                         )}
                                         <td style={{ textAlign: 'right' }}>{mrp.toFixed(2)}</td>
                                         <td style={{ textAlign: 'right' }}>{item.is_free ? '0.00' : rate.toFixed(2)}</td>
-                                        <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>{item.discount_percentage ? item.discount_percentage + '%' : '-'}</td>
-                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? igstAmt.toFixed(2) : (cgstAmt > 0 ? cgstAmt.toFixed(2) : '-')}</td>
-                                        <td style={{ textAlign: 'right', fontSize: '6.5pt' }}>{igstAmt > 0 ? '-' : (sgstAmt > 0 ? sgstAmt.toFixed(2) : '-')}</td>
+                                        <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>{item.discount_percentage ? Number(item.discount_percentage).toFixed(2) : '-'}</td>
+                                        {/* GST split rate: intrastate = half each, interstate = full IGST in SGST col */}
+                                        <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>
+                                            {item.is_free ? '-' : igstAmt > 0 ? '-' : (item.gst ? (Number(item.gst) / 2).toFixed(2) : '-')}
+                                        </td>
+                                        <td style={{ textAlign: 'center', fontSize: '6.5pt' }}>
+                                            {item.is_free ? '-' : igstAmt > 0 ? Number(item.gst).toFixed(2) : (item.gst ? (Number(item.gst) / 2).toFixed(2) : '-')}
+                                        </td>
                                         <td style={{ textAlign: 'right', fontWeight: 700 }}>{item.total_price.toFixed(2)}</td>
                                     </tr>
                                 );
@@ -1287,12 +1287,13 @@ export default function PrintBill() {
                         <table className="bill-table" style={{ fontSize: '6.5pt' }}>
                             <thead>
                                 <tr>
-                                    <th style={{ textAlign: 'left', width: '20%' }}>HSN</th>
-                                    <th style={{ width: '10%' }}>Rate</th>
-                                    <th style={{ width: '20%' }}>Taxable Value</th>
-                                    <th style={{ width: '17%' }}>CGST</th>
-                                    <th style={{ width: '17%' }}>SGST</th>
-                                    <th style={{ width: '16%' }}>IGST</th>
+                                    <th style={{ textAlign: 'left', width: '18%' }}>HSN</th>
+                                    <th style={{ width: '9%' }}>Rate</th>
+                                    <th style={{ width: '18%' }}>Taxable Value</th>
+                                    <th style={{ width: '14%' }}>CGST</th>
+                                    <th style={{ width: '14%' }}>SGST</th>
+                                    <th style={{ width: '13%' }}>IGST</th>
+                                    <th style={{ width: '14%' }}>Total</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1304,6 +1305,7 @@ export default function PrintBill() {
                                         <td style={{ textAlign: 'right' }}>{row.cgst.toFixed(2)}</td>
                                         <td style={{ textAlign: 'right' }}>{row.sgst.toFixed(2)}</td>
                                         <td style={{ textAlign: 'right' }}>{row.igst.toFixed(2)}</td>
+                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{(row.cgst + row.sgst + row.igst).toFixed(2)}</td>
                                     </tr>
                                 ))}
                                 <tr style={{ fontWeight: 700 }}>
@@ -1320,6 +1322,9 @@ export default function PrintBill() {
                                     </td>
                                     <td style={{ textAlign: 'right' }}>
                                         {hsnSummary.reduce((n, r) => n + r.igst, 0).toFixed(2)}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>
+                                        {hsnSummary.reduce((n, r) => n + r.cgst + r.sgst + r.igst, 0).toFixed(2)}
                                     </td>
                                 </tr>
                             </tbody>

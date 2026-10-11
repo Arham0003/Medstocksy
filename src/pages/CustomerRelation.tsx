@@ -50,6 +50,8 @@ type CrmSale = {
   payment_mode?: string;
   received_amount?: number;
   is_settled?: boolean;
+  /** Set on credit sales by 20261011000000; null on cash, UPI and card. */
+  credit_due_date?: string | null;
 };
 
 type CustomerSummary = {
@@ -94,7 +96,7 @@ export default function CustomerRelation() {
       try {
         const { data, error } = await supabase
           .from('sales')
-          .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled')
+          .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled, credit_due_date')
           .eq('account_id', profile?.account_id)
           // Retail only. Wholesale parties have no refill lifecycle, so they are
           // permanently out of this screen rather than filtered in the UI.
@@ -107,7 +109,7 @@ export default function CustomerRelation() {
           if (error.message?.includes('column')) {
             const { data: fallbackData, error: fallbackError } = await supabase
               .from('sales')
-              .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled')
+              .select('id, created_at, bill_id, customer_name, customer_phone, customer_address, doctor_name, sale_date, prescription_months, months_taken, account_id, total_price, payment_mode, received_amount, is_settled, credit_due_date')
               .eq('account_id', profile?.account_id)
               .eq('sale_type', 'retail')
               .not('customer_phone', 'is', null)
@@ -833,6 +835,25 @@ export default function CustomerRelation() {
                                       <div className="min-w-0 flex-1">
                                         <span className="font-medium">{new Date(bill.sale_date || bill.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}</span>
                                         {bill.doctor_name && <span className="text-muted-foreground ml-2">Dr. {bill.doctor_name}</span>}
+                                        {/* Only worth showing while money is still owed. */}
+                                        {billBalance > 0 && bill.credit_due_date && (
+                                          <span
+                                            className={cn(
+                                              'ml-2 whitespace-nowrap',
+                                              bill.credit_due_date < new Date().toISOString().slice(0, 10)
+                                                ? 'font-semibold text-red-600'
+                                                : 'text-amber-600',
+                                            )}
+                                            title={
+                                              bill.credit_due_date < new Date().toISOString().slice(0, 10)
+                                                ? 'This credit is past its due date'
+                                                : 'Credit due date'
+                                            }
+                                          >
+                                            {bill.credit_due_date < new Date().toISOString().slice(0, 10) ? 'overdue ' : 'due '}
+                                            {new Date(bill.credit_due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                                          </span>
+                                        )}
                                       </div>
                                       <span className="text-muted-foreground whitespace-nowrap">{formatINR(billTotal)}</span>
                                       <span className={cn('font-medium whitespace-nowrap', billBalance > 0 ? 'text-orange-600' : 'text-emerald-600')}>

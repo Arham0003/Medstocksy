@@ -273,6 +273,9 @@ export default function RecordSale({
 
   // ─── Payment ────────────────────────────────────────────────────────────
   const [paymentMode, setPaymentMode] = useState(hydrated?.paymentMode ?? 'cash');
+  // Credit only. Cleared whenever the mode moves away from credit, so a bill
+  // switched to cash can never carry a stale due date to the database.
+  const [creditDueDate, setCreditDueDate] = useState<string>(hydrated?.creditDueDate ?? '');
   const [receivedAmount, setReceivedAmount] = useState<number | ''>(hydrated?.receivedAmount ?? '');
   const [globalDiscount, setGlobalDiscount] = useState(hydrated?.globalDiscount ?? 0);
 
@@ -1106,6 +1109,7 @@ export default function RecordSale({
   // - Credit: keep at 0 by default, but DON'T reset if user has typed a partial amount
   useEffect(() => {
     if (paymentMode !== 'credit') {
+      setCreditDueDate('');
       setReceivedAmount(totals.grandTotal);
     } else {
       // Only set to 0 when switching TO credit mode - handled by the paymentMode change below
@@ -1115,6 +1119,14 @@ export default function RecordSale({
   // When payment mode changes, reset receivedAmount appropriately
   useEffect(() => {
     if (paymentMode === 'credit') {
+      // A fortnight is the usual term in retail pharmacy, and it is a default
+      // rather than a decision: the field stays editable and is validated below.
+      setCreditDueDate(prev => {
+        if (prev) return prev;
+        const d = new Date();
+        d.setDate(d.getDate() + 15);
+        return d.toISOString().slice(0, 10);
+      });
       setReceivedAmount(0); // Start credit with 0 paid (user can type partial amount)
     } else {
       setReceivedAmount(totals.grandTotal); // Cash/UPI/Card: default to full
@@ -1158,13 +1170,13 @@ export default function RecordSale({
     try {
       localStorage.setItem(billDataPrefix(isWholesale ? 'wholesale' : undefined) + persistKey, JSON.stringify({
         customerName, customerPhone, customerAddress, doctorName, billDate,
-        rows, paymentMode, receivedAmount, globalDiscount,
+        rows, paymentMode, creditDueDate, receivedAmount, globalDiscount,
         editBillId, wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress,
         salesmanName, salesmanPhone, customerType,
       }));
     } catch { /* ignore quota errors */ }
   }, [persistKey, customerName, customerPhone, customerAddress, doctorName, billDate,
-      rows, paymentMode, receivedAmount, globalDiscount,
+      rows, paymentMode, creditDueDate, receivedAmount, globalDiscount,
       wholesaleGstin, wholesaleDl, wholesaleDlExpiry, shipToAddress, isWholesale,
       salesmanName, salesmanPhone, customerType]);
 
@@ -1245,6 +1257,17 @@ export default function RecordSale({
           variant: 'destructive',
           title: 'Customer Info Required',
           description: 'Name and Phone number are mandatory for credit sales.',
+        });
+        return;
+      }
+      // Without a due date the bill is invisible to the dues alert, which is
+      // the one thing this feature exists to prevent. The database refuses it
+      // too; this is the message that explains why.
+      if (!creditDueDate) {
+        toast({
+          variant: 'destructive',
+          title: 'Due date required',
+          description: 'A credit sale needs a date by which payment is expected.',
         });
         return;
       }
@@ -1369,6 +1392,7 @@ export default function RecordSale({
           batch_id: row.batchId,
           cogs_rate: row.cogsRate || null,
           payment_mode: paymentMode,
+          credit_due_date: paymentMode === 'credit' ? creditDueDate : null,
           customer_name: customerName || 'Walk-in Customer',
           customer_phone: customerPhone || null,
           customer_address: customerAddress || null,
@@ -1428,6 +1452,7 @@ export default function RecordSale({
               batch_id: row.batchId,
               cogs_rate: row.cogsRate || null,
               payment_mode: paymentMode,
+              credit_due_date: paymentMode === 'credit' ? creditDueDate : null,
               customer_name: customerName || 'Walk-in Customer',
               customer_phone: customerPhone || null,
               customer_address: customerAddress || null,
@@ -1585,7 +1610,7 @@ export default function RecordSale({
     } finally {
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
+  }, [rows, settings, globalDiscount, paymentMode, creditDueDate, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
       wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode, salesmanName, salesmanPhone, customerType]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
@@ -2805,6 +2830,39 @@ export default function RecordSale({
                   placeholder="0.00"
                 />
               </div>
+
+              {/* Due date - credit only. Rendered beside Amt Paid because the
+                  two are one decision: how much is outstanding, and by when. */}
+              {paymentMode === 'credit' && (
+                <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md border transition-all flex-1 sm:flex-none min-w-0 ${
+                  creditDueDate ? 'border-orange-200 bg-orange-50' : 'border-red-300 bg-red-50'
+                }`}>
+                  <Label
+                    htmlFor="credit-due-date"
+                    className={`text-[11px] font-medium shrink-0 ${creditDueDate ? 'text-orange-700' : 'text-red-700'}`}
+                  >
+                    Due by
+                  </Label>
+                  <Input
+                    id="credit-due-date"
+                    type="date"
+                    value={creditDueDate}
+                    min={billDate}
+                    onChange={e => setCreditDueDate(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (e.shiftKey) receivedRef.current?.focus();
+                        else finalizeRef.current?.focus();
+                      }
+                    }}
+                    title="The date this credit is expected to be paid. Required, and what the dashboard alert is driven by."
+                    className={`flex-1 min-w-0 sm:flex-none sm:w-[8.5rem] h-8 text-sm font-semibold border-none shadow-none bg-transparent focus:ring-0 ${
+                      creditDueDate ? 'text-orange-900' : 'text-red-900'
+                    }`}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Live due amount indicator for partial / credit payments */}

@@ -14,7 +14,8 @@ import {
   Plus,
   Search,
   Trash2,
-  Activity,
+  CalendarClock,
+  CheckCircle2,
   PieChart as PieChartIcon
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -28,13 +29,14 @@ import {
   Legend
 } from 'recharts';
 
-interface RecentSale {
-  id: string;
-  bill_id?: string | null;
-  created_at: string;
-  total_price: number | null;
-  customer_name?: string | null;
-  products?: { name: string } | null;
+/** One unsettled credit bill, folded up from the rows sharing its bill_id. */
+interface CreditDue {
+  billId: string;
+  customer: string;
+  due: number;
+  dueDate: string;
+  isWholesale: boolean;
+  overdue: boolean;
 }
 
 const Index = () => {
@@ -51,22 +53,34 @@ const Index = () => {
     totalCredit: 0,
     healthy: 0,
   });
-  const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
+  const [creditDues, setCreditDues] = useState<CreditDue[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [productsRes, salesRes, salesForCrmRes, creditRes, recentRes] = await Promise.all([
+        // Seven days ahead, per the PRD. Computed once so the query and any
+        // later comparison cannot drift apart.
+        const windowEnd = new Date();
+        windowEnd.setDate(windowEnd.getDate() + 7);
+        const dueWindowEnd = windowEnd.toISOString().slice(0, 10);
+
+        const [productsRes, salesRes, salesForCrmRes, creditRes, duesRes] = await Promise.all([
           supabase.from('products').select('quantity, low_stock_threshold, expiry_date') as any,
           supabase.from('sales').select('id, created_at') as any,
           supabase.from('sales').select('id, created_at, prescription_months, months_taken') as any,
           supabase.from('sales').select('total_price, received_amount').eq('is_settled', false) as any,
+          // Unsettled credit falling due inside the next week, plus anything
+          // already overdue. Account scoping comes from RLS. The partial index
+          // on (account_id, credit_due_date) backs exactly this filter.
           supabase
             .from('sales')
-            .select('id, bill_id, created_at, total_price, customer_name, products(name)')
-            .order('created_at', { ascending: false })
-            .limit(6) as any,
+            .select('bill_id, customer_name, wholesale_customer_name, total_price, received_amount, credit_due_date, sale_type')
+            .eq('payment_mode', 'credit')
+            .eq('is_settled', false)
+            .not('credit_due_date', 'is', null)
+            .lte('credit_due_date', dueWindowEnd)
+            .order('credit_due_date', { ascending: true }) as any,
         ]);
 
         interface ProductData {
@@ -133,8 +147,36 @@ const Index = () => {
           healthy,
         });
 
-        if (!recentRes.error && recentRes.data) {
-          setRecentSales(recentRes.data as unknown as RecentSale[]);
+        // A bill is many rows; the dues list is one line per invoice, so the
+        // balance is accumulated across every row sharing a bill_id.
+        if (!duesRes.error && duesRes.data) {
+          const byBill = new Map<string, CreditDue>();
+          for (const r of duesRes.data as Record<string, unknown>[]) {
+            const key = String(r.bill_id || '');
+            if (!key) continue;
+            const balance = (Number(r.total_price) || 0) - (Number(r.received_amount) || 0);
+            const existing = byBill.get(key);
+            if (existing) {
+              existing.due += balance;
+              continue;
+            }
+            const dueDate = String(r.credit_due_date || '');
+            byBill.set(key, {
+              billId: key,
+              customer: String(r.wholesale_customer_name || r.customer_name || 'Walk-in'),
+              due: balance,
+              dueDate,
+              isWholesale: r.sale_type === 'wholesale',
+              overdue: !!dueDate && dueDate < today,
+            });
+          }
+          // Drop bills that are fully paid despite not being flagged settled,
+          // then keep the most urgent first.
+          setCreditDues(
+            [...byBill.values()]
+              .filter(d => d.due > 0.01)
+              .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
+          );
         }
       } catch (error) {
         console.error('Error fetching stats:', error);
@@ -153,16 +195,6 @@ const Index = () => {
     { name: 'Expired', value: stats.expired, color: '#64748b' },
   ].filter(d => d.value > 0);
 
-  const formatTimeAgo = (iso: string) => {
-    const diffMs = Date.now() - new Date(iso).getTime();
-    const mins = Math.floor(diffMs / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d ago`;
-  };
 
   return (
     <div className="space-y-10">
@@ -280,17 +312,19 @@ const Index = () => {
             </CardContent>
           </Card>
 
-          {/* Activity feed - right */}
+          {/* Upcoming credit dues - right.
+              Replaces the activity feed: what was just sold is already known,
+              what is about to fall due is not. */}
           <Card className="shadow-sm border-slate-200">
             <CardHeader>
               <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-emerald-50">
-                  <Activity className="h-4 w-4 text-emerald-600" />
+                <div className="p-2 rounded-lg bg-amber-50">
+                  <CalendarClock className="h-4 w-4 text-amber-600" />
                 </div>
                 <div>
-                  <CardTitle className="text-base font-semibold">Recent Activity</CardTitle>
+                  <CardTitle className="text-base font-semibold">Upcoming Credit Dues</CardTitle>
                   <CardDescription className="text-xs">
-                    Latest sales transactions
+                    Unpaid credit falling due in the next 7 days, and anything already overdue
                   </CardDescription>
                 </div>
               </div>
@@ -302,28 +336,49 @@ const Index = () => {
                     <div key={i} className="h-12 bg-slate-100 animate-pulse rounded-lg" />
                   ))}
                 </div>
-              ) : recentSales.length === 0 ? (
-                <div className="h-[220px] flex items-center justify-center text-muted-foreground text-sm">
-                  No recent sales
+              ) : creditDues.length === 0 ? (
+                <div className="h-[220px] flex flex-col items-center justify-center gap-2 text-center">
+                  <div className="p-2.5 rounded-full bg-emerald-50">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <p className="text-sm font-medium text-slate-700">Nothing due this week</p>
+                  <p className="text-xs text-muted-foreground">
+                    Credit sales with a due date inside 7 days appear here.
+                  </p>
                 </div>
               ) : (
                 <ul className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
-                  {recentSales.map((s) => (
+                  {creditDues.map((d) => (
                     <li
-                      key={s.id}
-                      onClick={() => navigate('/sales')}
-                      className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-slate-100 hover:border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors"
+                      key={d.billId}
+                      // Settlement lives where each sale type is already managed:
+                      // wholesale invoices in Wholesale Reports, retail in the CRM.
+                      onClick={() => navigate(d.isWholesale ? '/wholesale-reports' : '/customer-relation')}
+                      className={`flex items-center justify-between gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                        d.overdue
+                          ? 'border-red-200 bg-red-50/60 hover:bg-red-50'
+                          : 'border-amber-200 bg-amber-50/50 hover:bg-amber-50'
+                      }`}
                     >
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-slate-800 truncate">
-                          {s.products?.name || 'Sale'}
+                          {d.customer}
+                          {d.isWholesale && (
+                            <span className="ml-1.5 text-[10px] font-semibold uppercase text-violet-700">B2B</span>
+                          )}
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {s.customer_name || (s.bill_id ? `Bill #${s.bill_id}` : 'Walk-in')} · {formatTimeAgo(s.created_at)}
+                        <p className={`text-xs truncate flex items-center gap-1 ${d.overdue ? 'text-red-700' : 'text-amber-700'}`}>
+                          {d.overdue
+                            ? <AlertTriangle className="h-3 w-3 shrink-0" />
+                            : <Clock className="h-3 w-3 shrink-0" />}
+                          {d.overdue ? 'Overdue since ' : 'Due '}
+                          {new Date(d.dueDate).toLocaleDateString('en-IN', {
+                            day: '2-digit', month: 'short', year: 'numeric',
+                          })}
                         </p>
                       </div>
-                      <div className="text-sm font-semibold text-emerald-700 whitespace-nowrap">
-                        &#8377;{(s.total_price || 0).toFixed(2)}
+                      <div className={`text-sm font-semibold whitespace-nowrap ${d.overdue ? 'text-red-700' : 'text-amber-800'}`}>
+                        &#8377;{d.due.toFixed(2)}
                       </div>
                     </li>
                   ))}

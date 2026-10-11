@@ -138,6 +138,7 @@ export default function Sales() {
   // Sales list filtering states
   const [filterPaymentMode, setFilterPaymentMode] = useState('all');
   const [filterDateRange, setFilterDateRange] = useState('all');
+  const [filterSaleType, setFilterSaleType] = useState('all');
 
   // Edit Sale dialog -full edit: customer info, payment mode, item qty/price/gst, add or remove items
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -258,6 +259,9 @@ export default function Sales() {
         if (filterPaymentMode !== 'all') {
           query = query.eq('payment_mode', filterPaymentMode);
         }
+        if (filterSaleType !== 'all') {
+          query = query.eq('sale_type', filterSaleType);
+        }
         if (filterDateRange !== 'all') {
           const now = new Date();
           let startDate = new Date();
@@ -291,7 +295,7 @@ export default function Sales() {
         let query = supabase
           .from('sales')
           .select(`
-            id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, printed_at,
+            id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, printed_at, sale_type,
             customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode,
             products(name)
           `, { count: 'exact' });
@@ -307,7 +311,7 @@ export default function Sales() {
           let retryQuery = supabase
             .from('sales')
             .select(`
-              id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date,
+              id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, sale_type,
               customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode,
               products(name)
             `, { count: 'exact' });
@@ -333,7 +337,7 @@ export default function Sales() {
           let fallbackQuery = supabase
             .from('sales')
             .select(`
-              id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, payment_mode,
+              id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, payment_mode, sale_type,
               products(name)
             `, { count: 'exact' });
 
@@ -383,12 +387,12 @@ export default function Sales() {
 
   useEffect(() => {
     fetchData();
-  }, [currentPage, filterPaymentMode, filterDateRange]);
+  }, [currentPage, filterPaymentMode, filterDateRange, filterSaleType]);
 
   // Reset to first page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterPaymentMode, filterDateRange]);
+  }, [filterPaymentMode, filterDateRange, filterSaleType]);
 
   // F2 Shortcut for Record Sale
   useEffect(() => {
@@ -2165,9 +2169,9 @@ Thank you for your purchase!
                   <Button variant="outline" size="sm" className="h-9 gap-2">
                     <Filter className="h-4 w-4" />
                     Filters
-                    {(filterPaymentMode !== 'all' || filterDateRange !== 'all') && (
+                    {(filterPaymentMode !== 'all' || filterDateRange !== 'all' || filterSaleType !== 'all') && (
                       <Badge variant="secondary" className="ml-1 h-5 px-1 bg-blue-100 text-blue-700">
-                        { (filterPaymentMode !== 'all' ? 1 : 0) + (filterDateRange !== 'all' ? 1 : 0) }
+                        { (filterPaymentMode !== 'all' ? 1 : 0) + (filterDateRange !== 'all' ? 1 : 0) + (filterSaleType !== 'all' ? 1 : 0) }
                       </Badge>
                     )}
                   </Button>
@@ -2177,11 +2181,24 @@ Thank you for your purchase!
                     <div className="space-y-2">
                       <h4 className="font-medium leading-none">Filter Sales</h4>
                       <p className="text-sm text-muted-foreground">
-                        Refine the sales list by payment mode or date.
+                        Refine the sales list by type, payment mode or date.
                       </p>
                     </div>
                     <div className="grid gap-2">
                       <div className="grid gap-1">
+                        <Label htmlFor="sale-type-filter">Sale Type</Label>
+                        <Select value={filterSaleType} onValueChange={setFilterSaleType}>
+                          <SelectTrigger id="sale-type-filter">
+                            <SelectValue placeholder="All Sales" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All Sales</SelectItem>
+                            <SelectItem value="retail">Retail</SelectItem>
+                            <SelectItem value="wholesale">Wholesale</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-1 mt-2">
                         <Label htmlFor="payment-filter">Payment Mode</Label>
                         <Select value={filterPaymentMode} onValueChange={setFilterPaymentMode}>
                           <SelectTrigger id="payment-filter">
@@ -2220,6 +2237,7 @@ Thank you for your purchase!
                       onClick={() => {
                         setFilterPaymentMode('all');
                         setFilterDateRange('all');
+                        setFilterSaleType('all');
                       }}
                     >
                       Clear all filters

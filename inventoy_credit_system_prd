@@ -1,0 +1,58 @@
+# Product Requirements Document: Credit System
+
+## 1. Goal
+Implement a lightweight credit tracking system for sales (both retail and wholesale) that prevents un-dated credit sales, surfaces upcoming dues automatically, and allows for invoice settlement, all without introducing new tables or complex double-entry ledgers.
+
+## 2. Data Model (Supabase)
+Instead of a separate ledger table, we leverage the existing `sales` table.
+- **Current columns utilized**: `payment_mode` (enum/text), `total_price` (decimal), `received_amount` (decimal), `is_settled` (boolean).
+- **New Migration**: 
+  - Add column: `credit_due_date DATE DEFAULT NULL`.
+  - Add constraint/trigger (optional but recommended for safety): If `payment_mode = 'credit'`, then `credit_due_date` must not be null.
+
+## 3. UI: Sales Entry (Retail & Wholesale)
+**Files affected**: `src/pages/SalesBilling.tsx`, `src/pages/RecordSale.tsx`
+
+- **Trigger**: When the user selects "Credit" from the Payment Mode dropdown.
+- **Behavior**:
+  - A "Due Date" date-picker input is enabled and becomes visible/mandatory.
+  - If Payment Mode is NOT "Credit", the "Due Date" input is disabled or hidden, and its state is cleared.
+- **Validation**:
+  - Hard block on form submission: `if (paymentMode === 'credit' && !creditDueDate) return showError()`.
+- **Payload**:
+  - On insert, map `credit_due_date: paymentMode === 'credit' ? creditDueDate : null`.
+
+## 4. UI: Dashboard Alerts
+**File affected**: `src/pages/Index.tsx`
+
+- **Component**: Replace the existing "Recent Activity" feed card with a new "Upcoming Credit Dues" card.
+- **Query Logic**:
+  - Filter: `payment_mode = 'credit'` AND `is_settled = false`.
+  - Date boundary: `credit_due_date <= (Today + 7 days)`.
+  - Sort: `credit_due_date ASC` (most urgent first).
+- **Display**:
+  - List items showing: Customer Name, Amount Due (`total_price - received_amount`), and the Due Date.
+  - **Visual styling**: 
+    - Overdue (Date < Today): Red text/icon.
+    - Upcoming (Date >= Today): Amber/Yellow text/icon.
+- **Interaction**: Clicking an item routes the user to `WholesaleReports.tsx` or `CustomerRelation.tsx` to settle the bill.
+
+## 5. UI: Ledger & Settlement (Retail & Wholesale)
+**Files affected**: `src/pages/WholesaleReports.tsx` (for Wholesale), `src/pages/CustomerRelation.tsx` (for Retail)
+
+Since credit tracking is unified in the database, settlement happens where the users already manage those sale types:
+
+**For Wholesale (`WholesaleReports.tsx`)**:
+- **Data Fetching**: Append `received_amount`, `is_settled`, and `credit_due_date` to the select query. Accumulate `received_amount` across all line items sharing the same `bill_id`.
+- **KPI Card**: Add a "Receivables" Stat Card showing the sum of unpaid wholesale bills.
+- **Table Additions**: Add "Due Date", "Balance", and an Action column containing a "Settle" button (rendered if `is_settled = false`).
+- **Settlement Mutation**: Dialog prompts for payment amount, then updates the specific `bill_id` rows.
+
+**For Retail (`CustomerRelation.tsx`)**:
+- *Retail already has a "Receivables" card and a Settle flow.* 
+- **Additions**: We just need to expose the `credit_due_date` column in the customer's bill history and use it to highlight overdue bills exactly like wholesale.
+
+## 6. What We Are NOT Building (YAGNI)
+- **No separate `wholesale_ledgers` table**: Existing `sales` rows grouped by `bill_id` give us the invoice total and received amount automatically.
+- **No cron jobs/email alerts**: The dashboard queries the 7-day window dynamically on load. 
+- **No complex aging reports**: Simple "Due" vs "Overdue" logic covers 99% of immediate operational needs. Aging buckets (30/60/90 days) can be added later as a client-side filter if requested.

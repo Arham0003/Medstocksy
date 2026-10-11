@@ -566,7 +566,15 @@ const ProductPicker = ({
     if (!products) return [];
     if (!value.trim()) return products.slice(0, 50);
     const q = value.toLowerCase();
-    return products.filter((p: any) => p.name.toLowerCase().includes(q) || (p.manufacturer && p.manufacturer.toLowerCase().includes(q))).slice(0, 50);
+    // Name, manufacturer, batch or HSN. Batch matters most at the goods-in
+    // desk: the carton in your hand shows a batch number, not a product name,
+    // and the dropdown was already displaying it without searching it.
+    return products.filter((p: any) =>
+      p.name?.toLowerCase().includes(q) ||
+      p.manufacturer?.toLowerCase().includes(q) ||
+      p.batch_number?.toLowerCase().includes(q) ||
+      p.hsn_code?.toLowerCase().includes(q)
+    ).slice(0, 50);
   }, [products, value]);
 
   const pick = (opt: any) => {

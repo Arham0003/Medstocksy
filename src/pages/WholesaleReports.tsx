@@ -4,6 +4,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -16,6 +25,7 @@ import {
   Receipt,
   TrendingUp,
   Percent,
+  Wallet,
   Search,
   Printer,
   FileStack,
@@ -46,6 +56,9 @@ interface WholesaleSaleRow {
   bill_serial?: string | null;
   return_type?: string | null;
   is_free?: boolean | null;
+  received_amount?: number | null;
+  is_settled?: boolean | null;
+  credit_due_date?: string | null;
 }
 
 /** One wholesale invoice, folded up from its sale lines. */
@@ -73,6 +86,10 @@ interface WholesaleBill {
   isCreditNote: boolean;
   /** Units given away under a scheme. Invisible until sales.is_free existed. */
   freeUnits: number;
+  /** Money actually received against this invoice, summed across its rows. */
+  received: number;
+  settled: boolean;
+  dueDate: string;
 }
 
 export default function WholesaleReports() {
@@ -88,6 +105,10 @@ export default function WholesaleReports() {
   const [endDate, setEndDate] = useState('');
   const [customerFilter, setCustomerFilter] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('all');
+  // Settlement: which invoice is being paid, and how much of it.
+  const [settling, setSettling] = useState<WholesaleBill | null>(null);
+  const [settleAmount, setSettleAmount] = useState('');
+  const [isSettling, setIsSettling] = useState(false);
 
   // Gate. `isActive` is false while the check runs, so the redirect waits on it.
   useEffect(() => {
@@ -119,7 +140,9 @@ export default function WholesaleReports() {
           customer_name,
           wholesale_customer_name,
           wholesale_customer_gstin,
-          return_type`;
+          return_type,
+          received_amount,
+          is_settled`;
       const GST_SPLIT_COLS = `,
           cgst_amount,
           sgst_amount,
@@ -129,6 +152,10 @@ export default function WholesaleReports() {
           buyer_state_code,
           bill_serial,
           is_free`;
+      // credit_due_date arrives with 20261011000000. received_amount and
+      // is_settled are long-standing, so they sit in the base set below.
+      const CREDIT_COLS = `,
+          credit_due_date`;
 
       const days = parseInt(dateRange) || 30;
       const fromDate = new Date();
@@ -139,6 +166,7 @@ export default function WholesaleReports() {
       let error: { message?: string } | null = null;
 
       for (const cols of [
+        BASE_COLS + GST_SPLIT_COLS + COMPLIANCE_COLS + CREDIT_COLS,
         BASE_COLS + GST_SPLIT_COLS + COMPLIANCE_COLS,
         BASE_COLS + GST_SPLIT_COLS,
         BASE_COLS,
@@ -188,6 +216,10 @@ export default function WholesaleReports() {
           if (!existing.pos && row.buyer_state_code) existing.pos = row.buyer_state_code;
           if (!existing.serial && row.bill_serial) existing.serial = row.bill_serial;
           if (row.is_free) existing.freeUnits += Number(row.quantity) || 0;
+          existing.received += Number(row.received_amount) || 0;
+          // One unsettled row leaves the whole invoice outstanding.
+          if (row.is_settled === false) existing.settled = false;
+          if (!existing.dueDate && row.credit_due_date) existing.dueDate = row.credit_due_date;
           // One priced line is enough to make the document an invoice.
           if (!row.return_type) existing.isCreditNote = false;
         } else {
@@ -209,6 +241,9 @@ export default function WholesaleReports() {
             serial: row.bill_serial || '',
             isCreditNote: !!row.return_type,
             freeUnits: row.is_free ? Number(row.quantity) || 0 : 0,
+            received: Number(row.received_amount) || 0,
+            settled: row.is_settled !== false,
+            dueDate: row.credit_due_date || '',
           });
         }
       }
@@ -250,8 +285,71 @@ export default function WholesaleReports() {
     const revenue = filteredBills.reduce((n, b) => n + b.total, 0);
     const gst = filteredBills.reduce((n, b) => n + b.gst, 0);
     const taxable = filteredBills.reduce((n, b) => n + b.taxable, 0);
-    return { revenue, gst, taxable, count: filteredBills.length };
+    // Receivables: what has been billed and not yet collected. Credit notes
+    // carry negative totals, so they reduce the figure rather than inflate it.
+    const receivables = filteredBills.reduce(
+      (n, b) => n + (b.settled ? 0 : Math.max(0, b.total - b.received)), 0);
+    const overdueCount = filteredBills.filter(
+      b => !b.settled && b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)).length;
+    return { revenue, gst, taxable, receivables, overdueCount, count: filteredBills.length };
   }, [filteredBills]);
+
+  /**
+   * Records a payment against every row of one invoice.
+   *
+   * The amount is spread across the bill's rows in proportion to what each one
+   * is worth, because received_amount lives per row. Settling in full marks the
+   * invoice closed; a part payment leaves it open with a smaller balance, which
+   * is what keeps it in the dues alert until the rest arrives.
+   */
+  const settleBill = useCallback(async (bill: WholesaleBill, amount: number) => {
+    if (!bill.bill_id || amount <= 0) return;
+    setIsSettling(true);
+    try {
+      const { data: rows, error: readErr } = await db.from('sales')
+        .select('id, total_price, received_amount')
+        .eq('bill_id', bill.bill_id);
+      if (readErr) throw readErr;
+
+      const lines = (rows || []) as { id: string; total_price: number | null; received_amount: number | null }[];
+      const billTotal = lines.reduce((n, r) => n + (Number(r.total_price) || 0), 0);
+      if (billTotal <= 0) throw new Error('This invoice has no value to settle.');
+
+      const outstanding = Math.max(0, billTotal - bill.received);
+      const applied = Math.min(amount, outstanding);
+      const closesBill = applied >= outstanding - 0.01;
+
+      for (const r of lines) {
+        const share = (Number(r.total_price) || 0) / billTotal;
+        const next = (Number(r.received_amount) || 0) + applied * share;
+        const { error } = await db.from('sales')
+          .update({
+            received_amount: Math.round(next * 100) / 100,
+            is_settled: closesBill,
+          })
+          .eq('id', r.id);
+        if (error) throw error;
+      }
+
+      toast({
+        title: closesBill ? 'Invoice settled' : 'Payment recorded',
+        description: closesBill
+          ? `${bill.customer} is paid in full.`
+          : `\u20B9${applied.toFixed(2)} recorded. \u20B9${(outstanding - applied).toFixed(2)} still outstanding.`,
+      });
+      setSettling(null);
+      setSettleAmount('');
+      fetchWholesaleBills();
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Could not record the payment',
+        description: err instanceof Error ? err.message : 'Please try again.',
+      });
+    } finally {
+      setIsSettling(false);
+    }
+  }, [toast, fetchWholesaleBills]);
 
   // Same CSV helper as Reports.tsx.
   const exportToCSV = (data: Record<string, string | number>[], filename: string) => {
@@ -450,7 +548,18 @@ export default function WholesaleReports() {
       </Card>
 
       {/* KPIs */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-5">
+        <DashboardStatCard
+          title="Receivables"
+          value={loading ? '-' : `\u20B9${stats.receivables.toFixed(2)}`}
+          icon={Wallet}
+          variant={stats.overdueCount > 0 ? 'warning' : 'default'}
+          description={
+            stats.overdueCount > 0
+              ? `${stats.overdueCount} invoice(s) overdue`
+              : 'Billed and not yet collected'
+          }
+        />
         <DashboardStatCard
           title="Wholesale Revenue"
           value={loading ? '-' : `\u20B9${stats.revenue.toFixed(2)}`}
@@ -518,7 +627,10 @@ export default function WholesaleReports() {
                     <TableHead className="text-right">Taxable</TableHead>
                     <TableHead className="text-right">GST</TableHead>
                     <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="hidden lg:table-cell">Due</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
                     <TableHead className="hidden sm:table-cell">Payment</TableHead>
+                    <TableHead className="w-20" />
                     <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
@@ -549,7 +661,44 @@ export default function WholesaleReports() {
                       <TableCell className="text-right tabular-nums">&#8377;{b.taxable.toFixed(2)}</TableCell>
                       <TableCell className="text-right tabular-nums">&#8377;{b.gst.toFixed(2)}</TableCell>
                       <TableCell className="text-right tabular-nums font-semibold">&#8377;{b.total.toFixed(2)}</TableCell>
+                      <TableCell className="hidden lg:table-cell whitespace-nowrap text-xs">
+                        {b.dueDate ? (
+                          <span className={
+                            !b.settled && b.dueDate < new Date().toISOString().slice(0, 10)
+                              ? 'font-semibold text-red-700'
+                              : 'text-amber-700'
+                          }>
+                            {new Date(b.dueDate).toLocaleDateString('en-IN', {
+                              day: '2-digit', month: 'short', year: '2-digit',
+                            })}
+                          </span>
+                        ) : <span className="text-muted-foreground">-</span>}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {b.settled ? (
+                          <span className="text-emerald-700 text-xs font-medium">Paid</span>
+                        ) : (
+                          <span className="font-semibold text-red-700">
+                            &#8377;{Math.max(0, b.total - b.received).toFixed(2)}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="hidden sm:table-cell capitalize">{b.payment_mode}</TableCell>
+                      <TableCell>
+                        {!b.settled && b.total - b.received > 0.01 && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => {
+                              setSettling(b);
+                              setSettleAmount((b.total - b.received).toFixed(2));
+                            }}
+                          >
+                            Settle
+                          </Button>
+                        )}
+                      </TableCell>
                       <TableCell>
                         {b.bill_id && (
                           <Button
@@ -572,6 +721,69 @@ export default function WholesaleReports() {
           )}
         </CardContent>
       </Card>
+
+      {/* Settle an invoice. Part payment is allowed and is the common case:
+          a distributor pays something on account, and the balance stays
+          outstanding so it keeps appearing in the dues alert. */}
+      <AlertDialog
+        open={!!settling}
+        onOpenChange={o => { if (!o) { setSettling(null); setSettleAmount(''); } }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Record a payment</AlertDialogTitle>
+            <AlertDialogDescription>
+              {settling && (
+                <>
+                  <strong>{settling.customer}</strong>
+                  {settling.serial ? ` · ${settling.serial}` : ''}
+                  <br />
+                  Outstanding: &#8377;{Math.max(0, settling.total - settling.received).toFixed(2)}
+                  {settling.dueDate && (
+                    <> · due {new Date(settling.dueDate).toLocaleDateString('en-IN', {
+                      day: '2-digit', month: 'short', year: 'numeric',
+                    })}</>
+                  )}
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="space-y-2 py-2">
+            <Label htmlFor="settle-amount">Amount received</Label>
+            <Input
+              id="settle-amount"
+              type="number"
+              min="0"
+              step="0.01"
+              autoFocus
+              value={settleAmount}
+              onChange={e => setSettleAmount(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && settling && Number(settleAmount) > 0) {
+                  e.preventDefault();
+                  settleBill(settling, Number(settleAmount));
+                }
+              }}
+              className="text-lg font-semibold"
+            />
+            <p className="text-xs text-muted-foreground">
+              Pre-filled with the full balance. Lower it to record a part payment;
+              the invoice stays open until the rest arrives.
+            </p>
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSettling}>Cancel</AlertDialogCancel>
+            <Button
+              onClick={() => { if (settling) settleBill(settling, Number(settleAmount)); }}
+              disabled={isSettling || !(Number(settleAmount) > 0)}
+            >
+              {isSettling ? 'Recording...' : 'Record payment'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

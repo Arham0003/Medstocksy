@@ -56,6 +56,7 @@ interface Sale {
   months_taken?: number | null;
   prescription_notes?: string | null;
   payment_mode?: string | null;
+  wholesale_customer_name?: string | null;
   printed_at?: string | null;
   products: {
     name: string;
@@ -296,7 +297,7 @@ export default function Sales() {
           .from('sales')
           .select(`
             id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, printed_at, sale_type,
-            customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode,
+            customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode, wholesale_customer_name,
             products(name)
           `, { count: 'exact' });
 
@@ -312,7 +313,7 @@ export default function Sales() {
             .from('sales')
             .select(`
               id, bill_id, product_id, quantity, sub_qty, pcs_per_unit, unit_price, total_price, gst_amount, created_at, sale_date, sale_type,
-              customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode,
+              customer_name, customer_phone, customer_address, prescription_months, months_taken, payment_mode, wholesale_customer_name,
               products(name)
             `, { count: 'exact' });
 
@@ -945,7 +946,7 @@ export default function Sales() {
       if (!groups[key]) {
         groups[key] = {
           bill_id: key,
-          customer_name: sale.customer_name || 'Walk-in Customer',
+          customer_name: sale.wholesale_customer_name || sale.customer_name || 'Walk-in Customer',
           customer_phone: sale.customer_phone || '-',
           customer_address: sale.customer_address || '',
           created_at: sale.created_at,

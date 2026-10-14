@@ -1533,22 +1533,22 @@ export default function RecordSale({
       let { error } = await supabase.from('sales').insert(allRowsToInsert);
 
       if (error && error.message?.includes('column')) {
-        // A wholesale bill cannot be downgraded to a retail one - losing
-        // sale_type would silently file it under retail. Say so instead.
-        if (isWholesale) {
-          throw new Error('Wholesale billing needs a database update. Please run the pending migrations.');
-        }
-        // Fallback without optional fields
+        // Fallback: strip all optional columns that may not exist in older DBs.
+        // Wholesale bills keep sale_type so they don't silently become retail.
         const fallback = allRowsToInsert.map(s => {
           const {
-            customer_name, customer_phone, customer_address, doctor_name,
+            customer_phone, customer_address, doctor_name,
             prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit,
-            // GST-split and batch columns arrive with the compliance
-            // migrations; drop them too so an un-migrated database still bills.
+            // GST-split and batch columns (compliance migrations)
             taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
             hsn_code, batch_id, cogs_rate,
-            // Wholesale columns arrive with 20260918000000.
-            sale_type, wholesale_customer_name, wholesale_customer_gstin,
+            // Wholesale detail columns (20260918000000)
+            wholesale_customer_gstin, wholesale_customer_dl, wholesale_customer_dl_expiry,
+            buyer_state_code, ship_to_address, bill_serial,
+            // Salesman + customer type columns (20261006000000)
+            salesman_name, salesman_phone, customer_type,
+            // Partial payment + credit columns
+            credit_due_date, is_settled,
             ...rest
           } = s as any;
           return rest;

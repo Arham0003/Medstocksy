@@ -23,6 +23,7 @@ import { saveSaleDraft, loadSaleDraft, clearSaleDraft } from '@/lib/productDraft
 import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batches';
 import { apportionGst } from '@/lib/gst';
 import { db } from '@/lib/supabaseLoose';
+import { normalizePhone } from '@/lib/customer';
 import { useWholesaleAccess } from '@/hooks/useWholesaleAccess';
 import { PremiumUpgradeDialog } from '@/components/PremiumUpgradeDialog';
 
@@ -183,6 +184,14 @@ export default function Sales() {
   const [pcsPerUnitMap, setPcsPerUnitMap] = useState<Record<string, number>>({});
   // Loading state for recording sale
   const [isRecordingSales, setIsRecordingSales] = useState(false);
+  // A state flag cannot stop a double submit: setIsRecordingSales(true) only
+  // takes effect on the next render, so two dispatches in one task both read
+  // false and both record the sale. Refs are written synchronously.
+  const recordingRef = useRef(false);
+  const savingEditRef = useRef(false);
+  // Minted once per sale, so a retry after a mid-save failure lands on the
+  // invoice the database already has instead of opening a second one.
+  const attemptBillIdRef = useRef<string | null>(null);
 
   // ─── Save / restore the in-progress sale when nipping to Products to add one ───
   const saveCurrentSaleDraft = () => {
@@ -595,7 +604,7 @@ export default function Sales() {
   const handleSale = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (isRecordingSales || selectedProducts.length === 0) {
+    if (recordingRef.current || selectedProducts.length === 0) {
       if (selectedProducts.length === 0) {
         toast({
           variant: "destructive",
@@ -665,16 +674,20 @@ export default function Sales() {
       }
     }
 
+    recordingRef.current = true;
     setIsRecordingSales(true);
 
     try {
       // Generate a unique bill ID for this transaction
-      const billId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-          const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-          return v.toString(16);
-        });
+      if (!attemptBillIdRef.current) {
+        attemptBillIdRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+      }
+      const billId = attemptBillIdRef.current;
 
       // Fetch the latest settings to ensure we're using current GST settings
       const settingsRes = await supabase
@@ -754,6 +767,10 @@ export default function Sales() {
         return {
           account_id: profile?.account_id,
           bill_id: billId,
+          // Stable per line of this bill, so the database can refuse a second
+          // copy. The cart holds one line per product, so product id is enough
+          // to tell this bill's lines apart.
+          client_line_id: billId + ':' + item.id,
           product_id: item.id,
           user_id: profile?.id,
           quantity: item.quantity,
@@ -772,7 +789,7 @@ export default function Sales() {
           cogs_rate: batch ? Number(batch.effective_cost) : null,
           payment_mode: paymentMode,
           customer_name: customerName || "Walk-in Customer",
-          customer_phone: customerPhone || null,
+          customer_phone: normalizePhone(customerPhone),
           customer_address: customerAddress || null,
           prescription_months: prescriptionMonths === '' ? null : Number(prescriptionMonths),
           months_taken: monthsTaken === '' ? null : Number(monthsTaken),
@@ -784,8 +801,20 @@ export default function Sales() {
 
       let { error } = await supabase.from('sales').insert(salesToInsert);
 
-      // If there's an error due to missing columns, try again without those fields
-      if (error && error.message && error.message.includes('column')) {
+      // 23505 means the database already holds these exact lines: the sale was
+      // submitted twice and is safely recorded once. Re-sending it is the one
+      // thing that would actually duplicate it.
+      // PostgrestError is typed without a code on some versions of the client,
+      // so the code is read through a narrow shape rather than any.
+      const errCode = (error as { code?: string } | null)?.code;
+      const alreadySaved = errCode === '23505';
+      if (alreadySaved) error = null;
+
+      // Narrowed to a genuinely missing column, so an unrelated error can no
+      // longer trigger a second insert of the whole bill.
+      const missingColumn = !alreadySaved && error &&
+        (errCode === '42703' || /column .* does not exist/i.test(error.message || ''));
+      if (missingColumn) {
         const fallbackSalesToInsert = salesToInsert.map(sale => {
           const {
             customer_name, customer_phone, customer_address, prescription_months,
@@ -793,6 +822,8 @@ export default function Sales() {
             // Compliance columns land with the 2026-09-10 migrations.
             taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
             hsn_code, batch_id, cogs_rate,
+            // Duplicate-submission guard (20261015000000)
+            client_line_id,
             ...rest
           } = sale;
           return rest;
@@ -863,6 +894,7 @@ export default function Sales() {
         description: error.message,
       });
     } finally {
+      recordingRef.current = false;
       setIsRecordingSales(false);
     }
   };
@@ -1213,7 +1245,8 @@ export default function Sales() {
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingBillId || isSavingEdit) return;
+    if (!editingBillId || savingEditRef.current) return;
+    savingEditRef.current = true;
 
     if (editCart.length === 0) {
       toast({ variant: 'destructive', title: 'Cart is empty', description: 'Add at least one item or cancel the edit.' });
@@ -1315,11 +1348,9 @@ export default function Sales() {
         const baseTotal = units * it.unit_price;
         const isGstInclusiveNew = settings?.gst_type === 'inclusive';
         const { gstAmount, totalPrice } = calcGst(baseTotal, it.gst_rate, isGstInclusiveNew);
-        const product = products.find(p => p.id === it.product_id);
-        if (product) {
-          const newStock = (product.quantity || 0) - units;
-          await (supabase as any).from('products').update({ quantity: Math.round(newStock) }).eq('id', it.product_id);
-        }
+        // Stock is NOT adjusted here. update_product_stock_trigger fires AFTER
+        // INSERT on sales and subtracts the quantity already; deducting again
+        // by hand took every added line off the shelf twice.
         newRows.push({
           account_id: profile?.account_id,
           bill_id: editingBillId,
@@ -1350,6 +1381,7 @@ export default function Sales() {
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error updating sale', description: err.message });
     } finally {
+      savingEditRef.current = false;
       setIsSavingEdit(false);
     }
   };

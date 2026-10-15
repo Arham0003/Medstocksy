@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { Loader2, ArrowLeft, Printer, Pencil, Plus, Trash2, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { normalizePhone } from '@/lib/customer';
 
 import { db } from '@/lib/supabaseLoose';
 import { calcGst, stateNameForCode } from '@/lib/gst';
@@ -339,7 +340,7 @@ export default function PrintBill() {
         try {
             const updatePayload: any = {
                 customer_name: editName.trim() || 'Walk-in Customer',
-                customer_phone: editPhone.trim() || null,
+                customer_phone: normalizePhone(editPhone),
                 customer_address: editAddress.trim() || null,
                 doctor_name: editDoctor.trim() || null,
                 payment_mode: editPaymentMode,
@@ -654,7 +655,7 @@ export default function PrintBill() {
                 gst_amount: gstAmount,
                 payment_mode: billData.payment_mode,
                 customer_name: billData.customer_name || 'Walk-in Customer',
-                customer_phone: billData.customer_phone || null,
+                customer_phone: normalizePhone(billData.customer_phone),
                 customer_address: billData.customer_address || null,
                 doctor_name: billData.doctor_name || null,
                 discount_percentage: editGlobalDiscount,

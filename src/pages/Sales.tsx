@@ -24,6 +24,7 @@ import { fetchFefoBatches, consumeBatchStock, type StockBatch } from '@/lib/batc
 import { apportionGst } from '@/lib/gst';
 import { db } from '@/lib/supabaseLoose';
 import { normalizePhone } from '@/lib/customer';
+import { insertSalesRows } from '@/lib/salesInsert';
 import { useWholesaleAccess } from '@/hooks/useWholesaleAccess';
 import { PremiumUpgradeDialog } from '@/components/PremiumUpgradeDialog';
 
@@ -799,75 +800,50 @@ export default function Sales() {
         };
       });
 
-      let { error } = await supabase.from('sales').insert(salesToInsert);
+      // Drop only the column the database actually lacks. The old fallback
+      // stripped a fixed list - customer name and phone among them - so a
+      // single missing column printed a blank invoice.
+      const { alreadySaved, droppedColumns, error } =
+        await insertSalesRows(supabase as never, salesToInsert);
+      if (error) throw error;
 
-      // 23505 means the database already holds these exact lines: the sale was
-      // submitted twice and is safely recorded once. Re-sending it is the one
-      // thing that would actually duplicate it.
-      // PostgrestError is typed without a code on some versions of the client,
-      // so the code is read through a narrow shape rather than any.
-      const errCode = (error as { code?: string } | null)?.code;
-      const alreadySaved = errCode === '23505';
-      if (alreadySaved) error = null;
-
-      // Narrowed to a genuinely missing column, so an unrelated error can no
-      // longer trigger a second insert of the whole bill.
-      const missingColumn = !alreadySaved && error &&
-        (errCode === '42703' || /column .* does not exist/i.test(error.message || ''));
-      if (missingColumn) {
-        const fallbackSalesToInsert = salesToInsert.map(sale => {
-          const {
-            customer_name, customer_phone, customer_address, prescription_months,
-            months_taken, payment_mode, sub_qty, pcs_per_unit,
-            // Compliance columns land with the 2026-09-10 migrations.
-            taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
-            hsn_code, batch_id, cogs_rate,
-            // Duplicate-submission guard (20261015000000)
-            client_line_id,
-            ...rest
-          } = sale;
-          return rest;
+      if (droppedColumns.length > 0) {
+        console.warn('[Medstocksy] columns missing from this database:', droppedColumns.join(', '));
+        toast({
+          variant: 'destructive',
+          title: 'Saved without some details',
+          description: `This database is missing: ${droppedColumns.join(', ')}. Apply the latest migrations so these are stored.`,
         });
-
-        const fallbackResult = await supabase.from('sales').insert(fallbackSalesToInsert);
-        error = fallbackResult.error;
-
-        if (error) {
-          throw new Error("The database needs to be updated. Please run the required migrations in Supabase.");
-        } else {
-          navigate(`/print-bill/${billId}`);
-        }
-      } else if (error) {
-        throw error;
-      } else {
-        // Take the units off the batch ledger, nearest expiry first.
-        // products.quantity is handled by the sales trigger; a ledger failure
-        // is surfaced but never rolls back a committed bill.
-        if (profile?.account_id) {
-          const problems: string[] = [];
-          for (const item of selectedProducts) {
-            const subQ = subQtyMap[item.id] || 0;
-            const pcs = pcsPerUnitMap[item.id] || 0;
-            const units = item.quantity + (subQ && pcs > 0 ? subQ / pcs : 0);
-            const res = await consumeBatchStock({
-              accountId: profile.account_id,
-              productId: item.id,
-              batchNumber: null,
-              qty: units,
-            });
-            if (!res.ok) problems.push(res.message || 'unknown error');
-          }
-          if (problems.length > 0) {
-            toast({
-              variant: 'destructive',
-              title: 'Bill saved - batch ledger out of step',
-              description: problems.slice(0, 3).join(' · '),
-            });
-          }
-        }
-        // Direct navigation to print bill instead of showing toast
-        navigate(`/print-bill/${billId}`);
       }
+
+      // Take the units off the batch ledger, nearest expiry first.
+      // products.quantity is handled by the sales trigger; a ledger failure
+      // is surfaced but never rolls back a committed bill. Skipped when the
+      // rows were already stored, because that stock has already moved.
+      if (profile?.account_id && !alreadySaved) {
+        const problems: string[] = [];
+        for (const item of selectedProducts) {
+          const subQ = subQtyMap[item.id] || 0;
+          const pcs = pcsPerUnitMap[item.id] || 0;
+          const units = item.quantity + (subQ && pcs > 0 ? subQ / pcs : 0);
+          const res = await consumeBatchStock({
+            accountId: profile.account_id,
+            productId: item.id,
+            batchNumber: null,
+            qty: units,
+          });
+          if (!res.ok) problems.push(res.message || 'unknown error');
+        }
+        if (problems.length > 0) {
+          toast({
+            variant: 'destructive',
+            title: 'Bill saved - batch ledger out of step',
+            description: problems.slice(0, 3).join(' · '),
+          });
+        }
+      }
+
+      navigate(`/print-bill/${billId}`);
 
       setIsDialogOpen(false);
       setSelectedProducts([]);

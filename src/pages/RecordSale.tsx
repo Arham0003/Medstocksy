@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { normalizePhone } from '@/lib/customer';
+import { insertSalesRows } from '@/lib/salesInsert';
 import { calcGst, splitGst } from '@/lib/gst';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
 import { billDataPrefix, clearBillData } from '@/hooks/useBillSessions';
@@ -1567,52 +1568,23 @@ export default function RecordSale({
         if (delErr) throw delErr;
       }
 
-      let { error } = await supabase.from('sales').insert(allRowsToInsert);
+      // One column the database does not have must cost that one field, not
+      // the customer's phone number and the entire tax breakdown along with
+      // it. insertSalesRows drops exactly what the database names and reports
+      // back what it had to leave out.
+      const { alreadySaved, droppedColumns, error } =
+        await insertSalesRows(supabase as never, allRowsToInsert);
+      if (error) throw error;
 
-      // 23505 on the line-id index means the database already holds these exact
-      // rows: this bill was submitted twice. The sale is safely recorded, so
-      // the one thing not to do is insert it again. Fall through to completion
-      // WITHOUT touching stock - the first submission already moved it.
-      // PostgrestError is typed without a code on some versions of the client,
-      // so the code is read through a narrow shape rather than any.
-      const errCode = (error as { code?: string } | null)?.code;
-      const alreadySaved = errCode === '23505';
-      if (alreadySaved) error = null;
-
-      // Narrowed to a genuinely missing column. The old test matched any message
-      // containing the word "column", which would have re-sent the whole bill on
-      // errors that had nothing to do with the schema.
-      const missingColumn = !alreadySaved && error &&
-        (errCode === '42703' || /column .* does not exist/i.test(error.message || ''));
-
-      if (missingColumn) {
-        // Fallback: strip all optional columns that may not exist in older DBs.
-        // Wholesale bills keep sale_type so they don't silently become retail.
-        const fallback = allRowsToInsert.map(s => {
-          const {
-            customer_phone, customer_address, doctor_name,
-            prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit,
-            // GST-split and batch columns (compliance migrations)
-            taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
-            hsn_code, batch_id, cogs_rate,
-            // Wholesale detail columns (20260918000000)
-            wholesale_customer_gstin, wholesale_customer_dl, wholesale_customer_dl_expiry,
-            buyer_state_code, ship_to_address, bill_serial,
-            // Salesman + customer type columns (20261006000000)
-            salesman_name, salesman_phone, customer_type,
-            // Partial payment + credit columns
-            credit_due_date, is_settled,
-            // Duplicate-submission guard (20261015000000)
-            client_line_id,
-            ...rest
-          } = s as any;
-          return rest;
+      // Silently losing a phone number is how an invoice ends up printing
+      // blank where the buyer should be. Say so, and name what is missing.
+      if (droppedColumns.length > 0) {
+        console.warn('[Medstocksy] columns missing from this database:', droppedColumns.join(', '));
+        toast({
+          variant: 'destructive',
+          title: 'Saved without some details',
+          description: `This database is missing: ${droppedColumns.join(', ')}. Apply the latest migrations so these are stored.`,
         });
-        const res2 = await supabase.from('sales').insert(fallback);
-        error = res2.error;
-        if (error) throw new Error('Database needs migration. Please run required updates.');
-      } else if (error) {
-        throw error;
       }
 
 

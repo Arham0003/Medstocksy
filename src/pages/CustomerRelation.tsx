@@ -33,6 +33,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn, formatINR } from '@/lib/utils';
+import { phoneKey, normalizePhone } from '@/lib/customer';
 
 type CrmSale = {
   id: string;
@@ -152,6 +153,13 @@ export default function CustomerRelation() {
       toast({ variant: 'destructive', title: 'Cannot delete', description: 'No phone number on record.' });
       return;
     }
+    const phoneVariants = Array.from(new Set(
+      (customerToDelete.allBills || [])
+        .map(b => b.customer_phone)
+        .filter((v): v is string => !!v),
+    ));
+    if (phoneVariants.length === 0) phoneVariants.push(customerToDelete.phone);
+
     setIsDeleting(true);
     try {
       // In this app, customers are derived from the sales table.
@@ -163,7 +171,11 @@ export default function CustomerRelation() {
         // Scoped to retail: a shared phone number must never let a CRM delete
         // remove a wholesale tax invoice.
         .eq('sale_type', 'retail')
-        .eq('customer_phone', customerToDelete.phone);
+        // One customer can span several written forms of the same number, and
+        // the list now folds them into a single row. Matching on the displayed
+        // form alone would delete part of the history and leave the customer
+        // standing with the rest, so every form actually seen is named here.
+        .in('customer_phone', phoneVariants);
 
       if (error) throw error;
 
@@ -242,11 +254,19 @@ export default function CustomerRelation() {
     const byKey = new Map<string, CustomerSummary>();
 
     sales.forEach((s) => {
-      const key = (s.customer_phone || s.customer_name || `anonymous-${s.id}`).trim();
-      if (!s.customer_phone) return; // only include with phone
+      // The same person typed four ways - "+919876543210", "9876543210",
+      // "98765 43210", "09876543210" - used to key four separate customers,
+      // each holding a slice of the history. Match on the ten significant
+      // digits so bills saved before and after normalisation fold together.
+      //
+      // Names are deliberately NOT a fallback key: two people really can both
+      // be "Ramesh Kumar", and merging them would hand one customer another's
+      // purchase history.
+      const key = phoneKey(s.customer_phone);
+      if (!key) return; // no usable number - nothing safe to match on
       const existing = byKey.get(key);
       const name = s.customer_name || 'Walk-in Customer';
-      const phone = s.customer_phone || null;
+      const phone = normalizePhone(s.customer_phone);
       const address = s.customer_address || null;
       const lastDate = new Date(s.created_at);
       const prescriptionMonths = s.prescription_months;
@@ -396,8 +416,9 @@ export default function CustomerRelation() {
     };
   }, [customImagePreview]);
 
-  // Helper: phone number with country-code for tel: / wa.me
-  const normalizePhone = (raw: string | null) => {
+  // Helper: phone number with country-code for tel: / wa.me (digits, no +).
+  // Distinct from the shared normalizePhone, which produces the stored form.
+  const waPhone = (raw: string | null) => {
     if (!raw) return '';
     let phone = raw.replace(/\D/g, '');
     if (phone.length === 10) phone = '91' + phone;
@@ -405,7 +426,7 @@ export default function CustomerRelation() {
   };
 
   const shareWhatsapp = async (customer: CustomerSummary) => {
-    const phone = normalizePhone(customer.phone);
+    const phone = waPhone(customer.phone);
     const due = customer.nextDueDate ? customer.nextDueDate.toLocaleDateString() : 'N/A';
 
     // Build the plain-text message (used for both navigator.share and the wa.me URL fallback)
@@ -721,7 +742,7 @@ export default function CustomerRelation() {
               <div className="md:hidden space-y-2">
                 {filteredCustomers.map((c) => {
                   const isExpanded = expandedCustomer === c.key;
-                  const phoneDigits = normalizePhone(c.phone);
+                  const phoneDigits = waPhone(c.phone);
                   const dueLabel = c.nextDueDate ? c.nextDueDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : null;
                   const statusClass =
                     c.status === 'due' ? 'bg-red-50 text-red-700 border-red-200'
@@ -889,7 +910,7 @@ export default function CustomerRelation() {
                   <TableBody>
                     {filteredCustomers.map((c) => {
                       const isExpanded = expandedCustomer === c.key;
-                      const phoneDigits = normalizePhone(c.phone);
+                      const phoneDigits = waPhone(c.phone);
                       const dueStr = c.nextDueDate ? c.nextDueDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
                       const statusClass =
                         c.status === 'due' ? 'bg-red-50 text-red-700 border-red-200'

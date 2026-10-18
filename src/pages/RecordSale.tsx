@@ -15,6 +15,8 @@ import {
   CalendarDays, Stethoscope, CheckCircle2, Circle, ShoppingCart, User, Zap, Diamond
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { normalizePhone } from '@/lib/customer';
+import { insertSalesRows } from '@/lib/salesInsert';
 import { calcGst, splitGst } from '@/lib/gst';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
 import { billDataPrefix, clearBillData } from '@/hooks/useBillSessions';
@@ -201,6 +203,17 @@ export default function RecordSale({
   const [isInterstate, setIsInterstate] = useState(false);
   const [loading, setLoading] = useState(usingInjected ? !!dataLoading : true);
   const [isSaving, setIsSaving] = useState(false);
+  // isSaving cannot stop a double-click on its own. setIsSaving(true) does not
+  // take effect until the next render, and neither does the button's disabled
+  // attribute, so two dispatches inside one task both read false and both save
+  // the bill - twice, under two different bill ids, deducting stock twice. A
+  // ref is written synchronously, so the second dispatch sees the lock.
+  const savingRef = useRef(false);
+  // The invoice identity is minted once per bill, not once per click. If the
+  // save fails somewhere AFTER the rows are committed, the operator sees an
+  // error and clicks again; without this the retry would open a second invoice
+  // for a sale the database already holds.
+  const attemptBillIdRef = useRef<string | null>(null);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   // F3 edit-gate: only one field unlocked at a time
   const [f3Unlocked, setF3Unlocked] = useState<string | null>(null);
@@ -421,6 +434,27 @@ export default function RecordSale({
     }
   }, [infoRow, rows]);
 
+  // ─── The account's GST identity ────────────────────────────────────────
+  // Deliberately NOT inside the products effect below: that one returns early
+  // when the container injects data, which is every tabbed billing screen, so
+  // anything fetched there never loads in normal use. This decides CGST+SGST
+  // against IGST, so it has to run in both modes.
+  useEffect(() => {
+    if (!profile?.account_id) return;
+    let cancelled = false;
+    (async () => {
+      const { data: acct } = await db
+        .from('accounts')
+        .select('is_interstate_billing, state_code')
+        .eq('id', profile.account_id)
+        .single();
+      if (cancelled) return;
+      setIsInterstate(Boolean(acct?.is_interstate_billing));
+      setSellerStateCode(String((acct as { state_code?: string } | null)?.state_code ?? ''));
+    })();
+    return () => { cancelled = true; };
+  }, [profile?.account_id]);
+
   // ─── Fetch products & settings ─────────────────────────────────────────
   useEffect(() => {
     if (usingInjected) return; // container provides the data
@@ -435,17 +469,6 @@ export default function RecordSale({
         if (prodRes.error) throw prodRes.error;
         setProducts((prodRes.data as any) || []);
         if (settingsRes.data) setSettings(settingsRes.data as any);
-
-        // Account-level GST identity decides CGST+SGST vs IGST on every line.
-        if (profile?.account_id) {
-          const { data: acct } = await db
-            .from('accounts')
-            .select('is_interstate_billing, state_code')
-            .eq('id', profile.account_id)
-            .single();
-          setIsInterstate(Boolean(acct?.is_interstate_billing));
-          setSellerStateCode(String((acct as any)?.state_code ?? ''));
-        }
       } catch (err: any) {
         toast({ variant: 'destructive', title: 'Error loading data', description: err.message });
       } finally {
@@ -1226,7 +1249,10 @@ export default function RecordSale({
       toast({ variant: 'destructive', title: 'No products', description: 'Add at least one product before saving.' });
       return;
     }
-    if (isSaving) return;
+    // Checked against the ref, not the state: see savingRef above. Everything
+    // between here and where the lock is taken is synchronous, so no second
+    // dispatch can slip through the gap.
+    if (savingRef.current) return;
 
     // A tax invoice must name its buyer, and a GSTIN - when given - must be
     // well formed, because it is printed on the invoice and feeds GSTR-1.
@@ -1273,11 +1299,15 @@ export default function RecordSale({
       }
     }
 
+    savingRef.current = true;
     setIsSaving(true);
 
     try {
-      // Editing an existing bill → reuse its id (same invoice); otherwise a new bill.
-      const billId = editBillId || uuid();
+      // Editing an existing bill → reuse its id (same invoice); otherwise a new
+      // bill, minted once and held until this bill is actually finished so a
+      // retry lands on the same invoice instead of opening another one.
+      if (!attemptBillIdRef.current) attemptBillIdRef.current = uuid();
+      const billId = editBillId || attemptBillIdRef.current;
       const isGstInclusive = settings?.gst_type === 'inclusive';
 
       // CGST Rule 46 wants a unique sequential number per financial year, and a
@@ -1375,6 +1405,11 @@ export default function RecordSale({
         return {
           account_id: profile?.account_id,
           bill_id: billId,
+          // Stable identity for this line, carried so the database can refuse a
+          // second copy of it. row.uid belongs to the line in the grid, so two
+          // legitimate lines of the same product in the same bill stay distinct
+          // while a resubmission of this bill repeats exactly these values.
+          client_line_id: row.uid,
           product_id: row.productId,
           user_id: profile?.id,
           quantity: row.qty,
@@ -1394,7 +1429,7 @@ export default function RecordSale({
           payment_mode: paymentMode,
           credit_due_date: paymentMode === 'credit' ? creditDueDate : null,
           customer_name: customerName || 'Walk-in Customer',
-          customer_phone: customerPhone || null,
+          customer_phone: normalizePhone(customerPhone),
           customer_address: customerAddress || null,
           doctor_name: isWholesale ? null : (doctorName || null),
           sale_date: billDate,
@@ -1435,6 +1470,9 @@ export default function RecordSale({
             .map(row => ({
               account_id: profile?.account_id,
               bill_id: billId,
+              // Same stable identity, suffixed: the free line and the priced
+              // line come from one grid row but are two rows in the database.
+              client_line_id: row.uid + ':free',
               product_id: row.productId,
               user_id: profile?.id,
               quantity: Number(row.freeQty),
@@ -1454,7 +1492,7 @@ export default function RecordSale({
               payment_mode: paymentMode,
               credit_due_date: paymentMode === 'credit' ? creditDueDate : null,
               customer_name: customerName || 'Walk-in Customer',
-              customer_phone: customerPhone || null,
+              customer_phone: normalizePhone(customerPhone),
               customer_address: customerAddress || null,
               doctor_name: null,
               sale_date: billDate,
@@ -1530,34 +1568,23 @@ export default function RecordSale({
         if (delErr) throw delErr;
       }
 
-      let { error } = await supabase.from('sales').insert(allRowsToInsert);
+      // One column the database does not have must cost that one field, not
+      // the customer's phone number and the entire tax breakdown along with
+      // it. insertSalesRows drops exactly what the database names and reports
+      // back what it had to leave out.
+      const { alreadySaved, droppedColumns, error } =
+        await insertSalesRows(supabase as never, allRowsToInsert);
+      if (error) throw error;
 
-      if (error && error.message?.includes('column')) {
-        // A wholesale bill cannot be downgraded to a retail one - losing
-        // sale_type would silently file it under retail. Say so instead.
-        if (isWholesale) {
-          throw new Error('Wholesale billing needs a database update. Please run the pending migrations.');
-        }
-        // Fallback without optional fields
-        const fallback = allRowsToInsert.map(s => {
-          const {
-            customer_name, customer_phone, customer_address, doctor_name,
-            prescription_months, months_taken, payment_mode, sub_qty, pcs_per_unit,
-            // GST-split and batch columns arrive with the compliance
-            // migrations; drop them too so an un-migrated database still bills.
-            taxable_value, gst_rate, cgst_amount, sgst_amount, igst_amount,
-            hsn_code, batch_id, cogs_rate,
-            // Wholesale columns arrive with 20260918000000.
-            sale_type, wholesale_customer_name, wholesale_customer_gstin,
-            ...rest
-          } = s as any;
-          return rest;
+      // Silently losing a phone number is how an invoice ends up printing
+      // blank where the buyer should be. Say so, and name what is missing.
+      if (droppedColumns.length > 0) {
+        console.warn('[Medstocksy] columns missing from this database:', droppedColumns.join(', '));
+        toast({
+          variant: 'destructive',
+          title: 'Saved without some details',
+          description: `This database is missing: ${droppedColumns.join(', ')}. Apply the latest migrations so these are stored.`,
         });
-        const res2 = await supabase.from('sales').insert(fallback);
-        error = res2.error;
-        if (error) throw new Error('Database needs migration. Please run required updates.');
-      } else if (error) {
-        throw error;
       }
 
 
@@ -1566,7 +1593,7 @@ export default function RecordSale({
       // expiry tracking stay truthful. A failure here is reported but never
       // fails the bill - the sale is already committed.
       const batchProblems: string[] = [];
-      if (profile?.account_id) {
+      if (profile?.account_id && !alreadySaved) {
         for (const row of validRows) {
           const hasSub = row.subQty !== '' && Number(row.subQty) > 0;
           // Free qty leaves the shelf too, so the batch ledger takes it as well.
@@ -1589,6 +1616,13 @@ export default function RecordSale({
           title: 'Bill saved - batch ledger out of step',
           description: batchProblems.slice(0, 3).join(' · '),
         });
+      } else if (alreadySaved) {
+        // Reassurance, not an error: the operator clicked twice and both
+        // clicks got through to the network. One bill exists, which is right.
+        toast({
+          title: 'Already saved',
+          description: 'This bill was submitted twice. It has been recorded once.',
+        });
       } else {
         toast({
           title: 'Sale recorded!',
@@ -1599,6 +1633,10 @@ export default function RecordSale({
       // Bill is finalized → drop its locally-saved draft so it isn't restored later.
       if (persistKey) clearBillData(persistKey, isWholesale ? 'wholesale' : undefined);
 
+      // This invoice is closed. The next bill gets its own id; keeping this one
+      // would make the following sale collide with the one just filed.
+      attemptBillIdRef.current = null;
+
       // Completion: container decides (preserve other tabs); standalone navigates as before.
       if (onCompleted) {
         onCompleted(billId);
@@ -1608,9 +1646,10 @@ export default function RecordSale({
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Error recording sale', description: err.message });
     } finally {
+      savingRef.current = false;
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, creditDueDate, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, profile, navigate, toast, isSaving, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
+  }, [rows, settings, globalDiscount, paymentMode, creditDueDate, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, profile, navigate, toast, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
       wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode, salesmanName, salesmanPhone, customerType]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────

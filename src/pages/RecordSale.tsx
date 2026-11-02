@@ -811,29 +811,14 @@ export default function RecordSale({
     if (crmSelectedFields.has('name') && crmFoundData.customer_name) setCustomerName(crmFoundData.customer_name);
     if (crmSelectedFields.has('address') && crmFoundData.customer_address) setCustomerAddress(crmFoundData.customer_address);
     if (crmSelectedFields.has('doctor') && crmFoundData.doctor_name) setDoctorName(crmFoundData.doctor_name);
-    if (crmSelectedFields.has('prescription_months') && crmFoundData.prescription_months != null) setPrescriptionMonths(crmFoundData.prescription_months);
 
-    // ── Auto-increment months_taken when same medicines selected ──
-    // Check if selected items == last bill's items (same prescription repeat)
-    const lastBillProductIds = crmFoundData.items
-      .filter(i => i.in_last_bill)
-      .map(i => i.product_id)
-      .sort();
-    const selectedProductIds = [...crmSelectedItems].sort();
-    const isSameAslastBill =
-      lastBillProductIds.length > 0 &&
-      lastBillProductIds.length === selectedProductIds.length &&
-      lastBillProductIds.every((id, idx) => id === selectedProductIds[idx]);
-
-    if (isSameAslastBill && crmFoundData.months_taken != null) {
-      // Same prescription repeated → months counter goes up by 1
-      setMonthsTaken((crmFoundData.months_taken as number) + 1);
-    } else if (crmSelectedFields.has('months_taken') && crmFoundData.months_taken != null) {
-      setMonthsTaken(crmFoundData.months_taken);
-    } else if (crmFoundData.prescription_months != null) {
-      // First visit for this prescription should be 1
-      setMonthsTaken(1);
-    }
+    // Prescription months and the months-taken counter are not applied here
+    // any more. Billing stopped capturing them - every bill writes null to
+    // both columns - so the state they used to fill no longer exists, and the
+    // block that incremented the counter was computing a number that was
+    // never saved. The columns remain on `sales` so past refill history stays
+    // readable; re-introducing the counter means restoring the fields on the
+    // billing form first, not re-adding these calls.
 
     // Load selected prescription items into bill rows
     const selectedItems = crmFoundData.items.filter(i => crmSelectedItems.has(i.item_key));
@@ -878,8 +863,8 @@ export default function RecordSale({
     const itemCount = selectedItems.length;
     toast({
       title: '✅ Prescription loaded!',
-      description: `${itemCount} medicine(s) added to bill${isSameAslastBill ? ' · months count auto-updated' : ''
-        }.`,
+      // No longer claims the months count was updated: nothing updates it.
+      description: `${itemCount} medicine(s) added to bill.`,
     });
   }, [crmFoundData, crmSelectedFields, crmSelectedItems, products, settings, toast, loadBatchesForRow]);
 

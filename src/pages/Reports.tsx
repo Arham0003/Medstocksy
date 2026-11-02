@@ -157,9 +157,12 @@ export default function Reports() {
         .select(`
           id,
           quantity,
+          sub_qty,
+          pcs_per_unit,
           unit_price,
           total_price,
           gst_amount,
+          cogs_rate,
           created_at,
           sale_date,
           payment_mode,
@@ -230,8 +233,12 @@ export default function Reports() {
         acc[date].total_quantity += (sale.quantity || 0);
         acc[date].total_gst += (sale.gst_amount || 0);
         
-        const purchasePrice = sale.products?.purchase_price || 0;
-        const profit = ((sale.unit_price || 0) - purchasePrice) * (sale.quantity || 0);
+        // ponytail: cogs_rate is the batch's landed cost at time of sale; fall back to product-level purchase_price for pre-batch rows
+        const cogsRate = sale.cogs_rate ?? sale.products?.purchase_price ?? 0;
+        const subQty = Number(sale.sub_qty) || 0;
+        const pcsPerUnit = Number(sale.pcs_per_unit) || 0;
+        const effectiveQty = (sale.quantity || 0) + (subQty && pcsPerUnit > 0 ? subQty / pcsPerUnit : 0);
+        const profit = (sale.total_price || 0) - cogsRate * effectiveQty;
         acc[date].total_profit += profit;
         acc[date].transaction_count += 1;
         

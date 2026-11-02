@@ -160,7 +160,12 @@ const errMsg = (e: unknown, fallback: string) => {
   const m = e instanceof Error ? e.message : String((e as { message?: string })?.message ?? "");
   if (/not authorized/i.test(m)) return "Not authorized. This account is not a platform admin.";
   if (/does not exist|schema cache/i.test(m)) {
-    return "Admin functions are missing. Run supabase/APPLY_ALL_admin.sql first.";
+    // PostgREST names the function it could not find; passing that through
+    // turns "it did not work" into something actionable.
+    const fn = m.match(/function (?:public\.)?([a-z_]+)/i)?.[1];
+    return (fn ? `The database has no ${fn}(). ` : "Admin functions are missing. ")
+      + "Apply supabase/migrations/20261102000000_admin_set_subscription_safe.sql "
+      + "(or APPLY_ALL_admin.sql for the full set), then try again.";
   }
   return m || fallback;
 };
@@ -183,53 +188,57 @@ function AdminPanelBody() {
   const refresh = useCallback(() => setVersion((n) => n + 1), []);
 
   return (
-    <div className="space-y-5 sm:space-y-6">
-      {/* This console belongs to the Medstocksy owner, not to customers. */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
+    <div className="space-y-8">
+      {/* Built to the same pattern as Reports: gradient title, one line of
+          explanation, then sections that each name themselves. */}
+      <div className="admin-rise flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div className="min-w-0">
-          <h1 className="text-xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">
+          <h1 className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-2xl font-bold text-transparent sm:text-3xl md:text-4xl">
             Admin Control
           </h1>
-          <p className="text-muted-foreground text-sm sm:text-lg mt-1 sm:mt-2">
+          <p className="mt-2 text-base text-muted-foreground sm:text-lg">
             Every Medstocksy account, subscription and coupon in one place
           </p>
         </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 text-xs text-orange-700 shrink-0">
-          <ShieldCheck className="h-3.5 w-3.5" />
-          <span className="font-medium">Company owner only</span>
-        </div>
+        <span className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm sm:self-auto">
+          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+          Company owner only
+        </span>
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="w-full h-auto p-1 bg-slate-100/80 rounded-xl grid grid-cols-4 sm:flex sm:justify-center gap-1">
-          <TabsTrigger value="overview" className="flex-col sm:flex-row gap-1 sm:gap-2 data-[state=active]:bg-white data-[state=active]:text-orange-700 data-[state=active]:shadow-sm py-2 px-1 sm:px-3">
-            <LayoutDashboard className="h-4 w-4" />
-            <span className="text-[11px] sm:text-sm">Overview</span>
-          </TabsTrigger>
-          <TabsTrigger value="subscribers" className="flex-col sm:flex-row gap-1 sm:gap-2 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm py-2 px-1 sm:px-3">
-            <Users className="h-4 w-4" />
-            <span className="text-[11px] sm:text-sm">Accounts</span>
-          </TabsTrigger>
-          <TabsTrigger value="coupons" className="flex-col sm:flex-row gap-1 sm:gap-2 data-[state=active]:bg-white data-[state=active]:text-violet-700 data-[state=active]:shadow-sm py-2 px-1 sm:px-3">
-            <Ticket className="h-4 w-4" />
-            <span className="text-[11px] sm:text-sm">Coupons</span>
-          </TabsTrigger>
-          <TabsTrigger value="trial" className="flex-col sm:flex-row gap-1 sm:gap-2 data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm py-2 px-1 sm:px-3">
-            <UserPlus className="h-4 w-4" />
-            <span className="text-[11px] sm:text-sm">Trial</span>
-          </TabsTrigger>
-        </TabsList>
+        {/* The bar scrolls instead of squeezing, so a label never has to be
+            cut down to fit a narrow phone. */}
+        <div className="admin-rise -mx-1 flex justify-center overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" style={{ ['--i' as string]: 1 }}>
+          <TabsList className="mx-auto inline-flex h-auto w-auto gap-1 rounded-xl border border-slate-200 bg-slate-50/80 p-1">
+            {[
+              { value: 'overview',    label: 'Overview', icon: LayoutDashboard },
+              { value: 'subscribers', label: 'Accounts', icon: Users },
+              { value: 'coupons',     label: 'Coupons',  icon: Ticket },
+              { value: 'trial',       label: 'Trial',    icon: UserPlus },
+            ].map(({ value, label, icon: Icon }) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                className="flex-1 gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition-colors data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm sm:flex-none sm:px-4"
+              >
+                <Icon className="h-4 w-4" />
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
-        <TabsContent value="overview" className="mt-5 sm:mt-6">
+        <TabsContent value="overview" className="admin-rise mt-6" style={{ ['--i' as string]: 2 }}>
           <OverviewTab version={version} onDrill={setSegment} />
         </TabsContent>
-        <TabsContent value="subscribers" className="mt-5 sm:mt-6">
+        <TabsContent value="subscribers" className="admin-rise mt-6">
           <SubscribersTab version={version} onChanged={refresh} />
         </TabsContent>
-        <TabsContent value="coupons" className="mt-5 sm:mt-6">
+        <TabsContent value="coupons" className="admin-rise mt-6">
           <CouponsTab />
         </TabsContent>
-        <TabsContent value="trial" className="mt-5 sm:mt-6">
+        <TabsContent value="trial" className="admin-rise mt-6">
           <GrantTrialTab onGranted={refresh} />
         </TabsContent>
       </Tabs>
@@ -518,7 +527,7 @@ function SegmentDialog({
   return (
     <>
       <Dialog open={!!segment} onOpenChange={(o) => { if (!o) onClose(); }}>
-        <DialogContent className="w-[96vw] sm:max-w-5xl xl:max-w-6xl max-h-[88vh] flex flex-col p-0 gap-0 overflow-hidden">
+        <DialogContent className="w-[96vw] sm:max-w-5xl xl:max-w-7xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
           {/* Coloured band so each segment is recognisable at a glance */}
           <div className={cn("bg-gradient-to-r px-4 sm:px-6 py-4 sm:py-5 shrink-0", theme.band)}>
             <DialogHeader className="text-left space-y-0">
@@ -751,61 +760,105 @@ function OverviewTab({
   return (
     <div className="space-y-5 sm:space-y-6">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">Tap any card to see the accounts behind it</p>
+        <p className="text-xs text-muted-foreground">Tap any card or plan row to see the accounts behind it</p>
         <Button variant="outline" size="sm" onClick={load} disabled={loading} className="shrink-0">
           <RefreshCcw className={cn("h-3.5 w-3.5 sm:mr-1.5", loading && "animate-spin")} />
           <span className="hidden sm:inline">Refresh</span>
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:gap-4 grid-cols-2 xl:grid-cols-5">
-        <DashboardStatCard title="Accounts" value={v(stats?.total_accounts)} icon={Building2}
-          variant="info" loading={loading} description={(stats?.new_accounts_30d ?? 0) + " new in 30 days"}
-          onClick={drill({ key: "accounts", title: "All accounts", tone: "blue", icon: Building2,
-            subtitle: "Every pharmacy signed up to Medstocksy" })} />
-        <DashboardStatCard title="Active subscriptions" value={v(stats?.active_subs)} icon={BadgeCheck}
-          variant="success" loading={loading} description="Paid or on trial"
-          onClick={drill({ key: "active", title: "Active subscriptions", tone: "emerald", icon: BadgeCheck,
-            subtitle: "Paying or on a trial right now" })} />
-        <DashboardStatCard title="Expiring in 7 days" value={v(stats?.expiring_7d)} icon={Clock}
-          variant="warning" loading={loading} description="Needs a renewal nudge"
-          onClick={drill({ key: "expiring_7d", title: "Expiring within 7 days", tone: "amber", icon: Clock,
-            subtitle: "Reach out before these lapse" })} />
-        <DashboardStatCard title="Wholesale plans" value={v(stats?.wholesale_subs)} icon={Diamond}
-          variant="primary" loading={loading} description="On a B2B plan"
-          onClick={drill({ key: "wholesale", title: "Wholesale accounts", tone: "violet", icon: Diamond,
-            subtitle: "On a B2B plan with wholesale billing" })} />
-        <DashboardStatCard title="Expired or cancelled" value={v(stats?.expired)} icon={AlertTriangle}
-          variant="danger" loading={loading} description="Lost or lapsed"
-          onClick={drill({ key: "expired", title: "Expired or cancelled", tone: "rose", icon: AlertTriangle,
-            subtitle: "Lapsed accounts worth winning back" })} />
-      </div>
+      {/* One grid, one rhythm. auto-rows-fr keeps every card the same height
+          whether its title wraps to one line or two, so the row never looks
+          ragged and nothing sits at a different baseline from its neighbour. */}
+      <section aria-labelledby="admin-accounts-heading">
+        <div className="mb-4 flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="admin-accounts-heading" className="text-xl font-bold text-slate-800">At a glance</h2>
+            <p className="text-sm text-muted-foreground">Every account, and where each one stands</p>
+          </div>
+        </div>
+        <div className="grid auto-rows-fr gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {([
+            { t: "Accounts", v: v(stats?.total_accounts), icon: Building2, variant: "info" as const,
+              d: (stats?.new_accounts_30d ?? 0) + " new in 30 days",
+              r: { key: "accounts", title: "All accounts", tone: "blue", icon: Building2,
+                   subtitle: "Every pharmacy signed up to Medstocksy" } },
+            { t: "Active subscriptions", v: v(stats?.active_subs), icon: BadgeCheck, variant: "success" as const,
+              d: "Paid or on trial",
+              r: { key: "active", title: "Active subscriptions", tone: "emerald", icon: BadgeCheck,
+                   subtitle: "Paying or on a trial right now" } },
+            { t: "Expiring in 7 days", v: v(stats?.expiring_7d), icon: Clock, variant: "warning" as const,
+              d: "Needs a renewal nudge",
+              r: { key: "expiring_7d", title: "Expiring within 7 days", tone: "amber", icon: Clock,
+                   subtitle: "Reach out before these lapse" } },
+            { t: "Wholesale plans", v: v(stats?.wholesale_subs), icon: Diamond, variant: "primary" as const,
+              d: "On a B2B plan",
+              r: { key: "wholesale", title: "Wholesale accounts", tone: "violet", icon: Diamond,
+                   subtitle: "On a B2B plan with wholesale billing" } },
+            { t: "Expired or cancelled", v: v(stats?.expired), icon: AlertTriangle, variant: "danger" as const,
+              d: "Lost or lapsed",
+              r: { key: "expired", title: "Expired or cancelled", tone: "rose", icon: AlertTriangle,
+                   subtitle: "Lapsed accounts worth winning back" } },
+          ]).map((c, i) => (
+            <div key={c.t} className="admin-rise h-full" style={{ ['--i' as string]: i }}>
+              <DashboardStatCard title={c.t} value={c.v} icon={c.icon} variant={c.variant}
+                loading={loading} description={c.d} onClick={drill(c.r as SegmentRequest)} />
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <div className="grid gap-3 sm:gap-4 grid-cols-2 xl:grid-cols-4">
-        <DashboardStatCard title="Monthly recurring revenue" value={loading ? EMPTY : fmtMoney(stats?.mrr ?? 0)}
-          icon={IndianRupee} variant="success" loading={loading}
-          description="Annual plans counted per month"
-          onClick={drill({ key: "paid", title: "Paying accounts", tone: "emerald", icon: IndianRupee,
-            subtitle: "Every account on a paid plan" })} />
-        <DashboardStatCard title="Paid subscriptions" value={v(stats?.paid_subs)} icon={CreditCard}
-          variant="primary" loading={loading}
-          description={loading ? undefined : (stats?.monthly_subs ?? 0) + " monthly, " + (stats?.annual_subs ?? 0) + " annual"}
-          onClick={drill({ key: "paid", title: "Paying accounts", tone: "emerald", icon: IndianRupee,
-            subtitle: "Every account on a paid plan" })} />
-        <DashboardStatCard title="Trials running" value={v(stats?.trial_subs)} icon={Clock}
-          variant="warning" loading={loading} description="Not paying yet"
-          onClick={drill({ key: "trial", title: "Accounts on a trial", tone: "amber", icon: Clock,
-            subtitle: "Not paying yet, convert these" })} />
-        <DashboardStatCard title="Never subscribed" value={v(stats?.no_subscription)} icon={Users}
-          variant="default" loading={loading} description="Signed up, no plan"
-          onClick={drill({ key: "no_subscription", title: "Never subscribed", tone: "slate", icon: Users,
-            subtitle: "Signed up but never bought a plan" })} />
-      </div>
+      <section aria-labelledby="admin-plans-heading">
+        <div className="mb-4 flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="admin-plans-heading" className="text-xl font-bold text-slate-800">Subscriptions</h2>
+            <p className="text-sm text-muted-foreground">Who is paying, who is trialling, who never started</p>
+          </div>
+        </div>
+        {/* "Paid subscriptions" used to sit beside a revenue card that opened
+            the very same list. The money now lives with the plan mix below,
+            where it belongs, and each card here opens somewhere different. */}
+        {/* Same column template as the row above, so a card is the same
+            size wherever it appears and the two groups read as one system. */}
+        <div className="grid auto-rows-fr gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {([
+            { t: "Paid subscriptions", v: v(stats?.paid_subs), icon: CreditCard, variant: "primary" as const,
+              d: loading ? undefined : (stats?.monthly_subs ?? 0) + " monthly, " + (stats?.annual_subs ?? 0) + " annual",
+              r: { key: "paid", title: "Paying accounts", tone: "emerald", icon: IndianRupee,
+                   subtitle: "Every account on a paid plan" } },
+            { t: "Trials running", v: v(stats?.trial_subs), icon: Clock, variant: "warning" as const,
+              d: "Not paying yet",
+              r: { key: "trial", title: "Accounts on a trial", tone: "amber", icon: Clock,
+                   subtitle: "Not paying yet, convert these" } },
+            { t: "Never subscribed", v: v(stats?.no_subscription), icon: Users, variant: "default" as const,
+              d: "Signed up, no plan",
+              r: { key: "no_subscription", title: "Never subscribed", tone: "slate", icon: Users,
+                   subtitle: "Signed up but never bought a plan" } },
+          ]).map((c, i) => (
+            <div key={c.t} className="admin-rise h-full" style={{ ['--i' as string]: i }}>
+              <DashboardStatCard title={c.t} value={c.v} icon={c.icon} variant={c.variant}
+                loading={loading} description={c.d} onClick={drill(c.r as SegmentRequest)} />
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base sm:text-lg font-semibold">Plan mix</CardTitle>
-          <CardDescription>Active subscriptions by plan, with monthly value. Tap a row for its accounts.</CardDescription>
+      <Card className="admin-rise overflow-hidden">
+        <CardHeader className="gap-4 pb-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <CardTitle className="text-base font-semibold sm:text-lg">Plan mix</CardTitle>
+            <CardDescription>Active subscriptions by plan. Tap a row for its accounts.</CardDescription>
+          </div>
+          {/* Monthly recurring revenue reads as the total of this table, which
+              is what it is, instead of as a card that reopened the paid list. */}
+          <div className="shrink-0 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-right">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700/80">
+              Monthly recurring
+            </div>
+            <div className="text-lg font-bold tabular-nums text-emerald-700">
+              {loading ? EMPTY : fmtMoney(stats?.mrr ?? 0)}
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
           {loading ? (
@@ -980,58 +1033,72 @@ function SubscribersTab({ version, onChanged }: { version: number; onChanged: ()
 
   return (
     <div className="space-y-4">
+      {/* Each tab opens the way the Overview does, and the way Reports does:
+          a heading that names the section and a line that explains it. */}
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold text-slate-800">Accounts</h2>
+          <p className="text-sm text-muted-foreground">
+            Search any pharmacy, then open it to change its plan
+          </p>
+        </div>
+      </div>
+
       <Card className="border-slate-200">
-        <CardContent className="p-3 sm:p-4 space-y-3">
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search email or store..."
-                className="h-10 pl-9"
-                aria-label="Search subscribers"
-              />
-            </div>
-            <Button variant="outline" onClick={() => load(search)} disabled={loading} className="h-10 shrink-0">
-              <RefreshCcw className={cn("h-4 w-4 sm:mr-1.5", loading && "animate-spin")} />
-              <span className="hidden sm:inline">Refresh</span>
-            </Button>
+        {/* Search, both filters and Refresh on one line. They used to sit on
+            two rows, which left the filters orphaned under a full-width
+            search box; flex-wrap keeps that honest on a narrow screen. */}
+        <CardContent className="flex flex-wrap items-center gap-2 p-3 sm:gap-3 sm:p-4">
+          <div className="relative min-w-[200px] flex-1 basis-full sm:basis-0">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search email or store..."
+              className="h-10 pl-9"
+              aria-label="Search subscribers"
+            />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <Select value={kindFilter} onValueChange={setKindFilter}>
-              <SelectTrigger className="h-9 flex-1 sm:w-40 sm:flex-none" aria-label="Filter by type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All types</SelectItem>
-                <SelectItem value="Paid">Paid</SelectItem>
-                <SelectItem value="Trial">Trial</SelectItem>
-                <SelectItem value="Testing">Testing</SelectItem>
-                <SelectItem value="None">No plan</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-9 flex-1 sm:w-44 sm:flex-none" aria-label="Filter by status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any status</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="expiring">Expiring in 7 days</SelectItem>
-                <SelectItem value="expired">Expired or cancelled</SelectItem>
-                <SelectItem value="none">Never subscribed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Filter className="hidden h-3.5 w-3.5 shrink-0 text-muted-foreground sm:block" />
+
+          <Select value={kindFilter} onValueChange={setKindFilter}>
+            <SelectTrigger className="h-10 flex-1 sm:w-36 sm:flex-none" aria-label="Filter by type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              <SelectItem value="Paid">Paid</SelectItem>
+              <SelectItem value="Trial">Trial</SelectItem>
+              <SelectItem value="Testing">Testing</SelectItem>
+              <SelectItem value="None">No plan</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-10 flex-1 sm:w-40 sm:flex-none" aria-label="Filter by status">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any status</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="expiring">Expiring in 7 days</SelectItem>
+              <SelectItem value="expired">Expired or cancelled</SelectItem>
+              <SelectItem value="none">Never subscribed</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Button variant="outline" onClick={() => load(search)} disabled={loading}
+            className="h-10 shrink-0">
+            <RefreshCcw className={cn("h-4 w-4 sm:mr-1.5", loading && "animate-spin")} />
+            <span className="hidden sm:inline">Refresh</span>
+          </Button>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base sm:text-lg font-semibold">Accounts</CardTitle>
+          <CardTitle className="text-base font-semibold sm:text-lg">Results</CardTitle>
           <CardDescription>
             {loading
               ? "Loading..."
@@ -1074,7 +1141,11 @@ function ManageSubscriberDialog({
   useEffect(() => {
     if (!subscriber) return;
     const current = planInfo(subscriber.plan_type);
-    setPlan(current?.value ?? "professional_monthly");
+    // A plan this build does not list - a wholesale trial, or anything added
+    // since - used to fall back to "Professional (monthly)". Pressing Apply
+    // without touching the dropdown then moved a wholesale customer onto a
+    // retail plan. Keep whatever they actually hold selected instead.
+    setPlan(current?.value ?? subscriber.plan_type ?? "professional_monthly");
     setDays(current?.days ?? 30);
   }, [subscriber]);
 
@@ -1101,7 +1172,7 @@ function ManageSubscriberDialog({
   return (
     <>
       <Dialog open={!!subscriber} onOpenChange={(o) => { if (!o) onClose(); }}>
-        <DialogContent className="w-[95vw] sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[96vw] sm:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader className="text-left">
             <DialogTitle className="text-base sm:text-lg break-all">{subscriber.email}</DialogTitle>
             <DialogDescription>
@@ -1175,6 +1246,14 @@ function ManageSubscriberDialog({
               >
                 <SelectTrigger id="admin-plan"><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  {/* A plan this build does not list still has to appear, or the
+                      box would show nothing and the admin could not tell what
+                      the account is on. */}
+                  {!planInfo(subscriber.plan_type) && subscriber.plan_type && (
+                    <SelectItem value={subscriber.plan_type}>
+                      {planLabel(subscriber.plan_type)}{DOT}current
+                    </SelectItem>
+                  )}
                   {PLAN_OPTIONS.map((o) => (
                     <SelectItem key={o.value} value={o.value}>
                       {o.label}{o.price > 0 ? DOT + fmtMoney(o.price) : DOT + "Free"}
@@ -1191,7 +1270,9 @@ function ManageSubscriberDialog({
                 onChange={(e) => setDays(Math.max(1, parseInt(e.target.value) || 1))}
               />
               <p className="text-xs text-muted-foreground">
-                Sets the expiry to {days} day{days === 1 ? "" : "s"} from now, replacing any current plan.
+                Changes the plan now and sets the expiry to {days} day{days === 1 ? "" : "s"} from today
+                {" "}&mdash; or keeps the existing expiry when that is later, so paid time is never lost.
+                Use Revoke access to end a plan deliberately.
               </p>
             </div>
 
@@ -1369,6 +1450,15 @@ function CouponsTab() {
 
   return (
     <div className="space-y-4">
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold text-slate-800">Coupons</h2>
+          <p className="text-sm text-muted-foreground">
+            Discount codes customers can apply at checkout
+          </p>
+        </div>
+      </div>
+
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -1502,7 +1592,7 @@ function CouponsTab() {
       </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[96vw] sm:max-w-xl lg:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader className="text-left">
             <DialogTitle>New coupon</DialogTitle>
             <DialogDescription>Saving an existing code updates it instead of creating a duplicate.</DialogDescription>
@@ -1671,24 +1761,31 @@ function GrantTrialTab({ onGranted }: { onGranted: () => void }) {
 
   return (
     <>
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold text-slate-800">Grant a trial</h2>
+          <p className="text-sm text-muted-foreground">
+            Give an account time on a plan without taking a payment
+          </p>
+        </div>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-5">
         <Card className="lg:col-span-3 overflow-hidden">
-          {/* Same banded header language as the drill-down popups */}
-          <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-4 sm:px-6 py-4">
-            <div className="flex items-start gap-3 sm:gap-4">
-              <div className="h-11 w-11 rounded-xl bg-white/20 grid place-items-center shrink-0">
-                <UserPlus className="h-5 w-5 text-white" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-white text-lg sm:text-xl font-bold leading-tight">Grant free access</h2>
-                <p className="text-white/80 text-xs sm:text-sm mt-0.5">
-                  For demos, support fixes and win-backs. No payment taken.
-                </p>
-              </div>
-            </div>
-          </div>
+          {/* A plain card header, like every other card in the panel. The
+              teal gradient band was the only one of its kind on this screen
+              and made the tab look like it came from a different product. */}
+          <CardHeader className="gap-1 border-b bg-slate-50/60 pb-4">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold sm:text-lg">
+              <UserPlus className="h-4 w-4 text-emerald-600" />
+              Grant free access
+            </CardTitle>
+            <CardDescription>
+              For demos, support fixes and win-backs. No payment taken.
+            </CardDescription>
+          </CardHeader>
 
-          <CardContent className="p-4 sm:p-6 space-y-5">
+          <CardContent className="space-y-6 p-5 sm:p-6">
             <div className="space-y-2">
               <Label htmlFor="trial-email">Account email</Label>
               <div className="relative">

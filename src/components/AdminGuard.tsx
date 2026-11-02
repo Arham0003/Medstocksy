@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -183,25 +184,47 @@ ON CONFLICT (email) DO NOTHING;`;
       );
     }
 
+    // The session state lives in the top bar as a small chip rather than a
+    // full-width card above the page: it is a status, not an announcement,
+    // and the page should start with its own heading.
+    const headerSlot = typeof document !== 'undefined'
+      ? document.getElementById('app-header-slot')
+      : null;
+
+    const sessionChip = (
+      <div
+        className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 sm:px-2.5 print:hidden"
+        title={
+          serverAdmin === null ? 'Admin session unlocked, verifying...'
+          : serverAdmin === true ? 'Admin session unlocked and verified'
+          : 'Admin session unlocked'
+        }
+      >
+        <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+        {/* The word goes on a narrow screen, the shield and the lock stay:
+            an admin on a phone still has to be able to lock the session. */}
+        <span className="hidden text-xs font-medium text-emerald-800 sm:inline">
+          Admin
+          {serverAdmin === null && <span className="text-emerald-600/70"> · verifying</span>}
+        </span>
+        <button
+          type="button"
+          onClick={handleLock}
+          className="ml-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs text-emerald-700 transition-colors hover:bg-emerald-100 hover:text-emerald-900"
+        >
+          <Lock className="h-3 w-3" />
+          <span className="hidden sm:inline">Lock</span>
+          <span className="sr-only">Lock admin session</span>
+        </button>
+      </div>
+    );
+
     return (
       <div className="space-y-3">
-        <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2 print:hidden">
-          <div className="flex items-center gap-2 text-xs text-emerald-800">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            <span>
-              Admin session unlocked
-              {serverAdmin === null ? ', verifying...' : serverAdmin === true ? ' and verified.' : '.'}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={handleLock}
-            className="text-xs text-emerald-700 hover:text-emerald-900 hover:underline inline-flex items-center gap-1"
-          >
-            <Lock className="h-3 w-3" />
-            Lock admin
-          </button>
-        </div>
+        {headerSlot ? createPortal(sessionChip, headerSlot) : (
+          // No slot on this screen - keep it inline rather than lose it.
+          <div className="flex justify-end print:hidden">{sessionChip}</div>
+        )}
 
         {serverAdmin === 'unknown' && (
           <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 print:hidden">

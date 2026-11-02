@@ -79,10 +79,21 @@ export const DashboardStatCard = ({
   return (
     <Card
       onClick={onClick}
+      // A card that does something must be reachable without a mouse. Only
+      // the ones that actually open a list take focus, so a plain statistic
+      // does not become a tab stop for no reason.
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); }
+      } : undefined}
       className={cn(
-        "relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:-translate-y-1 border",
+        // h-full + column: in a grid row of equal heights the value can then
+        // be pushed to the bottom, so every figure sits on one baseline even
+        // when a neighbour's title wraps to two lines.
+        "relative flex h-full flex-col overflow-hidden transition-all duration-300 hover:shadow-lg hover:-translate-y-1 border",
         styles.borderColor,
-        onClick && "cursor-pointer",
+        onClick && "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2",
         className
       )}
     >
@@ -93,8 +104,10 @@ export const DashboardStatCard = ({
           <CardTitle className="text-sm font-medium text-muted-foreground">
             {title}
           </CardTitle>
+          {/* Wraps to a second line rather than being cut off: a fixed 180px
+              and truncate hid the end of longer descriptions. */}
           {description && (
-            <CardDescription className="text-xs truncate max-w-[180px]">
+            <CardDescription className="text-xs line-clamp-2">
               {description}
             </CardDescription>
           )}
@@ -104,7 +117,7 @@ export const DashboardStatCard = ({
         </div>
       </CardHeader>
 
-      <CardContent className="relative">
+      <CardContent className="relative mt-auto">
         <div className={cn("text-2xl font-bold tracking-tight", styles.textColor)}>
           {loading ? (
             <div className="h-8 w-24 bg-slate-200 animate-pulse rounded" />

@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { normalizePhone } from '@/lib/customer';
 import { insertSalesRows } from '@/lib/salesInsert';
+import FloatingCalculator from '@/components/FloatingCalculator';
 import { calcGst, splitGst } from '@/lib/gst';
 import QuickAddMedicineSheet from '@/components/QuickAddMedicineSheet';
 import { billDataPrefix, clearBillData } from '@/hooks/useBillSessions';
@@ -215,6 +216,11 @@ export default function RecordSale({
   // for a sale the database already holds.
   const attemptBillIdRef = useRef<string | null>(null);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  // Scratch-pad calculator, F12 / Alt+C.
+  const [calcOpen, setCalcOpen] = useState(false);
+  // A bill dated in the past is legitimate but worth a second look, so the
+  // date is held here until it is confirmed.
+  const [pendingBackdate, setPendingBackdate] = useState<string | null>(null);
   // F3 edit-gate: only one field unlocked at a time
   const [f3Unlocked, setF3Unlocked] = useState<string | null>(null);
   const [f3Dialog, setF3Dialog] = useState<{ uid: string; field: string } | null>(null);
@@ -709,9 +715,60 @@ export default function RecordSale({
       (target?.current as HTMLInputElement | null)?.select?.();
     };
 
+  // ─── Bill date rules ────────────────────────────────────────────────────
+  // today, and the last day of the current year: an invoice may be dated
+  // earlier than today, but never into a future year.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const yearEndIso = `${new Date().getFullYear()}-12-31`;
+
+  // The earliest a bill may be dated. Anything before this is a typo, not a
+  // back-dated sale.
+  const MIN_BILL_DATE = '2000-01-01';
+
+  // A native date input fires a change for every segment, so validating as the
+  // operator types means complaining about 02-11-0002 while they are still on
+  // the year. The field edits this draft freely and nothing is judged until
+  // they leave it - one decision, one message, at the end.
+  const [dateDraft, setDateDraft] = useState<string>(billDate);
+  useEffect(() => { setDateDraft(billDate); }, [billDate]);
+
+  const commitBillDate = useCallback(() => {
+    if (editBillId) return;                 // a generated bill keeps its date
+    const next = dateDraft;
+
+    // Nothing was changed - say nothing.
+    if (next === billDate) return;
+
+    const resetToToday = (title: string, description: string) => {
+      setDateDraft(todayIso);
+      setBillDate(todayIso);
+      toast({ variant: 'destructive', title, description });
+    };
+
+    // Half-typed or impossible: fall back to today rather than leaving the
+    // bill carrying a date nobody chose.
+    if (!next || Number.isNaN(Date.parse(next))) {
+      resetToToday('Date not recognised', `Reset to today, ${new Date(todayIso).toLocaleDateString('en-IN')}.`);
+      return;
+    }
+    if (next > yearEndIso) {
+      resetToToday('Date not allowed', `A bill cannot be dated past ${new Date(yearEndIso).toLocaleDateString('en-IN')}. Reset to today.`);
+      return;
+    }
+    if (next < MIN_BILL_DATE) {
+      resetToToday('Date too far back', 'A bill cannot be dated before 2000. Reset to today.');
+      return;
+    }
+
+    // Backdating is allowed, but it is a decision rather than a typo, so it
+    // is confirmed once, here, after the whole date has been entered.
+    if (next < todayIso) { setPendingBackdate(next); return; }
+    setBillDate(next);
+  }, [editBillId, dateDraft, billDate, todayIso, yearEndIso, toast]);
+
   // Modern boxed input used across the patient-detail block.
   const patientFieldCls =
-    'w-full h-8 rounded-md border border-emerald-200 bg-white px-2 text-sm font-medium text-emerald-900 placeholder-emerald-400/60 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-colors';
+    'w-full h-8 rounded-md border border-emerald-200 bg-white px-2 text-base font-medium text-emerald-900 placeholder-emerald-400/60 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-colors';
 
   // ─── Apply selected CRM fields ──────────────────────────────────────────
   /**
@@ -1249,6 +1306,26 @@ export default function RecordSale({
       toast({ variant: 'destructive', title: 'No products', description: 'Add at least one product before saving.' });
       return;
     }
+    // A line with no quantity bills nothing and takes nothing off the shelf.
+    // Printing it would put a zero row on a tax invoice, so the bill stops
+    // here and the cursor goes to the quantity that needs filling in.
+    const emptyLines = validRows.filter(r => {
+      const sub = r.subQty !== '' ? Number(r.subQty) || 0 : 0;
+      return (Number(r.qty) || 0) <= 0 && sub <= 0;
+    });
+    if (emptyLines.length > 0) {
+      const names = emptyLines.map(r => r.productName).filter(Boolean).slice(0, 3).join(', ');
+      toast({
+        variant: 'destructive',
+        title: emptyLines.length === 1 ? 'Quantity missing' : `${emptyLines.length} lines have no quantity`,
+        description: names
+          ? `Enter a quantity for ${names}, or remove the line, before saving.`
+          : 'Enter a quantity, or remove the line, before saving.',
+      });
+      focusField(emptyLines[0].uid, 'qty');
+      return;
+    }
+
     // Checked against the ref, not the state: see savingRef above. Everything
     // between here and where the lock is taken is synchronous, so no second
     // dispatch can slip through the gap.
@@ -1649,7 +1726,7 @@ export default function RecordSale({
       savingRef.current = false;
       setIsSaving(false);
     }
-  }, [rows, settings, globalDiscount, paymentMode, creditDueDate, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, profile, navigate, toast, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin,
+  }, [rows, settings, globalDiscount, paymentMode, creditDueDate, receivedAmount, totals, customerName, customerPhone, customerAddress, doctorName, billDate, profile, navigate, toast, onCompleted, persistKey, editBillId, effectiveInterstate, isWholesale, wholesaleGstin, focusField,
       wholesaleDl, wholesaleDlExpiry, shipToAddress, buyerStateCode, salesmanName, salesmanPhone, customerType]);
 
   // ─── Keyboard shortcuts (global) ──────────────────────────────────────
@@ -1676,6 +1753,14 @@ export default function RecordSale({
         const hasItems = rows.some(r => r.productId);
         if (hasItems) { setShowLeaveConfirm(true); return; }
         navigate('/sales');
+        return;
+      }
+      // F12 / Alt+C = the floating calculator. F12 is what was asked for, but a
+      // browser tab keeps it for developer tools and a page cannot take it
+      // back, so Alt+C is bound as the one that always arrives.
+      if (e.key === 'F12' || (e.altKey && e.key.toLowerCase() === 'c')) {
+        e.preventDefault();
+        setCalcOpen(o => !o);
         return;
       }
       // F2 = jump to the first empty row's product search
@@ -1993,7 +2078,7 @@ export default function RecordSale({
               {isWholesale ? 'Wholesale Sale Entry' : 'Sale Entry'}
             </h1>
             {isWholesale && (
-              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500/90 text-white text-[10px] font-bold uppercase tracking-wider">
+              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500/90 text-white text-[12px] font-bold uppercase tracking-wider">
                 <Diamond className="h-3 w-3" /> B2B
               </span>
             )}
@@ -2004,7 +2089,7 @@ export default function RecordSale({
           <span className="hidden lg:block text-sm font-medium text-white/80 tabular-nums">
             {new Date(billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
           </span>
-          <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-white/10 rounded-full border border-white/20 text-[11px] font-medium text-white/90">
+          <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-white/10 rounded-full border border-white/20 text-[13px] font-medium text-white/90">
             <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">F2</kbd> Search</span>
             <span className="w-1 h-1 bg-white/40 rounded-full"></span>
             <span className="flex items-center gap-1"><kbd className="bg-white/20 border border-white/20 px-1 rounded">Ctrl+↵</kbd> Save</span>
@@ -2033,18 +2118,18 @@ export default function RecordSale({
 
       {/* ══════ ZONE 2 & 3: UNIFIED SEARCH & PATIENT INFO (SLIM) ══════ */}
       <div className="bg-white border-b border-green-100 px-3 py-1.5 shrink-0 z-30">
-        <div className="flex flex-col gap-1.5 max-w-[1700px] mx-auto">
+        <div className="flex flex-col gap-1.5 w-full">
           
           {/* Product search now lives inline in each grid row's Product cell.
               Press F2 (or Enter from the last patient field) to jump there. */}
 
           {/* Row 2: Patient details - modern boxed fields, Enter moves to the next */}
           <div className="bg-white border border-emerald-200 rounded-xl px-3 py-2.5 shadow-sm">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-3 gap-y-2">
 
               {/* Patient (with existing-customer autocomplete) */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">{isWholesale ? 'Buyer' : 'Patient'}</span>
+                <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-emerald-600">{isWholesale ? 'Buyer' : 'Patient'}</span>
                 <div className="relative flex-1 min-w-0">
                   <input
                     ref={patientNameRef}
@@ -2062,7 +2147,7 @@ export default function RecordSale({
                   />
                   {customerDropdownOpen && customerSuggestions.length > 0 && (
                     <div className="absolute top-full left-0 mt-1 min-w-[240px] w-max max-w-[320px] bg-white rounded-lg shadow-[0_12px_32px_rgba(0,0,0,0.15)] border border-emerald-100 overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-                      <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                      <p className="px-3 pt-2 pb-1 text-[12px] font-bold uppercase tracking-wide text-gray-400">
                         {isWholesale ? 'Existing buyers' : 'Existing customers'}
                       </p>
                       {customerSuggestions.map((c, idx) => (
@@ -2078,13 +2163,13 @@ export default function RecordSale({
                             <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
                             {isWholesale ? (
                               (c.phone || c.gstin || c.dl) && (
-                                <p className="text-[11px] text-gray-400 truncate">
+                                <p className="text-[13px] text-gray-400 truncate">
                                   {[c.phone, c.gstin, c.dl && `DL ${c.dl}`].filter(Boolean).join(' · ')}
                                 </p>
                               )
                             ) : (
                               (c.phone || c.doctor) && (
-                                <p className="text-[11px] text-gray-400 truncate">{[c.phone, c.doctor && `Dr. ${c.doctor}`].filter(Boolean).join(' · ')}</p>
+                                <p className="text-[13px] text-gray-400 truncate">{[c.phone, c.doctor && `Dr. ${c.doctor}`].filter(Boolean).join(' · ')}</p>
                               )
                             )}
                           </div>
@@ -2098,9 +2183,9 @@ export default function RecordSale({
 
               {/* Phone - +91 prefix box, 10 digits only */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Phone</span>
+                <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-emerald-600">Phone</span>
                 <div className="flex items-center flex-1 min-w-0 h-8 rounded-md border border-emerald-200 bg-white overflow-hidden transition-colors focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-100">
-                  <span className="grid place-items-center h-full px-2 text-sm font-bold text-emerald-700 bg-emerald-50 border-r border-emerald-200 shrink-0">+91</span>
+                  <span className="grid place-items-center h-full px-2 text-base font-bold text-emerald-700 bg-emerald-50 border-r border-emerald-200 shrink-0">+91</span>
                   <input
                     ref={phoneRef}
                     value={(customerPhone || '').replace(/^\+91/, '')}
@@ -2112,7 +2197,7 @@ export default function RecordSale({
                     inputMode="numeric"
                     maxLength={10}
                     placeholder="10-digit mobile"
-                    className="flex-1 min-w-0 h-full px-2 text-sm font-medium text-emerald-900 placeholder-emerald-400/60 outline-none bg-transparent tabular-nums"
+                    className="flex-1 min-w-0 h-full px-2 text-base font-medium text-emerald-900 placeholder-emerald-400/60 outline-none bg-transparent tabular-nums"
                   />
                 </div>
               </div>
@@ -2121,7 +2206,7 @@ export default function RecordSale({
                   has no prescriber, and Rule 65 asks for their licence instead. */}
               {!isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Doctor</span>
+                  <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-emerald-600">Doctor</span>
                   <input
                     ref={doctorRef}
                     value={doctorName}
@@ -2136,7 +2221,7 @@ export default function RecordSale({
               {/* GSTIN - B2B buyer identity, printed on the tax invoice. */}
               {isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">GSTIN</span>
+                  <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-violet-600">GSTIN</span>
                   <input
                     ref={wholesaleGstinRef}
                     value={wholesaleGstin}
@@ -2151,7 +2236,7 @@ export default function RecordSale({
                   {buyerStateCode.length === 2 && sellerStateCode && (
                     <span
                       className={cn(
-                        'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                        'shrink-0 rounded px-1.5 py-0.5 text-[12px] font-semibold',
                         effectiveInterstate
                           ? 'bg-amber-100 text-amber-800'
                           : 'bg-emerald-100 text-emerald-800',
@@ -2171,7 +2256,7 @@ export default function RecordSale({
               {/* Buyer drug licence - Rule 65(4) requires it on a wholesale sale. */}
               {isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL No</span>
+                  <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-violet-600">DL No</span>
                   <input
                     ref={wholesaleDlRef}
                     value={wholesaleDl}
@@ -2189,7 +2274,7 @@ export default function RecordSale({
                   must not stop a legitimate sale at the counter. */}
               {isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">DL Exp</span>
+                  <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-violet-600">DL Exp</span>
                   <input
                     ref={wholesaleDlExpiryRef}
                     type="date"
@@ -2200,7 +2285,7 @@ export default function RecordSale({
                     className={cn(patientFieldCls, dlExpired && 'ring-1 ring-amber-400 bg-amber-50')}
                   />
                   {dlExpired && (
-                    <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                    <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[12px] font-semibold text-amber-800"
                           title="This licence has expired. Supplying against an expired licence is an offence.">
                       Expired
                     </span>
@@ -2211,7 +2296,7 @@ export default function RecordSale({
               {/* Ship-to, when goods go somewhere other than the billing address. */}
               {isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Ship To</span>
+                  <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-violet-600">Ship To</span>
                   <input
                     ref={shipToAddressRef}
                     value={shipToAddress}
@@ -2226,7 +2311,7 @@ export default function RecordSale({
               {/* Salesman name - who closed the deal (commission / accountability). */}
               {isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Salesman</span>
+                  <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-violet-600">Salesman</span>
                   <input
                     ref={salesmanNameRef}
                     value={salesmanName}
@@ -2242,7 +2327,7 @@ export default function RecordSale({
               {/* Salesman phone */}
               {isWholesale && (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-violet-600">Slsm Ph</span>
+                  <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-violet-600">Slsm Ph</span>
                   <input
                     ref={salesmanPhoneRef}
                     value={salesmanPhone}
@@ -2259,7 +2344,7 @@ export default function RecordSale({
 
               {/* Customer type - Normal / Distributor / Chemist / Hospital / Retailer */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Cust Type</span>
+                <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-emerald-600">Cust Type</span>
                 <select
                   ref={customerTypeRef}
                   value={customerType}
@@ -2278,7 +2363,7 @@ export default function RecordSale({
 
               {/* Address (single column so Months fits on this row too) */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Address</span>
+                <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-emerald-600">Address</span>
                 <input
                   ref={addressRef}
                   value={customerAddress}
@@ -2291,13 +2376,29 @@ export default function RecordSale({
 
               {/* Date - locked once a bill is generated */}
               <div className="flex items-center gap-2 min-w-0">
-                <span className="w-[58px] shrink-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Date</span>
+                <span className="w-[80px] shrink-0 text-[15px] font-semibold uppercase tracking-tight text-emerald-600">Date</span>
                 <input
                   ref={dateRef}
                   type="date"
-                  value={billDate}
-                  onChange={e => !editBillId && setBillDate(e.target.value)}
-                  onKeyDown={enterTo(masterSearchRef, addressRef)}
+                  value={dateDraft}
+                  min={MIN_BILL_DATE}
+                  max={yearEndIso}
+                  onChange={e => setDateDraft(e.target.value)}
+                  onBlur={commitBillDate}
+                  // Landing here selects the whole date, so typing replaces it
+                  // rather than editing one segment.
+                  onFocus={e => e.currentTarget.select()}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    commitBillDate();
+                    // Enter goes to where the medicine is actually typed - the
+                    // first empty row's product cell. masterSearchRef used to
+                    // be the target, but nothing has carried that ref since
+                    // the search moved inline into the grid.
+                    if (e.shiftKey) { addressRef.current?.focus(); return; }
+                    focusFirstEmptyProduct();
+                  }}
                   readOnly={!!editBillId}
                   title={editBillId ? 'Bill date cannot be changed after a bill is generated' : undefined}
                   className={cn(patientFieldCls, 'appearance-none', editBillId && 'opacity-60 cursor-not-allowed pointer-events-none')}
@@ -2320,9 +2421,9 @@ export default function RecordSale({
         {/* Marg-style dense billing grid - one responsive table for every screen.
             On phones the fluid fr columns shrink to fill the full width with no
             horizontal scroll; from lg up it opens out to the spacious desktop size. */}
-        <div className="billing-grid flex w-full min-w-[900px] lg:max-w-[1700px] mx-auto bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
+        <div className="billing-grid flex w-full min-w-[900px] bg-white rounded-lg shadow-sm border border-emerald-200 overflow-hidden flex-col">
           {/* Table header - Product · QTY · PCS · HSN · Batch · MRP · Rate · DISC · GST · Amount */}
-          <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[11px] lg:text-[13px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
+          <div className={`grid ${GRID_COLS} bg-emerald-100/70 border-b-2 border-emerald-200 text-[13px] lg:text-[15px] font-bold uppercase tracking-tight lg:tracking-wide text-emerald-800 py-2 divide-x divide-emerald-200/60`}>
             <div className="pl-2 lg:pl-4 truncate">Product</div>
             <div className="px-0.5 lg:px-1 text-center">Expiry</div>
             <div className="px-0.5 lg:px-1 text-center">Strip</div>
@@ -2350,8 +2451,8 @@ export default function RecordSale({
                   <div className="pl-2 lg:pl-4 relative flex items-center min-w-0">
                     {row.productId ? (
                       <div className="flex items-center gap-1.5 lg:gap-2 min-w-0 pointer-events-none">
-                        <span className="text-[15px] lg:text-[16px] font-semibold text-gray-800 truncate">{row.productName}</span>
-                        <span className="text-[10px] font-medium text-emerald-600 shrink-0">S:{row.stock}</span>
+                        <span className="text-[17px] lg:text-[18px] font-semibold text-gray-800 truncate">{row.productName}</span>
+                        <span className="text-[12px] font-medium text-emerald-600 shrink-0">S:{row.stock}</span>
 
                       </div>
                     ) : (
@@ -2364,7 +2465,7 @@ export default function RecordSale({
                         onBlur={() => setTimeout(() => { setActiveSearchRow(cur => (cur === idx ? null : cur)); }, 150)}
                         placeholder={idx === 0 ? 'Search medicine… (F2)' : 'Next medicine…'}
                         autoComplete="off"
-                        className="w-full h-8 bg-transparent outline-none px-1 text-[15px] lg:text-[16px] font-medium text-gray-800 placeholder-emerald-300 rounded-md focus:bg-cyan-50 focus:text-cyan-900 focus:ring-[3px] focus:ring-inset focus:ring-cyan-400 focus:rounded-lg"
+                        className="w-full h-8 bg-transparent outline-none px-1 text-[17px] lg:text-[18px] font-medium text-gray-800 placeholder-emerald-300 rounded-md focus:bg-cyan-50 focus:text-cyan-900 focus:ring-[3px] focus:ring-inset focus:ring-cyan-400 focus:rounded-lg"
                       />
                     )}
                   </div>
@@ -2378,7 +2479,7 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { expiry: e.target.value })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'expiry')}
                       disabled={!row.productId}
-                      className="h-8 text-[13px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg transition-all shadow-none text-rose-500 appearance-none"
+                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg transition-all shadow-none text-rose-500 appearance-none"
                     />
                   </div>
 
@@ -2388,11 +2489,12 @@ export default function RecordSale({
                       ref={el => setFieldRef(row.uid, 'qty', el)}
                       type="number"
                       min="0"
+                      aria-label="Quantity"
                       value={row.qty}
                       onChange={e => updateRow(idx, { qty: parseInt(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'qty')}
                       disabled={!row.productId}
-                      className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
+                      className="h-8 text-[18px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all shadow-none"
                     />
                   </div>
 
@@ -2410,7 +2512,7 @@ export default function RecordSale({
                         disabled={!row.productId}
                         placeholder="-"
                         title="Free / scheme quantity - not billed, but deducted from stock"
-                        className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-violet-50 focus:bg-violet-50 focus:!text-violet-900 focus:!border-violet-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-violet-400 focus:!rounded-lg transition-all shadow-none text-violet-700"
+                        className="h-8 text-[17px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-violet-50 focus:bg-violet-50 focus:!text-violet-900 focus:!border-violet-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-violet-400 focus:!rounded-lg transition-all shadow-none text-violet-700"
                       />
                     </div>
                   )}
@@ -2427,7 +2529,7 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'subQty')}
                       disabled={!row.productId || row.pcsPerUnit === 0}
                       placeholder={row.pcsPerUnit > 0 ? '-' : 'N/A'}
-                      className="h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 transition-all shadow-none text-green-700"
+                      className="h-8 text-[17px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-indigo-100 focus:!text-gray-900 focus:!border-indigo-400 focus:!ring-2 focus:!ring-indigo-300 transition-all shadow-none text-green-700"
                     />
                   </div>
 
@@ -2458,7 +2560,7 @@ export default function RecordSale({
                             : undefined
                         }
                         className={cn(
-                          'h-8 w-full text-[15px] px-1 text-center font-medium bg-transparent border border-transparent rounded-md hover:bg-emerald-50 focus:bg-cyan-50 focus:border-cyan-400 focus:outline-none transition-all',
+                          'h-8 w-full text-[17px] px-1 text-center font-medium bg-transparent border border-transparent rounded-md hover:bg-emerald-50 focus:bg-cyan-50 focus:border-cyan-400 focus:outline-none transition-all',
                           expiryStatus(row.batchExpiryIso) === 'critical' && 'text-red-600',
                           expiryStatus(row.batchExpiryIso) === 'warning' && 'text-amber-600',
                         )}
@@ -2476,7 +2578,7 @@ export default function RecordSale({
                         onChange={e => updateRow(idx, { batch: e.target.value })}
                         onKeyDown={e => handleFieldKeyDown(e, idx, 'batch')}
                         disabled={!row.productId}
-                        className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
+                        className="h-8 text-[18px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 focus:ring-2 focus:ring-emerald-50 transition-all shadow-none text-gray-700"
                       />
                     )}
                   </div>
@@ -2494,7 +2596,7 @@ export default function RecordSale({
                       readOnly={!isF3Unlocked(row.uid, 'mrp')}
                       onBlur={() => { if (isF3Unlocked(row.uid, 'mrp')) setF3Unlocked(null); }}
                       title={isF3Unlocked(row.uid, 'mrp') ? 'Editing MRP - press F3 to lock' : 'Press F3 to edit MRP'}
-                      className={`h-8 text-[15px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 transition-all shadow-none tabular-nums ${
+                      className={`h-8 text-[17px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 transition-all shadow-none tabular-nums ${
                         isF3Unlocked(row.uid, 'mrp')
                           ? 'focus:bg-amber-50 focus:!text-amber-900 focus:!border-amber-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-amber-400 focus:!rounded-lg text-amber-700'
                           : 'text-gray-500 cursor-default'
@@ -2512,7 +2614,7 @@ export default function RecordSale({
                       onChange={e => updateRow(idx, { rate: parseFloat(e.target.value) || 0 })}
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'rate')}
                       disabled={!row.productId}
-                      className="h-8 text-[16px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-500 transition-all shadow-none text-gray-900"
+                      className="h-8 text-[18px] px-1 text-center font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-500 transition-all shadow-none text-gray-900"
                     />
                   </div>
 
@@ -2528,10 +2630,10 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'discount')}
                       disabled={!row.productId}
                       placeholder="0"
-                      className="h-8 text-[16px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-red-400 transition-all shadow-none text-red-500 text-center"
+                      className="h-8 text-[18px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-red-400 transition-all shadow-none text-red-500 text-center"
                     />
                     {row.productId && (
-                      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-red-400/70">%</span>
+                      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-red-400/70">%</span>
                     )}
                   </div>
 
@@ -2546,10 +2648,10 @@ export default function RecordSale({
                       onKeyDown={e => handleFieldKeyDown(e, idx, 'gst')}
                       disabled={!row.productId}
                       placeholder="0"
-                      className="h-8 text-[16px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 transition-all shadow-none text-gray-600 text-center"
+                      className="h-8 text-[18px] pl-1 pr-4 font-medium bg-transparent border-transparent hover:bg-emerald-50 focus:bg-cyan-50 focus:!text-cyan-900 focus:!border-cyan-400 focus:!ring-[3px] focus:!ring-inset focus:!ring-cyan-400 focus:!rounded-lg focus:border-emerald-400 transition-all shadow-none text-gray-600 text-center"
                     />
                     {row.productId && (
-                      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-gray-400/70">%</span>
+                      <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-gray-400/70">%</span>
                     )}
                   </div>
 
@@ -2622,9 +2724,9 @@ export default function RecordSale({
                       className="flex items-center gap-3 min-w-0 flex-1 text-left h-full"
                     >
                       <span className={`text-sm font-semibold truncate flex-1 min-w-0 ${searchHighlight === i ? 'text-emerald-700' : 'text-gray-800'} ${p.quantity <= 0 ? 'text-red-500 line-through decoration-red-300' : ''}`}>{p.name}</span>
-                      {p.hsn_code && <span className="hidden lg:inline text-[11px] text-gray-400 shrink-0 w-[86px] text-right truncate">HSN {p.hsn_code}</span>}
-                      {p.pcs_per_unit && p.pcs_per_unit > 0 && <span className="hidden sm:inline text-[11px] font-medium text-indigo-500 shrink-0 w-[64px] text-right tabular-nums">1×{p.pcs_per_unit}</span>}
-                      <span className={`text-[11px] font-medium shrink-0 w-16 text-right tabular-nums ${p.quantity <= 0 ? 'text-red-600 font-bold' : 'text-emerald-600'}`}>Stk {p.quantity}</span>
+                      {p.hsn_code && <span className="hidden lg:inline text-[13px] text-gray-400 shrink-0 w-[86px] text-right truncate">HSN {p.hsn_code}</span>}
+                      {p.pcs_per_unit && p.pcs_per_unit > 0 && <span className="hidden sm:inline text-[13px] font-medium text-indigo-500 shrink-0 w-[64px] text-right tabular-nums">1×{p.pcs_per_unit}</span>}
+                      <span className={`text-[13px] font-medium shrink-0 w-16 text-right tabular-nums ${p.quantity <= 0 ? 'text-red-600 font-bold' : 'text-emerald-600'}`}>Stk {p.quantity}</span>
                       <span className="text-sm font-bold text-emerald-700 shrink-0 w-20 text-right tabular-nums">&#8377;{p.selling_price.toFixed(2)}</span>
                     </button>
                     <button
@@ -2640,7 +2742,7 @@ export default function RecordSale({
                   <div className="px-4 py-6 text-center text-gray-400 text-sm font-medium">No medicines found matching "{searchTerm}"</div>
                 )}
               </div>
-              <div className="px-4 py-1.5 border-t border-gray-100 bg-slate-50 text-[10px] text-gray-500 flex items-center justify-between">
+              <div className="px-4 py-1.5 border-t border-gray-100 bg-slate-50 text-[12px] text-gray-500 flex items-center justify-between">
                 <span><kbd className="px-1 rounded border bg-white">↵</kbd> select · <kbd className="px-1 rounded border bg-white">F1</kbd> full info</span>
                 <span><kbd className="px-1 rounded border bg-white">\u2191\u2193</kbd> move</span>
               </div>
@@ -2661,7 +2763,7 @@ export default function RecordSale({
             <div className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white flex items-center justify-between gap-2 shrink-0">
               <div className="min-w-0">
                 <p className="font-bold text-lg truncate">{infoProduct.name}</p>
-                <p className="text-[11px] text-emerald-50 truncate">
+                <p className="text-[13px] text-emerald-50 truncate">
                   {[infoProduct.category, infoProduct.manufacturer].filter(Boolean).join(' · ') || 'Product details'}
                 </p>
               </div>
@@ -2730,10 +2832,10 @@ export default function RecordSale({
 
                     {/* Recent sales */}
                     <div>
-                      <h3 className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Recent Sales</h3>
+                      <h3 className="text-[13px] font-bold uppercase tracking-wide text-gray-400 mb-2">Recent Sales</h3>
                       {sales.length > 0 ? (
                         <div className="border border-gray-100 rounded-lg overflow-hidden">
-                          <div className="grid grid-cols-[1fr_1.4fr_0.7fr_0.9fr_1fr] bg-gray-50 text-[10px] font-bold uppercase tracking-wide text-gray-400 px-3 py-1.5">
+                          <div className="grid grid-cols-[1fr_1.4fr_0.7fr_0.9fr_1fr] bg-gray-50 text-[12px] font-bold uppercase tracking-wide text-gray-400 px-3 py-1.5">
                             <span>Date</span><span>Customer</span><span className="text-center">Qty</span><span className="text-right">Rate</span><span className="text-right">Amount</span>
                           </div>
                           <div className="max-h-56 overflow-y-auto divide-y divide-gray-50">
@@ -2785,7 +2887,7 @@ export default function RecordSale({
 
       {/* ══════ ZONE 5: STICKY FOOTER (SLEEK) ══════ */}
       <div className="bg-white border-t border-green-100 shadow-[0_-8px_24px_rgba(0,0,0,0.04)] shrink-0 z-30">
-        <div className="px-2 sm:px-6 py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-4 max-w-[1700px] mx-auto">
+        <div className="px-2 sm:px-6 py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-4 w-full">
           {/* Left: Payment & inputs - full width on mobile */}
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 md:gap-4 md:flex-1 min-w-0">
             {/* Payment modes - 4-up grid on phones, inline from sm */}
@@ -2827,7 +2929,7 @@ export default function RecordSale({
             {/* Disc + Received - share one row on phones, flow inline from sm */}
             <div className="flex gap-2 w-full sm:contents">
               <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-green-100 flex-1 sm:flex-none min-w-0">
-                <Label className="text-[11px] font-medium text-green-700 shrink-0">Global Disc%</Label>
+                <Label className="text-[13px] font-medium text-green-700 shrink-0">Global Disc%</Label>
                 <Input
                   ref={globalDiscRef}
                   type="number"
@@ -2849,7 +2951,7 @@ export default function RecordSale({
               </div>
 
               <div className={`flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border transition-all flex-1 sm:flex-none min-w-0 ${paymentMode === 'credit' ? 'border-orange-200 bg-orange-50' : 'border-green-100'}`}>
-                <Label className={`text-[11px] font-medium shrink-0 ${paymentMode === 'credit' ? 'text-orange-700' : 'text-green-700'}`}>
+                <Label className={`text-[13px] font-medium shrink-0 ${paymentMode === 'credit' ? 'text-orange-700' : 'text-green-700'}`}>
                   {paymentMode === 'credit' ? 'Amt Paid' : 'Received'}
                 </Label>
                 <Input
@@ -2878,7 +2980,7 @@ export default function RecordSale({
                 }`}>
                   <Label
                     htmlFor="credit-due-date"
-                    className={`text-[11px] font-medium shrink-0 ${creditDueDate ? 'text-orange-700' : 'text-red-700'}`}
+                    className={`text-[13px] font-medium shrink-0 ${creditDueDate ? 'text-orange-700' : 'text-red-700'}`}
                   >
                     Due by
                   </Label>
@@ -2911,7 +3013,7 @@ export default function RecordSale({
               if (due > 0.01) {
                 return (
                   <div className="flex items-center justify-between sm:justify-center gap-2 px-3 py-1 rounded-md bg-red-50 border border-red-200 w-full sm:w-auto sm:min-w-[80px]">
-                    <span className="text-[10px] sm:text-[9px] font-bold text-red-400 uppercase tracking-wider">Due</span>
+                    <span className="text-[12px] sm:text-[9px] font-bold text-red-400 uppercase tracking-wider">Due</span>
                     <span className="text-sm font-black text-red-600">&#8377;{Math.round(due * 100) / 100}</span>
                   </div>
                 );
@@ -2940,7 +3042,7 @@ export default function RecordSale({
             </div>
 
             <div className="bg-emerald-50 text-emerald-900 px-4 py-2 rounded-md border border-emerald-200 flex flex-col items-center justify-center flex-1 md:flex-none md:min-w-[170px] min-w-0">
-              <span className="text-[11px] font-medium text-emerald-600">Amount Payable</span>
+              <span className="text-[13px] font-medium text-emerald-600">Amount Payable</span>
               <div className="flex items-baseline gap-1">
                 <span className="text-emerald-600 text-sm font-medium">&#8377;</span>
                 <span className="text-2xl font-semibold tabular-nums leading-none">
@@ -2966,6 +3068,57 @@ export default function RecordSale({
           </div>
         </div>
       </div>
+
+      {/* ══════ FLOATING CALCULATOR (F12 / Alt+C) ══════ */}
+      <FloatingCalculator open={calcOpen} onClose={() => setCalcOpen(false)} />
+
+      {/* ══════ BACKDATED BILL CONFIRMATION ══════ */}
+      {pendingBackdate && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm bill date"
+          className="fixed inset-0 z-[500] flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
+          onClick={() => { setDateDraft(billDate); setPendingBackdate(null); }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 pt-5 pb-2">
+              <p className="text-base font-bold text-gray-900">Bill this on an earlier date?</p>
+              <p className="text-sm text-gray-500 mt-1">
+                This invoice will be dated{' '}
+                <span className="font-semibold text-gray-900">
+                  {new Date(pendingBackdate).toLocaleDateString('en-IN', {
+                    day: '2-digit', month: 'short', year: 'numeric',
+                  })}
+                </span>
+                , not today. The sale is recorded on that date and appears there in
+                reports and GST returns.
+              </p>
+            </div>
+            <div className="flex gap-2 px-6 pb-5 pt-3">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => { setBillDate(pendingBackdate); setPendingBackdate(null); }}
+                className="flex-1 h-10 rounded-lg bg-emerald-600 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                Yes, use this date
+              </button>
+              <button
+                type="button"
+                onClick={() => { setDateDraft(billDate); setPendingBackdate(null); }}
+                className="flex-1 h-10 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Keep today
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* ══════ QUICK ADD MEDICINE SLIDE-OVER ══════ */}
       <QuickAddMedicineSheet
@@ -3078,7 +3231,7 @@ export default function RecordSale({
 function StatTile({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className={`rounded-xl border p-3 ${accent ? 'border-emerald-200 bg-emerald-50' : 'border-gray-100 bg-gray-50'}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="text-[12px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
       <p className={`text-lg font-bold mt-0.5 tabular-nums ${accent ? 'text-emerald-700' : 'text-gray-800'}`}>{value}</p>
     </div>
   );
@@ -3087,7 +3240,7 @@ function StatTile({ label, value, accent }: { label: string; value: string; acce
 function InfoSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">{title}</h3>
+      <h3 className="text-[13px] font-bold uppercase tracking-wide text-gray-400 mb-2">{title}</h3>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">{children}</div>
     </div>
   );
@@ -3096,7 +3249,7 @@ function InfoSection({ title, children }: { title: string; children: React.React
 function DetailItem({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
+      <p className="text-[12px] font-semibold uppercase tracking-wide text-gray-400">{label}</p>
       <p className="text-sm font-medium text-gray-800 break-words">{value || '-'}</p>
     </div>
   );

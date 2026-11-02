@@ -26,6 +26,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useWholesaleAccess, refreshWholesaleAccess } from '@/hooks/useWholesaleAccess';
 import { supabase } from '@/db conn/supabaseClient';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -113,6 +114,12 @@ export default function Settings() {
   const [stateCodeState, setStateCodeState] = useState<string>('');
   const [dlFormTypeState, setDlFormTypeState] = useState<string>('');
   const [interstateState, setInterstateState] = useState<boolean>(false);
+  // Wholesale visibility. The subscription decides entitlement; this only
+  // decides whether the screens are shown, and defaults to on for a
+  // subscriber so buying the plan is enough to get the feature.
+  const { hasPlan: wholesalePlan } = useWholesaleAccess();
+  const [wholesaleModeState, setWholesaleModeState] = useState<boolean>(true);
+  const [wholesaleColMissing, setWholesaleColMissing] = useState<boolean>(false);
 
   const fetchData = async () => {
     try {
@@ -147,6 +154,11 @@ export default function Settings() {
       // Added by 20260925000000_wholesale_compliance.sql; absent on older databases.
       setDlFormTypeState(accountRaw?.dl_form_type ?? '');
       setInterstateState(Boolean(accountRaw?.is_interstate_billing));
+      // Added by 20260918000000_add_wholesale_fields.sql. Where the column is
+      // absent the toggle has nothing to write to, so it says so instead.
+      const hasWholesaleCol = settingsRaw != null && 'wholesale_mode' in settingsRaw;
+      setWholesaleColMissing(!hasWholesaleCol);
+      setWholesaleModeState(hasWholesaleCol ? Boolean(settingsRaw.wholesale_mode) : true);
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -270,12 +282,19 @@ export default function Settings() {
         gst_type: gstType,
         whatsapp_custom_note: whatsappCustomNote,
       };
-      const withOptional = { ...core, sales_edit_window_hours: salesEditWindowHours };
+      const withOptional = {
+        ...core,
+        sales_edit_window_hours: salesEditWindowHours,
+        ...(wholesaleColMissing ? {} : { wholesale_mode: wholesaleModeState }),
+      };
 
       const { error } = await supabase
         .from('settings')
         .update(withOptional)
         .eq('account_id', profile?.account_id);
+
+      // The toggle changes what the nav shows, so drop the cached answer.
+      if (!error) refreshWholesaleAccess();
 
       if (error) {
         // A newer column (gst_type / sales_edit_window_hours) may not exist yet ΓåÆ save the core fields.
@@ -550,6 +569,37 @@ export default function Settings() {
                       onCheckedChange={setInterstateState}
                     />
                   </div>
+
+                  {/* Wholesale visibility. Only an account that actually has the
+                      plan sees this; the subscription is what grants the feature,
+                      this only decides whether the screens are on show. */}
+                  {wholesalePlan && (
+                    <div className="flex items-start justify-between gap-4 rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+                      <div className="space-y-1">
+                        <FieldLabel htmlFor="wholesaleMode" icon={Receipt}>Wholesale billing</FieldLabel>
+                        <p className="text-xs text-muted-foreground">
+                          Shows Wholesale Billing and Wholesale Reports, the B2B buyer
+                          fields and the free-quantity column. Turn it off to keep the
+                          app purely retail; your subscription is unaffected either way.
+                        </p>
+                        {wholesaleColMissing && (
+                          <p className="text-xs font-medium text-amber-700">
+                            This database has not taken the wholesale migration yet, so
+                            there is nothing to save this to. Wholesale stays available
+                            while your plan is active; apply
+                            supabase/migrations/20260918000000_add_wholesale_fields.sql
+                            to control it here.
+                          </p>
+                        )}
+                      </div>
+                      <Switch
+                        id="wholesaleMode"
+                        checked={wholesaleColMissing ? true : wholesaleModeState}
+                        disabled={wholesaleColMissing}
+                        onCheckedChange={setWholesaleModeState}
+                      />
+                    </div>
+                  )}
 
                   <div className="flex justify-end pt-2 border-t border-slate-100">
                     <Button

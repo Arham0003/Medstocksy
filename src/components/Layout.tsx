@@ -4,6 +4,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarHeader,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuButton,
@@ -101,22 +102,28 @@ const AppSidebar = memo(({ accountName, userName, focusedIndex, navItems, wholes
 
   return (
     <Sidebar collapsible="icon" className="border-r bg-gradient-to-b from-sidebar to-sidebar-accent">
-      <SidebarContent className="flex flex-col h-full">
-        {/* Brand Header */}
-        <div className="p-3 border-b border-sidebar-border">
-          <div className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0">
-            <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg">
-              <img src="/sidebar-logo.jpg" alt="Logo" className="h-full w-full object-cover" />
-            </div>
-            <div className="flex flex-col min-w-0 group-data-[collapsible=icon]:hidden">
-              <div className="font-bold text-base text-sidebar-foreground truncate">{accountName}</div>
-              <div className="text-[11px] text-muted-foreground truncate">Inventory Management</div>
-            </div>
+      {/* Header, nav and footer are SIBLINGS, and that is what pins the footer
+          to the bottom: Sidebar's own wrapper is a full-height flex column, so
+          SidebarContent takes up the slack and the footer sits below it at any
+          viewport height. They used to be nested inside SidebarContent, which
+          made the footer fall directly after the last nav item and leave dead
+          space underneath on a tall screen. */}
+      <SidebarHeader className="p-3 border-b border-sidebar-border">
+        <div className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0">
+          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-lg">
+            <img src="/sidebar-logo.jpg" alt="Logo" className="h-full w-full object-cover" />
+          </div>
+          <div className="flex flex-col min-w-0 group-data-[collapsible=icon]:hidden">
+            <div className="font-bold text-base text-sidebar-foreground truncate">{accountName}</div>
+            <div className="text-[11px] text-muted-foreground truncate">Inventory Management</div>
           </div>
         </div>
+      </SidebarHeader>
 
-        {/* Navigation */}
-        <SidebarGroup className="flex-1 overflow-y-auto">
+      {/* SidebarContent is already flex-1 and scrolls on its own; a second
+          flex-1 scroller nested inside it produced two nested scrollbars. */}
+      <SidebarContent>
+        <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item, index) => {
@@ -159,9 +166,12 @@ const AppSidebar = memo(({ accountName, userName, focusedIndex, navItems, wholes
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+      </SidebarContent>
 
-        {/* User Profile Footer */}
-        <SidebarFooter className="border-t border-sidebar-border p-3 mt-auto">
+      {/* User Profile Footer. pb honours the iOS home-indicator inset, which
+          index.html opts into with viewport-fit=cover, so Sign Out is not
+          sitting under the bar on a phone. */}
+      <SidebarFooter className="border-t border-sidebar-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0">
             <Avatar className="h-9 w-9 shrink-0 border border-sidebar-border">
               <AvatarFallback className="bg-sidebar-accent text-sidebar-foreground text-xs font-semibold">
@@ -182,8 +192,7 @@ const AppSidebar = memo(({ accountName, userName, focusedIndex, navItems, wholes
             <LogOut className="h-4 w-4 mr-2" />
             Sign Out
           </Button>
-        </SidebarFooter>
-      </SidebarContent>
+      </SidebarFooter>
     </Sidebar>
   );
 });
@@ -409,7 +418,7 @@ export default function Layout() {
 
   return (
     <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-background">
+      <div className="flex min-h-app-screen w-full bg-background">
         <AppSidebar
           accountName={accountName}
           userName={userName}
@@ -424,6 +433,10 @@ export default function Layout() {
             <div className="flex-1 min-w-0">
               <PageTitle />
             </div>
+            {/* Screens that need a persistent status chip - the admin session,
+                for one - portal it in here instead of pushing a full-width
+                banner down the page. */}
+            <div id="app-header-slot" className="flex shrink-0 items-center gap-2" />
             <UserMenu userName={userName} accountName={accountName} />
           </header>
           <div ref={mainContentRef} className="flex-1 p-3 sm:p-6 overflow-y-auto min-w-0">

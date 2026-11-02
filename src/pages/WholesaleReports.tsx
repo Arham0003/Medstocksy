@@ -96,7 +96,7 @@ export default function WholesaleReports() {
   const { isOwner } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { isActive, loading: accessLoading } = useWholesaleAccess();
+  const { isActive, hasPlan, loading: accessLoading } = useWholesaleAccess();
 
   const [bills, setBills] = useState<WholesaleBill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,8 +112,11 @@ export default function WholesaleReports() {
 
   // Gate. `isActive` is false while the check runs, so the redirect waits on it.
   useEffect(() => {
-    if (!accessLoading && !isActive) navigate('/pricing', { replace: true });
-  }, [accessLoading, isActive, navigate]);
+    if (accessLoading || isActive) return;
+    // A subscriber with wholesale switched off belongs in Settings, not on a
+    // pricing page for something they have already bought.
+    navigate(hasPlan ? '/settings' : '/pricing', { replace: true });
+  }, [accessLoading, isActive, hasPlan, navigate]);
 
   const fetchWholesaleBills = useCallback(async () => {
     try {

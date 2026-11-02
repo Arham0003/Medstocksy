@@ -145,11 +145,13 @@ export default function PWAPrompts() {
   if (!showInstall) return null;
 
   // ── Install banner (renders only when prompt is available or on iOS) ──
+  // z-40 keeps this under the navigation drawer, which is z-50. At z-[60] it
+  // sat on top of the open sidebar on a phone and covered the Sign Out button.
   return (
     <div
       role="dialog"
       aria-label="Install Medstocksy"
-      className="fixed left-1/2 -translate-x-1/2 bottom-4 z-[60] w-[calc(100%-1.5rem)] max-w-md
+      className="fixed left-1/2 -translate-x-1/2 bottom-4 z-40 w-[calc(100%-1.5rem)] max-w-md
                  bg-white border border-slate-200 shadow-xl rounded-xl px-3 py-3
                  flex items-start gap-3"
       style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}

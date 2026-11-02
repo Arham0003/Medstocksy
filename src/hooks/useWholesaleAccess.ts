@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import { db } from '@/lib/supabaseLoose';
 import { useAuth } from '@/hooks/useAuth';
+import {
+  decideWholesaleAccess,
+  planHasWholesale,
+  type WholesaleAccess,
+} from '@/lib/wholesaleAccess';
+
+// Re-exported so the existing import sites keep working.
+export { decideWholesaleAccess, planHasWholesale };
+export type { WholesaleAccess, WholesaleInputs } from '@/lib/wholesaleAccess';
 
 /**
  * Wholesale entitlement, in two parts:
@@ -22,32 +31,6 @@ import { useAuth } from '@/hooks/useAuth';
  * alone because Settings/SalesBilling/RecordSale already hold the settings
  * row - the billing path gains no extra round trip.
  */
-
-export interface WholesaleAccess {
-  /** Entitled to wholesale: an active wholesale plan, OR a platform admin. */
-  hasPlan: boolean;
-  isActive: boolean;
-  loading: boolean;
-  /** True when entitlement comes from being a platform admin, not a purchase. */
-  viaAdmin: boolean;
-  /** Set when the wholesale columns are not installed yet. */
-  needsMigration: boolean;
-}
-
-/**
- * Mirrors public.plan_has_wholesale() in SQL. Paid wholesale plans, plus
- * wholesale trials granted from the admin panel. Keep the two in step.
- */
-export const planHasWholesale = (plan: string | null | undefined): boolean => {
-  if (!plan) return false;
-  const p = plan.trim().toLowerCase();
-  return (
-    p === 'wholesale_monthly' ||
-    p === 'wholesale_annual' ||
-    p.includes('wholesale') ||
-    p.startsWith('trial_wholesale')
-  );
-};
 
 const UNKNOWN: WholesaleAccess = { hasPlan: false, isActive: false, loading: true, viaAdmin: false, needsMigration: false };
 const NO_ACCESS: WholesaleAccess = { hasPlan: false, isActive: false, loading: false, viaAdmin: false, needsMigration: false };
@@ -74,29 +57,12 @@ async function load(userId: string, accountId: string): Promise<WholesaleAccess>
       db.rpc('is_platform_admin'),
     ]);
 
-    const plan = subRes?.data;
-    const paidPlan =
-      plan?.status === 'active' && planHasWholesale(plan?.plan_type);
-    const viaAdmin = adminRes?.error ? false : Boolean(adminRes?.data);
-
-    // The column arrives with 20260918000000. Its absence is why the toggle
-    // would otherwise refuse to stick, so surface it rather than failing mute.
-    const settingsRow = settingsRes?.data as { wholesale_mode?: boolean } | null;
-    const hasWholesaleCol = settingsRow != null && 'wholesale_mode' in settingsRow;
-    const needsMigration =
-      !hasWholesaleCol &&
-      (settingsRes?.error?.code === '42703' ||
-        Boolean(settingsRes?.error?.message?.toLowerCase().includes('wholesale_mode')));
-
-    const hasPlan = paidPlan || viaAdmin;
-
-    return {
-      hasPlan,
-      isActive: hasPlan && Boolean(settingsRow?.wholesale_mode),
-      loading: false,
-      viaAdmin: viaAdmin && !paidPlan,
-      needsMigration,
-    };
+    return decideWholesaleAccess({
+      subscription: subRes?.data ?? null,
+      settingsRow: (settingsRes?.data as { wholesale_mode?: boolean } | null) ?? null,
+      settingsError: settingsRes?.error ?? null,
+      isAdmin: adminRes?.error ? false : Boolean(adminRes?.data),
+    });
   } catch {
     // Fail CLOSED: an unreadable subscription must not unlock a paid feature.
     // The RLS policy is the real gate either way.

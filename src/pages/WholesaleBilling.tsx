@@ -12,14 +12,17 @@ import SalesBilling from './SalesBilling';
  * `sales` blocks the insert regardless of what the frontend does.
  */
 export default function WholesaleBilling() {
-  const { isActive, loading } = useWholesaleAccess();
+  const { isActive, hasPlan, loading } = useWholesaleAccess();
   const navigate = useNavigate();
 
   useEffect(() => {
     // Wait for the answer - `isActive` is false while the check is in flight,
     // so redirecting early would bounce paying subscribers.
-    if (!loading && !isActive) navigate('/pricing', { replace: true });
-  }, [isActive, loading, navigate]);
+    if (loading || isActive) return;
+    // Someone who already holds the plan is not shopping for it. If wholesale
+    // is merely switched off for this account, send them to the switch.
+    navigate(hasPlan ? '/settings' : '/pricing', { replace: true });
+  }, [isActive, hasPlan, loading, navigate]);
 
   if (loading) {
     return (

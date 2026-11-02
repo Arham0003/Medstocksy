@@ -96,7 +96,59 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
     font-size: 16px;
     /* Increase base font size for better readability */
-    zoom: 90%; /* ponytail: default app zoom to 90% as per user preference */
+    zoom: var(--app-zoom); /* ponytail: default app zoom to 90% as per user preference */
+  }
+
+  /* The zoom above is why the app used to stop short of the bottom of the
+     screen. Viewport units are measured against the real viewport, but
+     everything inside <body> is then scaled by --app-zoom, so an element
+     sized 100svh paints at 90% of the screen and leaves a strip of bare page
+     below it - on a 734px window, exactly the 660px the sidebar ended at.
+     Dividing by the zoom gives back the full height. Use these in place of
+     h-screen / h-svh / min-h-svh anywhere that must reach the bottom. */
+  :root {
+    --app-zoom: 0.9;
+    --app-screen: calc(100svh / var(--app-zoom));
+  }
+
+  .h-app-screen { height: var(--app-screen); }
+  .min-h-app-screen { min-height: var(--app-screen); }
+
+  /* Whatever is left over after rounding should match the app, not show the
+     browser's own canvas through it. */
+  html {
+    background-color: hsl(var(--background));
+  }
+
+  /* ── Admin Control motion ──────────────────────────────────────────────
+     One entrance, used everywhere on that screen so the page settles as a
+     single movement rather than nine separate ones. Short, small travel, and
+     it steps aside completely for anyone who asks for less motion. */
+  @keyframes admin-rise {
+    from { opacity: 0; transform: translate3d(0, 8px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .admin-rise {
+    animation: admin-rise 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 45ms);
+  }
+
+  /* Hover lift for a card that can be opened. Transform only, so it never
+     reflows the grid or nudges a neighbour into another card. */
+  .admin-card {
+    transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+                box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 180ms ease;
+    will-change: transform;
+  }
+  .admin-card:hover { transform: translateY(-2px); }
+  .admin-card:active { transform: translateY(0); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .admin-rise { animation: none; }
+    .admin-card { transition: none; }
+    .admin-card:hover { transform: none; }
   }
 
   /* Larger font sizes for better accessibility */
